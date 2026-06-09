@@ -1,0 +1,40 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Color x:Key="BgDarkestColor">#161719</Color>
+  <Color x:Key="Bg2Color">#202124</Color>
+  <Color x:Key="Bg1Color">#27282c</Color>
+  <Color x:Key="BgHoverColor">#303136</Color>
+  <Color x:Key="BgInputColor">#141517</Color>
+  <Color x:Key="BgModifierColor">#33353b</Color>
+  <Color x:Key="LineColor">#34363b</Color>
+  <Color x:Key="LineSoftColor">#1d1e21</Color>
+  <Color x:Key="TxtColor">#dbdee1</Color>
+  <Color x:Key="TxtMuteColor">#949ba4</Color>
+  <Color x:Key="TxtFaintColor">#7d818a</Color>
+  <Color x:Key="HeaderColor">#f2f3f5</Color>
+  <Color x:Key="InterColor">#b5bac1</Color>
+  <Color x:Key="AccentColor">#f5356c</Color>
+  <Color x:Key="AccentHiColor">#ff5f8c</Color>
+  <Color x:Key="AccentLoColor">#cf2057</Color>
+  <Color x:Key="GreenColor">#23a55a</Color>
+  <Color x:Key="RedColor">#e23a4a</Color>
+  <SolidColorBrush x:Key="BgDarkest" Color="{StaticResource BgDarkestColor}"/>
+  <SolidColorBrush x:Key="Bg2" Color="{StaticResource Bg2Color}"/>
+  <SolidColorBrush x:Key="Bg1" Color="{StaticResource Bg1Color}"/>
+  <SolidColorBrush x:Key="BgHover" Color="{StaticResource BgHoverColor}"/>
+  <SolidColorBrush x:Key="BgInput" Color="{StaticResource BgInputColor}"/>
+  <SolidColorBrush x:Key="BgModifier" Color="{StaticResource BgModifierColor}"/>
+  <SolidColorBrush x:Key="Line" Color="{StaticResource LineColor}"/>
+  <SolidColorBrush x:Key="LineSoft" Color="{StaticResource LineSoftColor}"/>
+  <SolidColorBrush x:Key="Txt" Color="{StaticResource TxtColor}"/>
+  <SolidColorBrush x:Key="TxtMute" Color="{StaticResource TxtMuteColor}"/>
+  <SolidColorBrush x:Key="TxtFaint" Color="{StaticResource TxtFaintColor}"/>
+  <SolidColorBrush x:Key="Header" Color="{StaticResource HeaderColor}"/>
+  <SolidColorBrush x:Key="Inter" Color="{StaticResource InterColor}"/>
+  <SolidColorBrush x:Key="Accent" Color="{StaticResource AccentColor}"/>
+  <SolidColorBrush x:Key="AccentHi" Color="{StaticResource AccentHiColor}"/>
+  <SolidColorBrush x:Key="AccentLo" Color="{StaticResource AccentLoColor}"/>
+  <SolidColorBrush x:Key="Green" Color="{StaticResource GreenColor}"/>
+  <SolidColorBrush x:Key="Red" Color="{StaticResource RedColor}"/>
+  <FontFamily x:Key="MonoFont">Consolas, monospace</FontFamily>
+</ResourceDictionary>

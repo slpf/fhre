@@ -1,0 +1,89 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FH6RB.ViewModels"
+        x:Class="FH6RB.Views.SettingsWindow"
+        x:DataType="vm:SettingsWindowViewModel"
+        Width="520" Height="430"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        Title="Settings"
+        SizeToContent="Height">
+
+    <Grid RowDefinitions="*,Auto">
+        <StackPanel MaxWidth="480" HorizontalAlignment="Stretch" Margin="16">
+            <TextBlock Classes="sect" Text="GAME PATH"/>
+            <Grid ColumnDefinitions="*,Auto">
+                <Border Background="{DynamicResource BgInput}" Padding="12"
+                        BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+                    <TextBlock Classes="field" Text="{Binding GamePath}"
+                               FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
+                </Border>
+                
+                <Button Grid.Column="1" Classes="big" Click="OnBrowse" Content="Browse"
+                        Padding="14,9" Margin="8,0,0,0"/>
+            </Grid>
+
+            <Border Margin="0,12,0,0" Background="{DynamicResource BgInput}"
+                    BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8"
+                    Padding="12" IsVisible="{Binding IsValid}">
+                <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding ExeLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                    <TextBlock Text="{Binding LangLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                    <TextBlock Text="{Binding BankLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                </StackPanel>
+            </Border>
+
+            <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Red}" FontSize="12.5"
+                       Margin="12,12,0,12" TextWrapping="Wrap" IsVisible="{Binding !IsValid}"/>
+
+            <StackPanel IsVisible="{Binding ShowAdvanced}">
+                <TextBlock Classes="sect" Text="LOUDNESS" Margin="12,24,0,8"/>
+                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                        BorderThickness="1" CornerRadius="8" Padding="12">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="Target loudness" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding TargetLufsText}" Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="-30" Maximum="-9" Value="{Binding TargetLufs}"
+                                TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="Added tracks are normalized to this level. Originals sit around -23 LUFS."
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Classes="sect" Text="BACKUPS" Margin="12,24,0,8"/>
+                <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding HasBackups}">
+                    <Button Classes="big" Click="OnRestore" Content="Restore backups"/>
+                </StackPanel>
+                <TextBlock Text="No backups to restore." Foreground="{DynamicResource TxtFaint}" Margin="12 0 0 0"
+                           FontSize="12" FontStyle="Italic" IsVisible="{Binding !HasBackups}"/>
+                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                        BorderThickness="1" CornerRadius="8" Padding="12" Margin="0, 12, 0, 0"
+                        IsVisible="{Binding BackupVisible}">
+                    <StackPanel Spacing="9">
+                        <TextBlock IsVisible="{Binding HasBackups}" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="12"
+                                   Text="Reverts banks and RadioInfo to their pre-build state, then clears the backups."/>
+                        <TextBlock Text="{Binding RestoreLine}" Foreground="{DynamicResource Green}" FontSize="12"
+                                   TextWrapping="Wrap" IsVisible="{Binding RestoreLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" Text="{Binding AppVersion}" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TxtFaint}" FontSize="12" Margin="12 0 0 0"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                    <Button Classes="big" Click="OnClose" Content="Close"/>
+                    <Button Classes="big primary" Click="OnSave" Content="Save" IsEnabled="{Binding IsValid}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

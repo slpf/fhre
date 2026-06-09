@@ -1,0 +1,237 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:svc="using:FH6RB.Services"
+        xmlns:cv="using:FH6RB.Converters"
+        x:Class="FH6RB.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Width="1000" MinWidth="1000" MaxWidth="1000" Height="800" MinHeight="650"
+        Background="{DynamicResource Bg1}"
+        Icon="avares://FH6RB/Assets/app.ico"
+        Title="Forza Horizon Radio Extender">
+    
+    <Grid RowDefinitions="Auto,*,Auto,Auto">
+        <Border Grid.Row="0" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,0,0,1" Padding="10, 12, 14, 12">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto">
+                <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                    <TextBlock Classes="lbl" Text="LOCALIZATION"/>
+                    <ComboBox Width="165" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:LangOption">
+                                <TextBlock Text="{Binding Display}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                    <TextBlock Classes="lbl" Text="STATION"/>
+                    <ComboBox Width="220" ItemsSource="{Binding Stations}" SelectedItem="{Binding SelectedStation}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="svc:StationInfo">
+                                <TextBlock Text="{Binding Display}"/>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2">
+                    <TextBlock Classes="lbl" Text="BANK"/>
+                    <ComboBox Width="100" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}"/>
+                </StackPanel>
+
+                <Button Grid.Column="4" Classes="act" Click="OnSettings" ToolTip.Tip="Settings"
+                        Width="32" Height="32" VerticalAlignment="Bottom" Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="24" Height="24"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+                </Button>
+            </Grid>
+        </Border>
+        
+        <Grid Grid.Row="1" ClipToBounds="True">
+            <ScrollViewer ClipToBounds="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Border Padding="10,10,14,6">
+                    <ItemsControl ItemsSource="{Binding Tracks}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TrackItemViewModel">
+                                <Border Classes="row">
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <Button Grid.Column="0" Classes="act" IsVisible="{Binding CanPlay}"
+                                                Margin="0,0,12,0" VerticalAlignment="Center"
+                                                ToolTip.Tip="Play / Pause"
+                                                Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).PlayTrackCommand}"
+                                                CommandParameter="{Binding}">
+                                            <Panel>
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_play.png" Width="24" Height="24"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       IsVisible="{Binding ShowPlayIcon}"/>
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_pause.png" Width="24" Height="24"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsPlayingNow}"/>
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_decoding.png" Width="24" Height="24"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       RenderTransformOrigin="50%,50%"
+                                                       Classes.spin="{Binding IsLoadingPlay}"
+                                                       IsVisible="{Binding IsLoadingPlay}"/>
+                                            </Panel>
+                                        </Button>
+                                        <Grid Grid.Column="1" RowDefinitions="16,4,12" VerticalAlignment="Center" HorizontalAlignment="Left" Width="780" MaxWidth="800" Margin="0 0 12 0"
+                                               MinHeight="32" Opacity="{Binding Enabled, Converter={x:Static cv:Conv.EnabledOpacity}}">
+                                            
+                                            <Grid Grid.Row="0" Height="16" ClipToBounds="True">
+                                                <Grid ColumnDefinitions="Auto,*" VerticalAlignment="Bottom">
+                                                    <Border Grid.Column="0" IsVisible="{Binding IsUnbuilt}"
+                                                            Background="{DynamicResource AccentHi}" CornerRadius="3"
+                                                            Height="14" Width="28" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="NEW" FontSize="8" FontWeight="Bold" Foreground="White"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    
+                                                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left" Spacing="11" ClipToBounds="True" Margin="0 0 12 0">
+                                                        <TextBlock Text="{Binding Title}" MaxWidth="500" FontSize="14" VerticalAlignment="Bottom"
+                                                                   FontWeight="SemiBold" Foreground="{DynamicResource Header}" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Text="{Binding Artist}" FontSize="12" MaxWidth="240" VerticalAlignment="Bottom"
+                                                                   Foreground="{DynamicResource TxtMute}" TextTrimming="CharacterEllipsis"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Grid>
+
+                                            <Grid Grid.Row="2" Height="12" ClipToBounds="True">
+                                                <TextBlock Text="{Binding InfoLine}" VerticalAlignment="Top"
+                                                           FontFamily="{DynamicResource MonoFont}" FontSize="11"
+                                                           Foreground="{DynamicResource TxtFaint}" TextTrimming="CharacterEllipsis"/>
+                                            </Grid>
+                                        </Grid>
+
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
+                                            <Button Classes="act" IsVisible="{Binding CanDelete}" ToolTip.Tip="Delete"
+                                                    Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).DeleteCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_delete.png" Width="24" Height="24"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"/>
+                                            </Button>
+                                            <Button Classes="act" ToolTip.Tip="Edit" Click="OnEdit" Tag="{Binding}">
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"/>
+                                            </Button>
+                                            <Button Classes="act" ToolTip.Tip="Toggle"
+                                                    Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).ToggleEnabledCommand}"
+                                                    CommandParameter="{Binding}">
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_toggle.png" Width="24" Height="24"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Opacity="{Binding Enabled, Converter={x:Static cv:Conv.EnabledOpacity}}"/>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+            </ScrollViewer>
+            
+            <Border IsVisible="{Binding IsLoading}" Background="{DynamicResource Bg1}">
+                <TextBlock Text="Loading…" Foreground="{DynamicResource TxtMute}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+        </Grid>
+        
+        <Border Grid.Row="2" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="16,16">
+            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                <Button Grid.Column="0" Classes="big" Width="100" MaxWidth="100" Click="OnAddTrack" IsEnabled="{Binding !IsBuilding}" HorizontalContentAlignment="Center"
+                        Padding="0" Height="48" MaxHeight="48" ToolTip.Tip="Add track">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_add.png" Width="24" Height="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"/>
+                        <TextBlock Text="ADD" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+                
+                <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto"
+                      VerticalAlignment="Center" IsVisible="{Binding TransportVisible}" 
+                      MaxWidth="550" Width="550" Height="48" MaxHeight="48">
+
+                    <Button Grid.Column="0" Classes="big" Width="48" Height="48" VerticalAlignment="Center"
+                            Command="{Binding TogglePlayCommand}" ToolTip.Tip="Play / Pause"
+                            Margin="0 0 16 0">
+                        <Panel>
+                            <Image Source="avares://FH6RB/Assets/icons/icon_play.png" Width="24" Height="24"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsVisible="{Binding !TransportPlaying}"/>
+                            <Image Source="avares://FH6RB/Assets/icons/icon_pause.png" Width="24" Height="24"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   IsVisible="{Binding TransportPlaying}"/>
+                        </Panel>
+                    </Button>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2"  Width="420" MaxWidth="420" Height="48" MaxHeight="48">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12" ClipToBounds="True">
+                            <TextBlock Text="{Binding NowTitle}" MaxWidth="300" FontSize="14" VerticalAlignment="Bottom"
+                                       FontWeight="SemiBold" Foreground="{DynamicResource Header}" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding NowArtist}" FontSize="12" MaxWidth="108" VerticalAlignment="Bottom"
+                                       Foreground="{DynamicResource TxtMute}" TextTrimming="CharacterEllipsis"/>
+                        </StackPanel>
+
+                        <Slider Classes="progress" Minimum="0" Maximum="{Binding DurationSeconds}" Value="{Binding PositionSeconds}"
+                                VerticalAlignment="Center" Margin="0,-12,0,0"/>
+
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <TextBlock Grid.Column="0" Text="{Binding NowPositionText}" FontFamily="{DynamicResource MonoFont}"
+                                       FontSize="11" Foreground="{DynamicResource TxtFaint}"/>
+                            <TextBlock Grid.Column="2" Text="{Binding NowDurationText}" FontFamily="{DynamicResource MonoFont}"
+                                       FontSize="11" Foreground="{DynamicResource TxtFaint}"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <Button Grid.Column="2" Classes="big" Width="48" Height="48" VerticalAlignment="Center"
+                            Click="OnTransportEdit" ToolTip.Tip="Edit" Margin="16 0 0 0">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                </Grid>
+
+                <Button Grid.Column="2" Classes="big primary" Width="100" MaxWidth="100" Click="OnBuild" IsEnabled="{Binding !IsBuilding}" HorizontalContentAlignment="Center"
+                        Height="48" MaxHeight="48" Padding="0" ToolTip.Tip="Build current bank">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_build.png" Width="24" Height="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"/>
+                        <TextBlock Text="BUILD" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+        
+        <Border Grid.Row="3" Background="{DynamicResource BgDarkest}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Height="30" Padding="14,0">
+            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                <TextBlock Grid.Column="0" Text="{Binding Status}" FontFamily="{DynamicResource MonoFont}"
+                           FontSize="11.5" Foreground="{DynamicResource TxtMute}" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="1" Text="{Binding CountText}" FontFamily="{DynamicResource MonoFont}"
+                           FontSize="11.5" Foreground="{DynamicResource TxtFaint}" VerticalAlignment="Center"
+                           Margin="12,0,0,0"/>
+            </Grid>
+        </Border>
+        
+        <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding IsBusy}"
+                Background="#D8161719">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
+                <Image Source="avares://FH6RB/Assets/icons/icon_processing.png" Width="64" Height="64"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       RenderTransformOrigin="50%,50%" Classes.spin="{Binding IsBusy}"/>
+                <TextBlock Text="{Binding Status}" Foreground="{DynamicResource Header}" FontSize="14"
+                           HorizontalAlignment="Center" TextAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

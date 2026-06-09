@@ -1,0 +1,285 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  
+  <Style Selector="Ellipse.dot">
+    <Setter Property="Width" Value="11"/><Setter Property="Height" Value="11"/>
+  </Style>
+  
+  <Style Selector="Border.titlebar">
+    <Setter Property="Background" Value="{DynamicResource BgDarkest}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource LineSoft}"/>
+    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+    <Setter Property="Height" Value="38"/>
+  </Style>
+  
+  <Style Selector="Button.big">
+    <Setter Property="Background" Value="{DynamicResource BgModifier}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Txt}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Padding" Value="18,10"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontSize" Value="13.5"/>
+    <Setter Property="VerticalAlignment" Value="Center"></Setter>
+    <Setter Property="HorizontalAlignment" Value="Center"></Setter>
+  </Style>
+  <Style Selector="Button.big:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BgHover}"/>
+  </Style>
+  <Style Selector="Button.big.primary">
+    <Setter Property="Background" Value="{DynamicResource Accent}"/>
+    <Setter Property="Foreground" Value="White"/>
+  </Style>
+  <Style Selector="Button.big.primary:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+  
+  <Style Selector="Button.act">
+    <Setter Property="Width" Value="32"/>
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Background" Value="{DynamicResource BgModifier}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+  <Style Selector="Button.act:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BgDarkest}"/>
+  </Style>
+  
+  <Style Selector="Button.act.del">
+    <Setter Property="Background" Value="{DynamicResource Red}"/>
+  </Style>
+  <Style Selector="Button.act.del Path"><Setter Property="Stroke" Value="White"/></Style>
+  
+  <Style Selector="Button.act Path">
+    <Setter Property="Stroke" Value="{DynamicResource Inter}"/>
+    <Setter Property="StrokeThickness" Value="2"/>
+    <Setter Property="StrokeJoin" Value="Round"/>
+    <Setter Property="StrokeLineCap" Value="Round"/>
+    <Setter Property="Width" Value="14"/><Setter Property="Height" Value="14"/>
+    <Setter Property="Stretch" Value="Uniform"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  
+  <Style Selector="Border.row">
+    <Setter Property="Background" Value="{DynamicResource Bg2}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Padding" Value="12,10"/>
+    <Setter Property="Margin" Value="0,0,0,4"/>
+  </Style>
+  
+  <Style Selector="TextBlock.sect">
+    <Setter Property="FontSize" Value="11"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="Foreground" Value="{DynamicResource TxtFaint}"/>
+    <Setter Property="Margin" Value="12,2,0,8"/>
+    <Setter Property="HorizontalAlignment" Value="Left"/>
+  </Style>
+  
+  <Style Selector="TextBox.field">
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Txt}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BgDarkest}"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Padding" Value="12 8"/>
+    <Setter Property="FontSize" Value="14"></Setter>
+  </Style>
+  
+  <Style Selector="TextBlock.lbl">
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+    <Setter Property="Foreground" Value="{DynamicResource TxtMute}"/>
+    <Setter Property="Margin" Value="12,0,0,4"/>
+  </Style>
+  
+  <Style Selector="ComboBox">
+    <Setter Property="CornerRadius" Value="6"/>
+    <Style.Resources>
+      <SolidColorBrush x:Key="ComboBoxBackground" Color="#141517"/>
+      <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#141517"/>
+      <SolidColorBrush x:Key="ComboBoxBackgroundPressed" Color="#141517"/>
+      <SolidColorBrush x:Key="ComboBoxBackgroundFocused" Color="#141517"/>
+      <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#34363b"/>
+      <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#34363b"/>
+      <SolidColorBrush x:Key="ComboBoxBorderBrushPressed" Color="#34363b"/>
+      <SolidColorBrush x:Key="ComboBoxBorderBrushFocused" Color="#34363b"/>
+      <SolidColorBrush x:Key="ComboBoxDropDownGlyphForeground" Color="#b5bac1"/>
+    </Style.Resources>
+  </Style>
+  
+  <Style Selector="TextBox.field:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+  </Style>
+  <Style Selector="TextBox.field:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+  </Style>
+  
+  <Style Selector="ToggleButton.adv">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Inter}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="CornerRadius" Value="8"/>
+    <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    <Setter Property="HorizontalContentAlignment" Value="Left"/>
+    <Setter Property="Padding" Value="13,11"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+    <Setter Property="FontSize" Value="13"/>
+  </Style>
+  <Style Selector="ToggleButton.adv:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource Header}"/>
+  </Style>
+  <Style Selector="ToggleButton.adv:checked /template/ ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  
+  <Style Selector="ScrollBar:vertical[IsExpanded=true] /template/ Thumb">
+    <Setter Property="RenderTransform"
+            Value="{DynamicResource VerticalSmallScrollThumbScaleTransform}"/>
+    <Setter Property="Background"
+            Value="{DynamicResource ScrollBarPanningThumbBackground}"/>
+  </Style>
+  <Style Selector="ScrollBar:horizontal[IsExpanded=true] /template/ Thumb">
+    <Setter Property="RenderTransform"
+            Value="{DynamicResource HorizontalSmallScrollThumbScaleTransform}"/>
+    <Setter Property="Background"
+            Value="{DynamicResource ScrollBarPanningThumbBackground}"/>
+  </Style>
+  <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect">
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+  <Style Selector="ScrollBar[IsExpanded=true] /template/ RepeatButton">
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+  <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  
+  <Style Selector=":is(Control).spin">
+    <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
+    <Style.Animations>
+      <Animation Duration="0:0:1.1" IterationCount="INFINITE">
+        <KeyFrame Cue="0%"><Setter Property="RotateTransform.Angle" Value="0"/></KeyFrame>
+        <KeyFrame Cue="100%"><Setter Property="RotateTransform.Angle" Value="360"/></KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+  
+  <Style Selector="Button.big:disabled">
+    <Setter Property="Opacity" Value="0.45"/>
+  </Style>
+  
+  <Style Selector="Slider.volume">
+    <Setter Property="Height" Value="28"/>
+    <Setter Property="Padding" Value="0"/>
+  </Style>
+  
+  <Style Selector="Slider.volume /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource Accent}"/>
+  </Style>
+
+  <Style Selector="Slider.volume /template/ RepeatButton#PART_IncreaseButton">
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+  </Style>
+  
+  <Style Selector="Slider.volume /template/ Thumb">
+    <Setter Property="Width" Value="14"/>
+    <Setter Property="Height" Value="14"/>
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Bg1}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+  
+  <Style Selector="Slider.volume:pointerover /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+  </Style>
+
+  <Style Selector="Slider.volume:pointerover /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+  </Style>
+  
+  <Style Selector="Slider.volume:pressed /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+
+  <Style Selector="Slider.volume:pressed /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+  
+  <Style Selector="Slider.progress">
+    <Setter Property="Height" Value="28"/>
+    <Setter Property="Padding" Value="0"/>
+  </Style>
+  
+  <Style Selector="Slider.progress /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource Accent}"/>
+  </Style>
+  
+  <Style Selector="Slider.progress /template/ RepeatButton#PART_IncreaseButton">
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+  </Style>
+  
+  <Style Selector="Slider.progress /template/ Thumb">
+    <Setter Property="Width" Value="14"/>
+    <Setter Property="Height" Value="14"/>
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Bg1}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+  
+  <Style Selector="Slider.progress:pointerover /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+  </Style>
+
+  <Style Selector="Slider.progress:pointerover /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+  </Style>
+  
+  <Style Selector="Slider.progress:pressed /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+  
+  <Style Selector="Slider.progress:pressed /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness">
+    <Setter Property="Height" Value="28"/>
+    <Setter Property="Padding" Value="0"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource Accent}"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness /template/ RepeatButton#PART_IncreaseButton">
+    <Setter Property="Background" Value="{DynamicResource BgHoverColor}"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness /template/ Thumb">
+    <Setter Property="Width" Value="14"/>
+    <Setter Property="Height" Value="14"/>
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Bg1}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness:pointerover /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+  </Style>
+
+  <Style Selector="Slider.loudness:pointerover /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource AccentHi}"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness:pressed /template/ RepeatButton#PART_DecreaseButton">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+  
+  <Style Selector="Slider.loudness:pressed /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
+  </Style>
+</Styles>
