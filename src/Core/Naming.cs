@@ -19,4 +19,19 @@ public static class Naming
         }
         return found;
     }
+    
+    public static Dictionary<ulong, string> ResolveCustomNames(IReadOnlySet<ulong> targetIds, int ceiling = 100000)
+    {
+        var result = new Dictionary<ulong, string>();
+        if (targetIds.Count == 0) return result;
+
+        for (int seq = 0; seq <= ceiling && result.Count < targetIds.Count; seq++)
+        {
+            string name = MakeSoundName(seq);
+            ulong h = Lookup.SoundNameToId(name);
+            if (targetIds.Contains(h)) result.TryAdd(h, name);
+        }
+
+        return result;
+    }
 }

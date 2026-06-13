@@ -36,8 +36,35 @@ public static class BankReader
         Log.Line($"  FSB5 samples = {withAudio}" + (withAudio == 0 ? " (streamed/empty — durations unavailable)" : ""));
 
         var ids = tracks.Select(t => t.Id).ToHashSet();
-        var customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
-        Log.Line($"  custom matches = {customs.Count}");
+        
+        var bakPath = bankPath + ".bak";
+        HashSet<ulong> customIds;
+        Dictionary<ulong, string> customs;
+        if (File.Exists(bakPath))
+        {
+            HashSet<ulong> originalIds;
+            try { originalIds = FevBank.ReadStblIdsFromFile(bakPath); }
+            catch (Exception ex) { Log.Line($"  .bak read failed: {ex.Message}"); originalIds = []; }
+
+            if (originalIds.Count > 0)
+            {
+                customIds = ids.Where(id => !originalIds.Contains(id)).ToHashSet();
+                customs = Naming.ResolveCustomNames(customIds);
+                Log.Line($"  customs by .bak diff = {customIds.Count}, named = {customs.Count}");
+            }
+            else
+            {
+                customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
+                customIds = customs.Keys.ToHashSet();
+                Log.Line($"  .bak empty -> name-probe customs = {customs.Count}");
+            }
+        }
+        else
+        {
+            customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
+            customIds = customs.Keys.ToHashSet();
+            Log.Line($"  no .bak -> name-probe customs = {customs.Count}");
+        }
 
         var meta = new Dictionary<ulong, (string Sn, string? Dn, string? Ar)>();
         var enabled = new HashSet<ulong>();
@@ -90,7 +117,7 @@ public static class BankReader
         {
             var hasAudio = t.SampleRate > 0;
             var customName = customs.GetValueOrDefault(t.Id);
-            var isCustom = customName is not null;
+            var isCustom = customIds.Contains(t.Id);
             var hasMeta = meta.TryGetValue(t.Id, out var m);
 
             var soundName = hasMeta ? m.Sn : customName ?? $"sound_{t.Index}";

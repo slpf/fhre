@@ -116,7 +116,62 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnBuild(object? sender, RoutedEventArgs e) => await Vm.BuildAsync();
+    private async void OnBuild(object? sender, RoutedEventArgs e)
+    {
+        await Vm.BuildAsync();
+
+        if (Vm.PendingErrorDialog is { } msg)
+        {
+            Vm.PendingErrorDialog = null;
+            await MessageDialog.ShowAsync(this, "Bank too large", msg);
+        }
+    }
+
+    private bool _forceClose;
+    private bool _confirmingQuit;
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (!_forceClose && Vm.IsBuilding)
+        {
+            e.Cancel = true;
+            if (!_confirmingQuit)
+            {
+                _ = ConfirmQuitAsync();
+            }
+
+            return;
+        }
+
+        base.OnClosing(e);
+    }
+
+    private async Task ConfirmQuitAsync()
+    {
+        _confirmingQuit = true;
+        try
+        {
+            await ConfirmQuitCoreAsync();
+        }
+        finally
+        {
+            _confirmingQuit = false;
+        }
+    }
+
+    private async Task ConfirmQuitCoreAsync()
+    {
+        var quit = await MessageDialog.ShowAsync(this, "Build in progress",
+            "A build is still running. Quitting now may leave the bank half-written " +
+            "(a .bak backup exists to restore from). Quit anyway?",
+            okText: "Quit", cancelText: "Keep building");
+
+        if (quit)
+        {
+            _forceClose = true;
+            Close();
+        }
+    }
     
     private static (string Title, string? Artist) ParseName(string fileName)
     {

@@ -54,6 +54,22 @@
                     </StackPanel>
                 </Border>
 
+                <TextBlock Classes="sect" Text="ENCODING" Margin="12,24,0,8"/>
+                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                        BorderThickness="1" CornerRadius="8" Padding="12">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="Encoding threads" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding EncodeParallelismText}" Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="1" Maximum="{Binding MaxThreads}" Value="{Binding EncodeParallelism}"
+                                TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="Parallel jobs while building. Higher is faster but uses more CPU, RAM and disk."
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Classes="sect" Text="BACKUPS" Margin="12,24,0,8"/>
                 <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding HasBackups}">
                     <Button Classes="big" Click="OnRestore" Content="Restore backups"/>

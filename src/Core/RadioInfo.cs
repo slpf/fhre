@@ -256,8 +256,6 @@ public sealed class RadioStationEditor(XElement station)
                 }
                 else
                 {
-                    // непрофильные маркеры (VeryStart/Loop*/Section*/BinkTransition) выключаем:
-                    // у клонированного шаблона они несут позиции чужого трека, возможно больше длины кастома.
                     mk.SetAttributeValue("Position", -1);
                 }
             }
@@ -349,5 +347,34 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
-    private XElement? FindSample(string soundName) => TrackList.Elements("Sample").FirstOrDefault(s => (string?) s.Attribute("SoundName") == soundName);
+public bool IsCustomEnabled(string soundName)
+    {
+        var fr = MusicPlaylists.FirstOrDefault(pl => (string?) pl.Attribute("Type") == "FreeRoam");
+        return fr?.Elements("Entry").Any(e => (string?) e.Attribute("Name") == soundName) == true;
+    }
+
+    public void SyncCustomsFrom(RadioStationEditor reference)
+    {
+        var refSamples = reference.TrackList.Elements("Sample")
+            .Where(s => ((string?) s.Attribute("SoundName"))?.StartsWith(Naming.CustomPrefix) == true)
+            .ToList();
+        var refNames = refSamples
+            .Select(s => (string) s.Attribute("SoundName")!)
+            .ToHashSet();
+        
+        foreach (var sn in CustomSoundNames().Where(sn => !refNames.Contains(sn)).ToList())
+        {
+            PurgeSoundName(sn);
+        }
+        
+        foreach (var rs in refSamples)
+        {
+            var sn = (string) rs.Attribute("SoundName")!;
+            FindSample(sn)?.Remove();
+            TrackList.Add(new XElement(rs));
+            SetEnabled(sn, reference.IsCustomEnabled(sn));
+        }
+    }
+
+        private XElement? FindSample(string soundName) => TrackList.Elements("Sample").FirstOrDefault(s => (string?) s.Attribute("SoundName") == soundName);
 }

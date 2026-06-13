@@ -1,0 +1,23 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="FH6RB.Views.MessageDialog"
+        Width="440"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        SizeToContent="Height"
+        Title="Notice">
+    <Grid RowDefinitions="*,Auto">
+        <StackPanel Margin="20" Spacing="12">
+            <TextBlock x:Name="MessageText" Foreground="{DynamicResource TxtMute}"
+                       FontSize="13" TextWrapping="Wrap" LineHeight="19"/>
+        </StackPanel>
+        <Border Grid.Row="1" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button x:Name="CancelButton" Classes="big" Click="OnCancel" Content="Cancel"/>
+                <Button x:Name="OkButton" Classes="big primary" Click="OnOk" Content="OK"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

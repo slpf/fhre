@@ -7,7 +7,7 @@ namespace FH6RB.Services;
 
 public static class AudioDecoder
 {
-    private static readonly string Dir = Path.Combine(Path.GetTempPath(), "FH6RB", "preview");
+    private static readonly string Dir = Path.Combine(Path.GetTempPath(), "FHRE", "preview");
     
     public static void ClearAll()
     {
@@ -71,9 +71,11 @@ public static class AudioDecoder
         };
 
         using var p = Process.Start(psi) ?? throw new InvalidOperationException($"cannot start {Path.GetFileName(exe)}");
-        var err = p.StandardError.ReadToEnd();
-        p.StandardOutput.ReadToEnd();
+        var so = p.StandardOutput.ReadToEndAsync();
+        var se = p.StandardError.ReadToEndAsync();
         p.WaitForExit();
+        _ = so.GetAwaiter().GetResult();
+        var err = se.GetAwaiter().GetResult();
 
         if (p.ExitCode != 0)
         {

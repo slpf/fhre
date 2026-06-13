@@ -15,7 +15,8 @@ public static class MetadataReader
         try
         {
             var psi = new ProcessStartInfo(exe,
-                $"-v error -show_entries format=duration:format_tags=title,artist:stream_tags=title,artist " +
+                $"-v error -select_streams a:0 " +
+                $"-show_entries format=duration:format_tags=title,artist:stream_tags=title,artist " +
                 $"-of default=noprint_wrappers=1 \"{path}\"")
             {
                 RedirectStandardOutput = true,
@@ -32,8 +33,11 @@ public static class MetadataReader
                 return (null, null, 0);
             }
 
-            var output = p.StandardOutput.ReadToEnd();
+            var so = p.StandardOutput.ReadToEndAsync();
+            var se = p.StandardError.ReadToEndAsync();
             p.WaitForExit();
+            var output = so.GetAwaiter().GetResult();
+            _ = se.GetAwaiter().GetResult();
 
             string? title = null;
             string? artist = null;

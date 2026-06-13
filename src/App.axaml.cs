@@ -15,6 +15,7 @@ public partial class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         ScratchDir.CleanupStale(TimeSpan.FromHours(1));
+        WorkDirs.Clean();
         AudioDecoder.ClearAll();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

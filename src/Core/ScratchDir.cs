@@ -2,7 +2,7 @@ namespace FH6RB.Core;
 
 public sealed class ScratchDir : IDisposable
 {
-    private const string Root = "FH6RB";
+    private const string Root = "FHRE";
 
     public string Path { get; }
 

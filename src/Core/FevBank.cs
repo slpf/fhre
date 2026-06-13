@@ -535,5 +535,242 @@ public sealed class FevBank
 
         return result;
     }
+    
+    private const int Fsb5HeaderSize = 60;
 
+    public readonly record struct DataRef(string Path, long Offset, long Length);
+
+    public sealed record BankSkeleton(
+        byte[] FmtChunk, byte[] ListPayload, int StblRelOff, int StblOldSize,
+        List<(ulong Id, int Index)> Stbl, byte[] Fsb5HeaderRegion, long DataStartAbs, int Mode, bool Empty);
+
+    private static string Tag4(byte[] b, int o) => $"{(char)b[o]}{(char)b[o + 1]}{(char)b[o + 2]}{(char)b[o + 3]}";
+
+    public static BankSkeleton ReadSkeleton(string path)
+    {
+        using var fs = File.OpenRead(path);
+        var head = ReadExact(fs, 12);
+        if (Tag4(head, 0) != "RIFF" || Tag4(head, 8) != "FEV ") throw new InvalidDataException("not a RIFF/FEV bank");
+
+        byte[]? fmtChunk = null;
+        byte[]? listPay = null;
+        var sawSnd = false;
+        var hdr = new byte[8];
+
+        while (fs.Position + 8 <= fs.Length)
+        {
+            if (fs.Read(hdr, 0, 8) < 8) break;
+            var id = Tag4(hdr, 0);
+            var size = (int) BinaryPrimitives.ReadUInt32LittleEndian(hdr.AsSpan(4));
+            if (id == "FMT ")
+            {
+                var pay = ReadExact(fs, size);
+                fmtChunk = new byte[8 + size];
+                Array.Copy(hdr, 0, fmtChunk, 0, 8);
+                Array.Copy(pay, 0, fmtChunk, 8, size);
+            }
+            else if (id == "LIST") { listPay = ReadExact(fs, size); }
+            else if (id == "SND ") { sawSnd = true; break; }
+            else { fs.Seek(size, SeekOrigin.Current); }
+        }
+
+        if (!sawSnd || listPay is null || fmtChunk is null)
+        {
+            return new BankSkeleton(fmtChunk ?? [], listPay ?? [], 0, 0, [], [], 0, 0, Empty: true);
+        }
+
+        var (stblRelOff, stblSize) = FindChunkInList(listPay, "STBL");
+        var (sndhRelOff, _) = FindChunkInList(listPay, "SNDH");
+        if (stblRelOff < 0 || sndhRelOff < 0)
+        {
+            return new BankSkeleton(fmtChunk, listPay, 0, 0, [], [], 0, 0, Empty: true);
+        }
+
+        long fsbOff = BinaryPrimitives.ReadUInt32LittleEndian(listPay.AsSpan(sndhRelOff + 8 + 4));
+        var stbl = ParseStblPayload(listPay, stblRelOff + 8);
+
+        fs.Seek(fsbOff, SeekOrigin.Begin);
+        var h60 = ReadExact(fs, Fsb5HeaderSize);
+        var shs = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(12));
+        var ns = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(16));
+        var mode = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(0x18));
+
+        fs.Seek(fsbOff, SeekOrigin.Begin);
+        var region = ReadExact(fs, Fsb5HeaderSize + shs);
+        var dataStartAbs = fsbOff + Fsb5HeaderSize + shs + ns;
+
+        return new BankSkeleton(fmtChunk, listPay, stblRelOff, stblSize, stbl, region, dataStartAbs, mode, Empty: false);
+    }
+
+    private static List<(ulong Id, int Index)> ParseStblPayload(byte[] list, int sp)
+    {
+        var result = new List<(ulong, int)>();
+        if (sp + 10 > list.Length) return result;
+        int count = BinaryPrimitives.ReadUInt16LittleEndian(list.AsSpan(sp + 8));
+        if (sp + 10 + count * 8 > list.Length) return result;
+
+        var ids = new ulong[count];
+        for (var i = 0; i < count; i++) ids[i] = BinaryPrimitives.ReadUInt64LittleEndian(list.AsSpan(sp + 10 + i * 8));
+
+        var q = sp + 10 + count * 8;
+        if (q + 2 > list.Length) return result;
+        int count2 = BinaryPrimitives.ReadUInt16LittleEndian(list.AsSpan(q)); q += 2;
+        if (q + count2 * 3 > list.Length) return result;
+
+        for (var i = 0; i < count2 && i < count; i++)
+        {
+            var idx = list[q] | list[q + 1] << 8 | list[q + 2] << 16; q += 3;
+            result.Add((ids[i], idx));
+        }
+
+        return result;
+    }
+
+    public static void AssembleToFile(string outPath, byte[] fmtChunk, byte[] srcListPayload,
+        int stblRelOff, int stblOldSize, byte[] newStblPayload, byte[] fsb5Header60,
+        IReadOnlyList<byte[]> sampleHeaders, IReadOnlyList<DataRef> sampleData)
+    {
+        if (sampleHeaders.Count != sampleData.Count) throw new InvalidOperationException("headers/data count mismatch");
+
+        long headersLen = 0;
+        foreach (var h in sampleHeaders) headersLen += h.Length;
+
+        var offs = new long[sampleData.Count];
+        long dataLen = 0;
+        for (var i = 0; i < sampleData.Count; i++)
+        {
+            offs[i] = dataLen;
+            var l = sampleData[i].Length;
+            dataLen += l + (0x20 - (l % 0x20)) % 0x20;
+        }
+
+        var fsbSize = Fsb5HeaderSize + headersLen + dataLen;
+
+        var h60 = (byte[]) fsb5Header60.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(8),  (uint) sampleHeaders.Count);
+        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(12), (uint) headersLen);
+        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(16), 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(20), (uint) dataLen);
+
+        var before = srcListPayload[0..stblRelOff];
+        var e = stblRelOff + 8 + stblOldSize;
+        if ((e & 1) != 0) e++;
+        var after = srcListPayload[e..];
+        var stblPad = newStblPayload.Length & 1;
+
+        using var lm = new MemoryStream();
+        lm.Write(before, 0, before.Length);
+        WriteTag(lm, "STBL"); WriteU32(lm, (uint) newStblPayload.Length);
+        lm.Write(newStblPayload, 0, newStblPayload.Length);
+        if (stblPad != 0) lm.WriteByte(0);
+        lm.Write(after, 0, after.Length);
+        var newList = lm.ToArray();
+        var listLen = newList.Length;
+
+        var sndStart = 12 + fmtChunk.Length + 8 + listLen + 8;
+        var prefix = (0x20 - (sndStart % 0x20)) % 0x20;
+        long fsbAbs = (long) sndStart + prefix;
+
+        var (sndhRel, _) = FindChunkInList(newList, "SNDH");
+        BinaryPrimitives.WriteUInt32LittleEndian(newList.AsSpan(sndhRel + 8 + 4), (uint) fsbAbs);
+        BinaryPrimitives.WriteUInt32LittleEndian(newList.AsSpan(sndhRel + 8 + 8), (uint) fsbSize);
+
+        long sndPayloadLen = prefix + fsbSize;
+        long bodyLen = fmtChunk.Length + 8 + listLen + 8 + sndPayloadLen;
+        
+        var totalSize = 12 + bodyLen;
+        if (totalSize > int.MaxValue)
+        {
+            throw new BankTooLargeException(
+                $"Resulting bank is {totalSize / 1073741824.0:0.00} GB, over the 2 GB limit the game can load. " +
+                "Use fewer tracks or place them in a different bank.");
+        }
+
+        using var f = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
+        WriteTag(f, "RIFF"); WriteU32(f, (uint)(bodyLen + 4)); WriteTag(f, "FEV ");
+        f.Write(fmtChunk, 0, fmtChunk.Length);
+        WriteTag(f, "LIST"); WriteU32(f, (uint) listLen); f.Write(newList, 0, newList.Length);
+        WriteTag(f, "SND "); WriteU32(f, (uint) sndPayloadLen); WriteZeros(f, prefix);
+        f.Write(h60, 0, h60.Length);
+        for (var i = 0; i < sampleHeaders.Count; i++)
+        {
+            var rb = Fsb5.RebaseHeader(sampleHeaders[i], offs[i]);
+            f.Write(rb, 0, rb.Length);
+        }
+
+        var cache = new Dictionary<string, FileStream>();
+        try
+        {
+            var buf = new byte[1 << 20];
+            for (var i = 0; i < sampleData.Count; i++)
+            {
+                var dr = sampleData[i];
+                if (!cache.TryGetValue(dr.Path, out var src)) { src = File.OpenRead(dr.Path); cache[dr.Path] = src; }
+                src.Seek(dr.Offset, SeekOrigin.Begin);
+                CopyExact(src, f, dr.Length, buf);
+                WriteZeros(f, (0x20 - (dr.Length % 0x20)) % 0x20);
+            }
+        }
+        finally { foreach (var s in cache.Values) s.Dispose(); }
+    }
+
+    private static (int TagOff, int PayloadSize) FindChunkInList(byte[] list, string id)
+    {
+        var p = 4;
+        while (p + 8 <= list.Length)
+        {
+            var cid = Tag4(list, p);
+            var size = (int) BinaryPrimitives.ReadUInt32LittleEndian(list.AsSpan(p + 4));
+            if (cid == id) return (p, size);
+            p = p + 8 + size;
+            if ((p & 1) != 0) p++;
+        }
+        return (-1, 0);
+    }
+
+    private static byte[] ReadExact(Stream s, int count)
+    {
+        var buf = new byte[count];
+        var read = 0;
+        while (read < count) { var n = s.Read(buf, read, count - read); if (n <= 0) throw new EndOfStreamException(); read += n; }
+        return buf;
+    }
+
+    private static void CopyExact(Stream src, Stream dst, long length, byte[] buf)
+    {
+        while (length > 0)
+        {
+            var n = src.Read(buf, 0, (int) Math.Min(length, buf.Length));
+            if (n <= 0) throw new EndOfStreamException("source data truncated");
+            dst.Write(buf, 0, n);
+            length -= n;
+        }
+    }
+
+    private static void WriteTag(Stream s, string tag)
+    {
+        var b = new byte[4];
+        for (var i = 0; i < 4; i++) b[i] = (byte) tag[i];
+        s.Write(b, 0, 4);
+    }
+
+    private static void WriteU32(Stream s, uint v)
+    {
+        var b = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(b, v);
+        s.Write(b, 0, 4);
+    }
+
+    private static void WriteZeros(Stream s, long count)
+    {
+        if (count <= 0) return;
+        var z = new byte[64];
+        while (count > 0) { var n = (int) Math.Min(count, z.Length); s.Write(z, 0, n); count -= n; }
+    }
+
+}
+
+public sealed class BankTooLargeException : Exception
+{
+    public BankTooLargeException(string message) : base(message) { }
 }

@@ -24,6 +24,13 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private double _targetLufs;
 
     public string TargetLufsText => $"{TargetLufs:0} LUFS";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(EncodeParallelismText))]
+    private int _encodeParallelism;
+
+    public int MaxThreads => Environment.ProcessorCount;
+    public string EncodeParallelismText => $"{EncodeParallelism} / {MaxThreads}";
     
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BackupVisible))]
@@ -48,6 +55,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings = settings;
         _gamePath = settings.GamePath;
         _targetLufs = settings.TargetLufs;
+        _encodeParallelism = settings.EncodeParallelism > 0
+            ? Math.Min(settings.EncodeParallelism, MaxThreads)
+            : AppSettings.RecommendedParallelism;
         Validate();
     }
 
@@ -129,6 +139,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     {
         _settings.GamePath = GamePath;
         _settings.TargetLufs = Math.Round(TargetLufs);
+        _settings.EncodeParallelism = EncodeParallelism;
         SettingsService.Save(_settings);
         Saved = true;
     }

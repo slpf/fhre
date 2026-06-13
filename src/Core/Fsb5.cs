@@ -150,6 +150,70 @@ public sealed class Fsb5
         BinaryPrimitives.WriteUInt64LittleEndian(dest, raw);
     }
 
+    public sealed record SampleLayout(byte[] Header, long DataOff, long DataLen, long Frames, int SampleRate);
+
+    public static (byte[] Header60, List<SampleLayout> Samples) ReadLayout(byte[] b)
+    {
+        if (b.Length < HeaderSize || b[0] != (byte)'F' || b[1] != (byte)'S' || b[2] != (byte)'B' || b[3] != (byte)'5')
+        {
+            throw new InvalidDataException("not an FSB5 block");
+        }
+
+        var numSamples       = (int) U32(b, 8);
+        var sampleHeaderSize = (int) U32(b, 12);
+        long dataSize        = U32(b, 20);
+
+        var header60 = b[0..HeaderSize];
+        var hdrOff = new int[numSamples];
+        var hdrLen = new int[numSamples];
+        var dataOff = new long[numSamples];
+        var frames = new long[numSamples];
+        var freqId = new int[numSamples];
+
+        var pos = HeaderSize;
+        for (var i = 0; i < numSamples; i++)
+        {
+            if (pos + 8 > b.Length) throw new InvalidDataException("FSB5 layout: header region truncated");
+            var raw = U64(b, pos);
+            freqId[i]  = (int)((raw >> 1) & 0xF);
+            dataOff[i] = (long)((raw >> 7) & 0x07FFFFFF) * 0x20;
+            frames[i]  = (long)((raw >> 34) & 0x3FFFFFFF);
+
+            var p = pos + 8;
+            if ((raw & 1) != 0)
+            {
+                while (p + 4 <= b.Length)
+                {
+                    var ch = U32(b, p);
+                    var size = (int)((ch >> 1) & 0xFFFFFF);
+                    p += 4 + size;
+                    if ((ch & 1) == 0) break;
+                }
+            }
+
+            hdrOff[i] = pos;
+            hdrLen[i] = p - pos;
+            pos = p;
+        }
+
+        var samples = new List<SampleLayout>(numSamples);
+        for (var i = 0; i < numSamples; i++)
+        {
+            var end = (i + 1 < numSamples) ? dataOff[i + 1] : dataSize;
+            samples.Add(new SampleLayout(b[hdrOff[i]..(hdrOff[i] + hdrLen[i])], dataOff[i], end - dataOff[i],
+                frames[i], freqId[i] < FreqTable.Length ? FreqTable[freqId[i]] : 0));
+        }
+
+        return (header60, samples);
+    }
+
+    public static byte[] RebaseHeader(byte[] header, long byteOffset)
+    {
+        var h = new byte[header.Length];
+        RebaseOffsetInto(header, byteOffset, h);
+        return h;
+    }
+
     public byte[] Build(IReadOnlyList<Fsb5Sample> samples)
     {
         long headersLen = 0;
