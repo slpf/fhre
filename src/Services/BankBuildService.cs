@@ -12,15 +12,17 @@ public sealed record BuildItem(
     string? DisplayName,
     string? Artist,
     double? GainDb,
-    bool Enabled);
+    bool Enabled,
+    IReadOnlyDictionary<string, long>? Markers = null,
+    bool IsReplacement = false);
 
-public sealed record AddedSample(string SoundName, long Frames, int SampleRate, string? DisplayName, string? Artist, bool Enabled);
+public sealed record AddedSample(string SoundName, long Frames, int SampleRate, string? DisplayName, string? Artist, bool Enabled, bool IsReplacement = false);
 
 public sealed record BuildResult(byte[] AssetsBank, IReadOnlyList<AddedSample> Added);
 
 public static class BankBuildService
 {
-    public static BuildResult Build(byte[] sourceAssetsBank, IReadOnlyList<BuildItem> items,
+    private static BuildResult Build(byte[] sourceAssetsBank, IReadOnlyList<BuildItem> items,
                                     AppSettings settings, Action<string>? log = null, Action<string>? progress = null)
     {
         var fev = new FevBank(sourceAssetsBank);
@@ -35,8 +37,8 @@ public static class BankBuildService
 
         if (newCustoms.Count > 0)
         {
-            using var scratch = new ScratchDir();
-            
+            WorkDirs.Ensure();
+
             var mode = empty ? 15 : fev.Fsb5Mode;
             var fadpcm = mode == 16;
             var fmtArgs = fadpcm
@@ -50,10 +52,10 @@ public static class BankBuildService
                 progress?.Invoke($"Encoding {i + 1}/{newCustoms.Count}: {name}");
                 log?.Invoke($"track {i + 1}/{newCustoms.Count}: {name}");
 
-                var wav = scratch.File($"add_{i}.wav");
+                var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
                 Encode(newCustoms[i], wav, settings, log);
 
-                var fsb = scratch.File($"add_{i}.fsb");
+                var fsb = Path.Combine(WorkDirs.FsbDir, $"add_{i}.fsb");
                 Run(Tools.FsbankclPath, $"{fmtArgs} -o \"{fsb}\" \"{wav}\"", log);
                 if (!File.Exists(fsb))
                 {
@@ -72,11 +74,11 @@ public static class BankBuildService
         }
 
         var added = new List<AddedSample>(newCustoms.Count);
+        
         for (var i = 0; i < newCustoms.Count; i++)
         {
             var s = addedSamples[i];
-            added.Add(new AddedSample(newCustoms[i].SoundName, s.Frames, s.SampleRate,
-                newCustoms[i].DisplayName, newCustoms[i].Artist, newCustoms[i].Enabled));
+            added.Add(new AddedSample(newCustoms[i].SoundName, s.Frames, s.SampleRate, newCustoms[i].DisplayName, newCustoms[i].Artist, newCustoms[i].Enabled));
         }
 
         byte[] outBank;
@@ -93,6 +95,7 @@ public static class BankBuildService
             var combined = templateFsb.Build(addedSamples);
             var entries = newCustoms.Select((c, i) => (Lookup.SoundNameToId(c.SoundName), i)).ToList();
             var stbl = FevBank.BuildStbl(entries);
+            
             outBank = fev.FillEmpty(stbl, combined);
             log?.Invoke($"filled empty skeleton: {newCustoms.Count} sample(s)");
         }
@@ -100,6 +103,7 @@ public static class BankBuildService
         {
             var editor = new BankEditor(sourceAssetsBank);
             var hashToIndex = new Dictionary<ulong, int>();
+            
             for (var i = 0; i < editor.SourceSampleCount; i++)
             {
                 hashToIndex[editor.HashForIndex(i)] = i;
@@ -107,6 +111,7 @@ public static class BankBuildService
 
             var plan = new List<PlanItem>(items.Count);
             var k = 0;
+            
             foreach (var it in items)
             {
                 if (it.IsNewCustom)
@@ -161,6 +166,7 @@ public static class BankBuildService
         using var p = Process.Start(psi) ?? throw new InvalidOperationException($"cannot start {exe}");
         var stdout = p.StandardOutput.ReadToEndAsync();
         var stderr = p.StandardError.ReadToEndAsync();
+        
         p.WaitForExit();
 
         var outText = stdout.Result.Trim();
@@ -168,15 +174,27 @@ public static class BankBuildService
 
         if (p.ExitCode != 0)
         {
-            if (outText.Length > 0) log?.Invoke($"  [out] {outText}");
-            if (errText.Length > 0) log?.Invoke($"  [err] {errText}");
+            if (outText.Length > 0)
+            {
+                log?.Invoke($"  [out] {outText}");
+            }
+            
+            if (errText.Length > 0)
+            {
+                log?.Invoke($"  [err] {errText}");
+            }
+            
             var detail = (errText.Length > 0 ? errText : outText);
+            
             throw new InvalidOperationException(
                 $"{Path.GetFileName(exe)} exited with code {p.ExitCode}" +
                 (detail.Length > 0 ? $": {detail}" : ""));
         }
 
-        if (errText.Length > 0) log?.Invoke($"  [err] {errText}");
+        if (errText.Length > 0)
+        {
+            log?.Invoke($"  [err] {errText}");
+        }
     }
 
     public static async Task<IReadOnlyList<AddedSample>> BuildToFileAsync(
@@ -190,36 +208,44 @@ public static class BankBuildService
             log?.Invoke("target: EMPTY skeleton -> in-memory fill");
             var res = Build(File.ReadAllBytes(sourcePath), items, settings, log, progress);
             File.WriteAllBytes(outPath, res.AssetsBank);
+            WorkDirs.Clean();
             return res.Added;
         }
 
         var (srcHeader60, srcLayout) = Fsb5.ReadLayout(skel.Fsb5HeaderRegion);
+        
         if (srcLayout.Count != skel.Stbl.Count)
         {
             throw new InvalidDataException($"STBL entries ({skel.Stbl.Count}) != FSB5 samples ({srcLayout.Count})");
         }
 
         var hashToIndex = new Dictionary<ulong, int>();
-        foreach (var (id, idx) in skel.Stbl) hashToIndex[id] = idx;
+        
+        foreach (var (id, idx) in skel.Stbl)
+        {
+            hashToIndex[id] = idx;
+        }
 
-        var newCustoms = items.Where(i => i.IsNewCustom).ToList();
+        var encoded = items.Where(i => i.IsNewCustom || i.IsReplacement).ToList();
         var fadpcm = skel.Mode == 16;
-        var fmtArgs = fadpcm
-            ? "-format fadpcm"
-            : $"-format vorbis -quality {settings.VorbisQuality.ToString(CultureInfo.InvariantCulture)}";
-        log?.Invoke($"target: populated, FSB5 mode {skel.Mode} -> {(fadpcm ? "FADPCM" : "Vorbis")}; {items.Count} items, {newCustoms.Count} new");
+        var fmtArgs = fadpcm ? "-format fadpcm" : $"-format vorbis -quality {settings.VorbisQuality.ToString(CultureInfo.InvariantCulture)}";
+        
+        log?.Invoke($"target: populated, FSB5 mode {skel.Mode} -> {(fadpcm ? "FADPCM" : "Vorbis")}; {items.Count} items, {encoded.Count} new");
 
         WorkDirs.Ensure();
 
-        var custHeaders = new byte[newCustoms.Count][];
-        var custRefs = new FevBank.DataRef[newCustoms.Count];
-        var added = new AddedSample[newCustoms.Count];
-
-        var parallelism = settings.EncodeParallelism > 0
-            ? settings.EncodeParallelism
-            : AppSettings.RecommendedParallelism;
+        var custHeaders = new byte[encoded.Count][];
+        var custRefs = new FevBank.DataRef[encoded.Count];
+        var added = new AddedSample[encoded.Count];
+        var parallelism = settings.EncodeParallelism > 0 ? settings.EncodeParallelism : AppSettings.RecommendedParallelism;
+        
         parallelism = Math.Clamp(parallelism, 1, Environment.ProcessorCount);
-        log?.Invoke($"encoding {newCustoms.Count} track(s), parallelism = {parallelism}");
+        log?.Invoke($"encoding {encoded.Count} track(s), parallelism = {parallelism}");
+
+        if (encoded.Count > 0)
+        {
+            progress?.Invoke($"Encoding…\t0/{encoded.Count}");
+        }
 
         using var sema = new SemaphoreSlim(parallelism);
         var startedCount = 0;
@@ -229,13 +255,13 @@ public static class BankBuildService
             await sema.WaitAsync().ConfigureAwait(false);
             try
             {
-                var item = newCustoms[i];
+                var item = encoded[i];
 
                 var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
                 await EncodeAsync(item, wav, settings, log).ConfigureAwait(false);
 
                 var n = Interlocked.Increment(ref startedCount);
-                progress?.Invoke($"Encoding…\t{n}/{newCustoms.Count}");
+                progress?.Invoke($"Encoding…\t{n}/{encoded.Count}");
 
                 var fsb = Path.Combine(WorkDirs.FsbDir, $"add_{i}.fsb");
                 await RunAsync(Tools.FsbankclPath, $"{fmtArgs} -o \"{fsb}\" \"{wav}\"", log).ConfigureAwait(false);
@@ -253,7 +279,7 @@ public static class BankBuildService
 
                 custHeaders[i] = c.Header;
                 custRefs[i] = new FevBank.DataRef(fsb, 60 + shs + ns + c.DataOff, c.DataLen);
-                added[i] = new AddedSample(item.SoundName, c.Frames, c.SampleRate, item.DisplayName, item.Artist, item.Enabled);
+                added[i] = new AddedSample(item.SoundName, c.Frames, c.SampleRate, item.DisplayName, item.Artist, item.Enabled, item.IsReplacement);
             }
             finally
             {
@@ -261,7 +287,7 @@ public static class BankBuildService
             }
         }
 
-        await Task.WhenAll(Enumerable.Range(0, newCustoms.Count).Select(EncodeOneAsync)).ConfigureAwait(false);
+        await Task.WhenAll(Enumerable.Range(0, encoded.Count).Select(EncodeOneAsync)).ConfigureAwait(false);
 
         var outHeaders = new List<byte[]>(items.Count);
         var outData = new List<FevBank.DataRef>(items.Count);
@@ -273,15 +299,24 @@ public static class BankBuildService
         foreach (var it in items)
         {
             var hash = Lookup.SoundNameToId(it.SoundName);
-            if (it.IsNewCustom)
+            
+            if (it.IsNewCustom || it.IsReplacement)
             {
-                if (!seen.Add(hash)) throw new InvalidOperationException($"duplicate STBL id in plan: {it.SoundName}");
+                if (!seen.Add(hash))
+                {
+                    throw new InvalidOperationException($"duplicate STBL id in plan: {it.SoundName}");
+                }
+                
                 outHeaders.Add(custHeaders[k]); outData.Add(custRefs[k]); stbl.Add((hash, newIndex));
                 k++; newIndex++;
             }
             else if (hashToIndex.TryGetValue(hash, out var idx) && idx >= 0 && idx < srcLayout.Count)
             {
-                if (!seen.Add(hash)) throw new InvalidOperationException($"duplicate STBL id in plan: {it.SoundName}");
+                if (!seen.Add(hash))
+                {
+                    throw new InvalidOperationException($"duplicate STBL id in plan: {it.SoundName}");
+                }
+                
                 var sl = srcLayout[idx];
                 outHeaders.Add(sl.Header);
                 outData.Add(new FevBank.DataRef(sourcePath, skel.DataStartAbs + sl.DataOff, sl.DataLen));
@@ -294,15 +329,19 @@ public static class BankBuildService
             }
         }
 
-        if (outHeaders.Count == 0) throw new InvalidOperationException("nothing to build (no matching samples)");
+        if (outHeaders.Count == 0)
+        {
+            throw new InvalidOperationException("nothing to build (no matching samples)");
+        }
 
         progress?.Invoke("Assembling bank…");
+        
         var stblPayload = FevBank.BuildStbl(stbl);
-        FevBank.AssembleToFile(outPath, skel.FmtChunk, skel.ListPayload, skel.StblRelOff, skel.StblOldSize,
-            stblPayload, srcHeader60, outHeaders, outData);
-
+        
+        FevBank.AssembleToFile(outPath, skel.FmtChunk, skel.ListPayload, skel.StblRelOff, skel.StblOldSize, stblPayload, srcHeader60, outHeaders, outData);
         log?.Invoke($"streamed populated bank: {outHeaders.Count} sample(s)");
         WorkDirs.Clean();
+        
         return added;
     }
 
@@ -310,12 +349,29 @@ public static class BankBuildService
     {
         using var fs = File.OpenRead(fsbPath);
         var h60 = new byte[60];
-        if (fs.Read(h60, 0, 60) < 60) throw new InvalidDataException("custom FSB5 too small");
+        
+        if (fs.Read(h60, 0, 60) < 60)
+        {
+            throw new InvalidDataException("custom FSB5 too small");
+        }
+        
         var shs = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(12));
         var region = new byte[60 + shs];
+        
         fs.Seek(0, SeekOrigin.Begin);
+        
         var read = 0;
-        while (read < region.Length) { var n = fs.Read(region, read, region.Length - read); if (n <= 0) throw new InvalidDataException("custom FSB5 header truncated"); read += n; }
+        
+        while (read < region.Length)
+        {
+            var n = fs.Read(region, read, region.Length - read); 
+            if (n <= 0)
+            {
+                throw new InvalidDataException("custom FSB5 header truncated");
+            } 
+            read += n;
+        }
+        
         return region;
     }
 
@@ -335,6 +391,7 @@ public static class BankBuildService
         using var p = Process.Start(psi) ?? throw new InvalidOperationException($"cannot start {exe}");
         var so = p.StandardOutput.ReadToEndAsync();
         var se = p.StandardError.ReadToEndAsync();
+        
         await p.WaitForExitAsync().ConfigureAwait(false);
 
         var outText = (await so.ConfigureAwait(false)).Trim();
@@ -342,14 +399,25 @@ public static class BankBuildService
 
         if (p.ExitCode != 0)
         {
-            if (outText.Length > 0) log?.Invoke($"  [out] {outText}");
-            if (errText.Length > 0) log?.Invoke($"  [err] {errText}");
+            if (outText.Length > 0)
+            {
+                log?.Invoke($"  [out] {outText}");
+            }
+            
+            if (errText.Length > 0)
+            {
+                log?.Invoke($"  [err] {errText}");
+            }
+            
             var detail = errText.Length > 0 ? errText : outText;
             throw new InvalidOperationException(
                 $"{Path.GetFileName(exe)} exited with code {p.ExitCode}" + (detail.Length > 0 ? $": {detail}" : ""));
         }
 
-        if (errText.Length > 0) log?.Invoke($"  [err] {errText}");
+        if (errText.Length > 0)
+        {
+            log?.Invoke($"  [err] {errText}");
+        }
     }
 
     private static async Task EncodeAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)

@@ -1,18 +1,20 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.SettingsWindow"
         x:DataType="vm:SettingsWindowViewModel"
         Width="520" Height="430"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
-        Title="Settings"
+        Title="{x:Static assets:Str.TitleSettings}"
         SizeToContent="Height">
 
     <Grid RowDefinitions="*,Auto">
         <StackPanel MaxWidth="480" HorizontalAlignment="Stretch" Margin="16">
-            <TextBlock Classes="sect" Text="GAME PATH"/>
+            <TextBlock Classes="sect" Text="{x:Static assets:Str.SecGamePath}"/>
             <Grid ColumnDefinitions="*,Auto">
                 <Border Background="{DynamicResource BgInput}" Padding="12"
                         BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
@@ -20,7 +22,7 @@
                                FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
                 </Border>
                 
-                <Button Grid.Column="1" Classes="big" Click="OnBrowse" Content="Browse"
+                <Button Grid.Column="1" Classes="big" Click="OnBrowse" Content="{x:Static assets:Str.BtnBrowse}"
                         Padding="14,9" Margin="8,0,0,0"/>
             </Grid>
 
@@ -38,55 +40,52 @@
                        Margin="12,12,0,12" TextWrapping="Wrap" IsVisible="{Binding !IsValid}"/>
 
             <StackPanel IsVisible="{Binding ShowAdvanced}">
-                <TextBlock Classes="sect" Text="LOUDNESS" Margin="12,24,0,8"/>
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoudness}" Margin="12,24,0,8"/>
                 <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
                         BorderThickness="1" CornerRadius="8" Padding="12">
                     <StackPanel Spacing="6">
                         <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Target loudness" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblTargetLoudness}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
                             <TextBlock Grid.Column="1" Text="{Binding TargetLufsText}" Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="-30" Maximum="-9" Value="{Binding TargetLufs}"
                                 TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="Added tracks are normalized to this level. Originals sit around -23 LUFS."
+                        <TextBlock Text="{x:Static assets:Str.HintLoudness}"
                                    Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
 
-                <TextBlock Classes="sect" Text="ENCODING" Margin="12,24,0,8"/>
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecEncoding}" Margin="12,24,0,8"/>
                 <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
                         BorderThickness="1" CornerRadius="8" Padding="12">
                     <StackPanel Spacing="6">
                         <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Encoding threads" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblEncodingThreads}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
                             <TextBlock Grid.Column="1" Text="{Binding EncodeParallelismText}" Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="1" Maximum="{Binding MaxThreads}" Value="{Binding EncodeParallelism}"
                                 TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="Parallel jobs while building. Higher is faster but uses more CPU, RAM and disk."
+                        <TextBlock Text="{x:Static assets:Str.HintEncoding}"
                                    Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
 
-                <TextBlock Classes="sect" Text="BACKUPS" Margin="12,24,0,8"/>
-                <StackPanel Orientation="Horizontal" Spacing="10" IsVisible="{Binding HasBackups}">
-                    <Button Classes="big" Click="OnRestore" Content="Restore backups"/>
-                </StackPanel>
-                <TextBlock Text="No backups to restore." Foreground="{DynamicResource TxtFaint}" Margin="12 0 0 0"
-                           FontSize="12" FontStyle="Italic" IsVisible="{Binding !HasBackups}"/>
-                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                        BorderThickness="1" CornerRadius="8" Padding="12" Margin="0, 12, 0, 0"
-                        IsVisible="{Binding BackupVisible}">
-                    <StackPanel Spacing="9">
-                        <TextBlock IsVisible="{Binding HasBackups}" TextWrapping="Wrap"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="12"
-                                   Text="Reverts banks and RadioInfo to their pre-build state, then clears the backups."/>
-                        <TextBlock Text="{Binding RestoreLine}" Foreground="{DynamicResource Green}" FontSize="12"
-                                   TextWrapping="Wrap" IsVisible="{Binding RestoreLine, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                    </StackPanel>
-                </Border>
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecBackups}" Margin="12,24,0,8"/>
+                
+                
+                <TextBlock Text="{x:Static assets:Str.NoBackups}" Foreground="{DynamicResource TxtFaint}" Margin="12 0 0 0"
+                           FontSize="12" FontStyle="Italic" IsVisible="{Binding !CardVisible}"/>
+                
+                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding CardVisible}">
+                    <Border Grid.Column="0" Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                                           BorderThickness="1" CornerRadius="8" Padding="12">
+                        <TextBlock Text="{Binding BackupLine}" Foreground="{DynamicResource TxtMute}" FontSize="12" TextWrapping="Wrap"/>
+                    </Border>
+                    <Button Grid.Column="1" Classes="big" Width="90" Click="OnRestore" Content="{x:Static assets:Str.BtnRestore}" Margin="8, 0, 0, 0"
+                            IsVisible="{Binding CanRestore}" ToolTip.Tip="{x:Static assets:Str.TipBackupRestore}" HorizontalContentAlignment="Center"/>
+                </Grid>
             </StackPanel>
         </StackPanel>
 
@@ -96,8 +95,8 @@
                 <TextBlock Grid.Column="0" Text="{Binding AppVersion}" VerticalAlignment="Center"
                            Foreground="{DynamicResource TxtFaint}" FontSize="12" Margin="12 0 0 0"/>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-                    <Button Classes="big" Click="OnClose" Content="Close"/>
-                    <Button Classes="big primary" Click="OnSave" Content="Save" IsEnabled="{Binding IsValid}"/>
+                    <Button Classes="big" Click="OnClose" Content="{x:Static assets:Str.BtnClose}"/>
+                    <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}" IsEnabled="{Binding IsValid}"/>
                 </StackPanel>
             </Grid>
         </Border>

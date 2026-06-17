@@ -34,6 +34,38 @@
     <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
   </Style>
   
+  <Style Selector="Button.markers">
+    <Setter Property="Width" Value="32"/>
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+  
+  <Style Selector="Button.markers:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+  </Style>
+  
+  <Style Selector="Button.markers Image.icon">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow.png"/>
+  </Style>
+  
+  <Style Selector="Button.markers:pointerover Image.icon">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow_hover.png"/>
+  </Style>
+  
+  <Style Selector="Button.markers Path">
+    <Setter Property="Stroke" Value="{DynamicResource Inter}"/>
+    <Setter Property="StrokeThickness" Value="2"/>
+    <Setter Property="StrokeJoin" Value="Round"/>
+    <Setter Property="StrokeLineCap" Value="Round"/>
+    <Setter Property="Width" Value="14"/><Setter Property="Height" Value="14"/>
+    <Setter Property="Stretch" Value="Uniform"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  
   <Style Selector="Button.act">
     <Setter Property="Width" Value="32"/>
     <Setter Property="Height" Value="32"/>
@@ -43,13 +75,8 @@
     <Setter Property="BorderThickness" Value="0"/>
   </Style>
   <Style Selector="Button.act:pointerover /template/ ContentPresenter">
-    <Setter Property="Background" Value="{DynamicResource BgDarkest}"/>
+    <Setter Property="Background" Value="{DynamicResource Bg1}"/>
   </Style>
-  
-  <Style Selector="Button.act.del">
-    <Setter Property="Background" Value="{DynamicResource Red}"/>
-  </Style>
-  <Style Selector="Button.act.del Path"><Setter Property="Stroke" Value="White"/></Style>
   
   <Style Selector="Button.act Path">
     <Setter Property="Stroke" Value="{DynamicResource Inter}"/>
@@ -60,6 +87,18 @@
     <Setter Property="Stretch" Value="Uniform"/>
     <Setter Property="HorizontalAlignment" Value="Center"/>
     <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  
+  <Style Selector="Button.wave_act">
+    <Setter Property="Width" Value="32"/>
+    <Setter Property="Height" Value="32"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Background" Value="{DynamicResource BgModifier}"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+  <Style Selector="Button.wave_act:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BgHover}"/>
   </Style>
   
   <Style Selector="Border.row">
@@ -86,6 +125,22 @@
     <Setter Property="CornerRadius" Value="6"/>
     <Setter Property="Padding" Value="12 8"/>
     <Setter Property="FontSize" Value="14"></Setter>
+  </Style>
+  
+  <Style Selector="TextBox.field2">
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+    <Setter Property="Foreground" Value="{DynamicResource Txt}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+    <Setter Property="CornerRadius" Value="6"/>
+    <Setter Property="Padding" Value="12 8"/>
+    <Setter Property="FontSize" Value="14"></Setter>
+  </Style>
+  
+  <Style Selector="TextBox.field2:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+  </Style>
+  <Style Selector="TextBox.field2:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
   </Style>
   
   <Style Selector="TextBlock.lbl">

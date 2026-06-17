@@ -25,7 +25,12 @@ public sealed class PlaybackService : IDisposable
     public void Play(string wavPath, double volumeDb)
     {
         Stop();
-        _reader = new AudioFileReader(wavPath) { Volume = Lin(volumeDb) };
+        
+        _reader = new AudioFileReader(wavPath)
+        {
+            Volume = Lin(volumeDb)
+        };
+        
         _out = new WaveOutEvent();
         _out.PlaybackStopped += OnStopped;
         _out.Init(_reader);
@@ -51,10 +56,7 @@ public sealed class PlaybackService : IDisposable
 
     public void SetVolumeDb(double db)
     {
-        if (_reader is not null)
-        {
-            _reader.Volume = Lin(db);
-        }
+        _reader?.Volume = Lin(db);
     }
 
     public void Stop()
@@ -66,7 +68,16 @@ public sealed class PlaybackService : IDisposable
 
         _stopping = true;
         _out.PlaybackStopped -= OnStopped;
-        try { _out.Stop(); } catch { /* ignore */ }
+        
+        try
+        {
+            _out.Stop();
+        }
+        catch
+        {
+             // ignored
+        }
+        
         _out.Dispose();
         _reader?.Dispose();
         _out = null;

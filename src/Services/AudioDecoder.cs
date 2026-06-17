@@ -30,15 +30,18 @@ public static class AudioDecoder
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
         var key = Key($"add|{source}|{Stamp(source)}|{i}|{tp}");
         var outWav = Path.Combine(Dir, key + ".wav");
+        
         if (File.Exists(outWav))
         {
             return outWav;
         }
 
         Directory.CreateDirectory(Dir);
+        
         Run(Tools.FfmpegPath,
             $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
             $"-af loudnorm=I={i}:TP={tp}:LRA=11 \"{outWav}\"");
+        
         return outWav;
     }
 
@@ -46,6 +49,7 @@ public static class AudioDecoder
     {
         var key = Key($"bank|{bankPath}|{Stamp(bankPath)}|{sub0}");
         var outWav = Path.Combine(Dir, key + ".wav");
+        
         if (File.Exists(outWav))
         {
             return outWav;
@@ -53,6 +57,7 @@ public static class AudioDecoder
 
         Directory.CreateDirectory(Dir);
         Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{outWav}\" \"{bankPath}\"");
+        
         return outWav;
     }
 

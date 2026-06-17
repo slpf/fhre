@@ -9,27 +9,45 @@ public static class Naming
     public static List<(int Seq, ulong Hash, string SoundName)> ScanCustomTracks(IReadOnlySet<ulong> stblIds, int maxGap = 128)
     {
         var found = new List<(int, ulong, string)>();
-        int miss = 0;
-        for (int seq = 0; miss < maxGap; seq++)
+        var miss = 0;
+        
+        for (var seq = 0; miss < maxGap; seq++)
         {
-            string name = MakeSoundName(seq);
-            ulong h = Lookup.SoundNameToId(name);
-            if (stblIds.Contains(h)) { found.Add((seq, h, name)); miss = 0; }
-            else miss++;
+            var name = MakeSoundName(seq);
+            var h = Lookup.SoundNameToId(name);
+            
+            if (stblIds.Contains(h))
+            {
+                found.Add((seq, h, name)); 
+                miss = 0;
+            }
+            else
+            {
+                miss++;
+            }
         }
+        
         return found;
     }
     
     public static Dictionary<ulong, string> ResolveCustomNames(IReadOnlySet<ulong> targetIds, int ceiling = 100000)
     {
         var result = new Dictionary<ulong, string>();
-        if (targetIds.Count == 0) return result;
-
-        for (int seq = 0; seq <= ceiling && result.Count < targetIds.Count; seq++)
+        
+        if (targetIds.Count == 0)
         {
-            string name = MakeSoundName(seq);
-            ulong h = Lookup.SoundNameToId(name);
-            if (targetIds.Contains(h)) result.TryAdd(h, name);
+            return result;
+        }
+
+        for (var seq = 0; seq <= ceiling && result.Count < targetIds.Count; seq++)
+        {
+            var name = MakeSoundName(seq);
+            var h = Lookup.SoundNameToId(name);
+            
+            if (targetIds.Contains(h))
+            {
+                result.TryAdd(h, name);
+            }
         }
 
         return result;

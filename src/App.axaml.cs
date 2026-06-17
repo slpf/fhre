@@ -14,14 +14,18 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        ScratchDir.CleanupStale(TimeSpan.FromHours(1));
         WorkDirs.Clean();
         AudioDecoder.ClearAll();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var settings = SettingsService.Load();
-            var window = new MainWindow { DataContext = new MainWindowViewModel(settings) };
+            MarkerDefaults.Apply(settings.MarkerDefaults);
+            var window = new MainWindow
+            {
+                DataContext = new MainWindowViewModel(settings)
+            };
+            
             desktop.MainWindow = window;
             
             desktop.Exit += (_, _) =>

@@ -7,6 +7,7 @@ public static class MetadataReader
     public static (string? Title, string? Artist, double Duration) Read(string path)
     {
         var exe = Tools.FfprobePath;
+        
         if (!File.Exists(exe))
         {
             return (null, null, 0);
@@ -28,6 +29,7 @@ public static class MetadataReader
             };
 
             using var p = Process.Start(psi);
+            
             if (p is null)
             {
                 return (null, null, 0);
@@ -35,7 +37,9 @@ public static class MetadataReader
 
             var so = p.StandardOutput.ReadToEndAsync();
             var se = p.StandardError.ReadToEndAsync();
+            
             p.WaitForExit();
+            
             var output = so.GetAwaiter().GetResult();
             _ = se.GetAwaiter().GetResult();
 
@@ -47,6 +51,7 @@ public static class MetadataReader
             {
                 var line = raw.Trim();
                 var eq = line.IndexOf('=');
+                
                 if (eq <= 0)
                 {
                     continue;
@@ -54,6 +59,7 @@ public static class MetadataReader
 
                 var key = line[..eq].Trim().ToLowerInvariant();
                 var val = line[(eq + 1)..].Trim();
+                
                 if (val.Length == 0)
                 {
                     continue;
@@ -67,9 +73,7 @@ public static class MetadataReader
                 {
                     artist = val;
                 }
-                else if (key == "duration"
-                         && double.TryParse(val, System.Globalization.NumberStyles.Float,
-                                            System.Globalization.CultureInfo.InvariantCulture, out var d))
+                else if (key == "duration" && double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
                 {
                     duration = d;
                 }

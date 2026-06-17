@@ -2,23 +2,22 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:loc="using:FH6RB"
         xmlns:assets="clr-namespace:FH6RB.Assets"
-        x:Class="FH6RB.Views.MessageDialog"
+        x:Class="FH6RB.Views.InputDialog"
         Width="440"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
         SizeToContent="Height"
-        Title="{x:Static assets:Str.TitleNotice}">
+        Title="{x:Static assets:Str.BackupNameTitle}">
     <Grid RowDefinitions="*,Auto">
         <StackPanel Margin="20" Spacing="12">
-            <TextBlock x:Name="MessageText" Foreground="{DynamicResource TxtMute}"
-                       FontSize="13" TextWrapping="Wrap" LineHeight="19"/>
+            <TextBox x:Name="Input" Classes="field2" FontSize="13"/>
         </StackPanel>
         <Border Grid.Row="1" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-                <Button x:Name="CancelButton" Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
-                <Button x:Name="OkButton" Classes="big primary" Click="OnOk" Content="{x:Static assets:Str.BtnOk}"/>
+                <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
+                <Button Classes="big primary" Click="OnOk" Content="{x:Static assets:Str.BtnSave}"/>
             </StackPanel>
         </Border>
     </Grid>

@@ -1,17 +1,62 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using FH6RB.Assets;
+using FH6RB.Core;
+using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
 
 public sealed partial class MarkerField : ObservableObject
 {
     public string Name { get; init; } = "";
+    public int SampleRate { get; init; }
+    public long SampleLength { get; init; }
 
     [ObservableProperty] private long _position;
 
-    public bool IsOff => Position == -1;
+    public bool IsOff => Position < 0;
+    
+    public string SecondsText
+    {
+        get => Position < 0 ? ""
+            : SampleRate > 0
+                ? ((double) Position / SampleRate).ToString("0.###", CultureInfo.InvariantCulture)
+                : Position.ToString(CultureInfo.InvariantCulture);
+        set
+        {
+            var t = value?.Trim();
 
-    partial void OnPositionChanged(long value) => OnPropertyChanged(nameof(IsOff));
+            if (string.IsNullOrEmpty(t))
+            {
+                Position = -1;
+                return;
+            }
+
+            if (t.EndsWith('%'))
+            {
+                var p = t[..^1].Trim().Replace(',', '.');
+
+                if (SampleLength > 0 && double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var pct) && pct >= 0)
+                {
+                    Position = Math.Clamp((long) Math.Round(pct / 100.0 * SampleLength), 0, SampleLength - 1);
+                }
+
+                return;
+            }
+
+            if (SampleRate > 0 && double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var sec) && sec >= 0)
+            {
+                Position = (long) Math.Round(sec * SampleRate);
+            }
+        }
+    }
+
+    partial void OnPositionChanged(long value)
+    {
+        OnPropertyChanged(nameof(IsOff));
+        OnPropertyChanged(nameof(SecondsText));
+    }
 }
 
 public sealed class MarkerGroup
@@ -23,8 +68,44 @@ public sealed class MarkerGroup
 public sealed partial class EditWindowViewModel : ObservableObject
 {
     public string SoundName { get; }
-    
+    public string FullName { get; }
+
     public bool ShowVolume { get; }
+    public bool CanEditMarkers { get; }
+    public long SampleLength { get; }
+    public int SampleRate { get; }
+    public double TotalSeconds => SampleRate > 0 ? SampleLength / (double) SampleRate : 0;
+
+    [ObservableProperty] private float[]? _peaks;
+
+    public string? WavPath { get; set; }
+    public AppSettings? Settings { get; set; }
+
+    public Func<Task<(float[]? Peaks, string? Wav)>>? PeaksLoader { get; set; }
+    private bool _peaksLoaded;
+
+    public IEnumerable<MarkerField> AllMarkers => Groups.SelectMany(g => g.Fields);
+
+    public async Task EnsurePeaksAsync()
+    {
+        if (_peaksLoaded || PeaksLoader is null)
+        {
+            return;
+        }
+        
+        _peaksLoaded = true;
+        
+        try
+        {
+            var (p, w) = await PeaksLoader();
+            Peaks = p;
+            WavPath = w;
+        }
+        catch
+        {
+            Peaks = null;
+        }
+    }
 
     [ObservableProperty] private string _title;
     [ObservableProperty] private string? _artist;
@@ -34,26 +115,36 @@ public sealed partial class EditWindowViewModel : ObservableObject
     public bool Saved { get; private set; }
 
     public void MarkSaved() => Saved = true;
-    
+
     private static readonly (string Group, string[] Names)[] Schema =
     [
-        ("Core", ["VeryStart", "TrackStart", "End"]),
-        ("DJ / Drops", ["DJDrop", "TrackDrop", "DJSegment", "PostDrop", "DJStart", "StingerStart"]),
-        ("Track loops", ["TrackLoopStart", "TrackLoopEnd", "PostRaceLoopStart", "PostRaceLoopEnd"]),
-        ("Extra loops", ["Loop1Start", "Loop1End", "Loop2Start", "Loop2End", "Loop3Start", "Loop3End", "Loop4Start", "Loop4End", "Loop5Start", "Loop5End"]),
-        ("Sections", ["Section1", "Section2", "Section3", "Section4", "Section5"]),
-        ("Other", ["BinkTransition"]),
+        (Str.GrpCore, ["TrackStart", "End"]),
+        (Str.GrpDjDrops, ["DJStart", "DJDrop", "DJSegment", "StingerStart", "TrackDrop", "PostDrop", "TrackBreakDown"]),
+        (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostRaceLoopStart", "PostRaceLoopEnd"]),
+        (Str.GrpExtraLoops, ["Loop1Start", "Loop1End", "Loop2Start", "Loop2End", "Loop3Start", "Loop3End", "Loop4Start", "Loop4End", "Loop5Start", "Loop5End"]),
+        (Str.GrpSections, ["Section1", "Section2", "Section3", "Section4", "Section5"]),
+        (Str.GrpOther, ["VeryStart", "BinkTransition"]),
     ];
 
-    public EditWindowViewModel(TrackItemViewModel track, IReadOnlyDictionary<string, long>? markers = null)
+    public EditWindowViewModel(TrackItemViewModel track)
     {
         SoundName = track.SoundName;
+        FullName = track.Title + " - " + track.Artist + " (" + track.SoundName + ")";
         ShowVolume = track.IsUnbuilt;
         _title = track.Title;
         _artist = track.Artist;
         _gainDb = track.GainDb ?? 0;
 
-        var end = track.SampleLength > 0 ? track.SampleLength - 1 : -1;
+        var rate = track.SampleRate;
+        var len = track.SampleLength;
+        
+        CanEditMarkers = len > 0 && rate > 0;
+        SampleLength = len;
+        SampleRate = rate;
+
+        var end = len > 0 ? len - 1 : -1;
+        var auto = len > 0 ? RadioStationEditor.ComputeAutoMarkers(len, rate) : null;
+        var existing = track.Markers;
 
         foreach (var (group, names) in Schema)
         {
@@ -62,9 +153,14 @@ public sealed partial class EditWindowViewModel : ObservableObject
             foreach (var name in names)
             {
                 long position;
-                if (markers is not null && markers.TryGetValue(name, out var value))
+                
+                if (existing is not null && existing.TryGetValue(name, out var ev))
                 {
-                    position = value;
+                    position = ev;
+                }
+                else if (auto is not null && auto.TryGetValue(name, out var av))
+                {
+                    position = av;
                 }
                 else
                 {
@@ -76,10 +172,25 @@ public sealed partial class EditWindowViewModel : ObservableObject
                     };
                 }
 
-                grp.Fields.Add(new MarkerField { Name = name, Position = position });
+                grp.Fields.Add(new MarkerField { Name = name, SampleRate = rate, SampleLength = len, Position = position });
             }
 
             Groups.Add(grp);
+        }
+    }
+
+    public void ResetMarkersToDefaults()
+    {
+        if (!CanEditMarkers)
+        {
+            return;
+        }
+
+        var def = RadioStationEditor.ComputeAutoMarkers(SampleLength, SampleRate);
+
+        foreach (var f in AllMarkers)
+        {
+            f.Position = def.TryGetValue(f.Name, out var p) ? p : -1;
         }
     }
 
@@ -96,5 +207,22 @@ public sealed partial class EditWindowViewModel : ObservableObject
         {
             track.GainDb = Math.Abs(GainDb) < 0.05 ? null : GainDb;
         }
+
+        if (!CanEditMarkers)
+        {
+            return;
+        }
+        
+        var dict = new Dictionary<string, long>();
+        
+        foreach (var g in Groups)
+        {
+            foreach (var f in g.Fields)
+            {
+                dict[f.Name] = f.Position;
+            }
+        }
+
+        track.Markers = dict;
     }
 }

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using FH6RB.Assets;
 using FH6RB.ViewModels;
 
 namespace FH6RB.Views;
@@ -15,7 +16,7 @@ public partial class SettingsWindow : Window
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
-            Title = "Select Forza Horizon folder",
+            Title = Str.PickGameFolder,
             AllowMultiple = false,
         });
 

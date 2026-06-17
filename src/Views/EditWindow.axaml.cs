@@ -17,4 +17,11 @@ public partial class EditWindow : Window
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close();
+
+    private async void OnWaveform(object? sender, RoutedEventArgs e)
+    {
+        await Vm.EnsurePeaksAsync();
+        var w = new WaveformWindow { DataContext = Vm };
+        await w.ShowDialog(this);
+    }
 }

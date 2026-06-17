@@ -1,0 +1,48 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:FH6RB"
+        xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
+        x:Class="FH6RB.Views.MarkerDefaultsWindow"
+        x:DataType="vm:MarkerDefaultsViewModel"
+        Width="460" Height="560"
+        MinWidth="380" MinHeight="360"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        Title="{x:Static assets:Str.TitleMarkerDefaults}">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <TextBlock Grid.Row="0" Text="{x:Static assets:Str.HintMarkerDefaults}"
+                   Foreground="{DynamicResource TxtMute}" FontSize="12" TextWrapping="Wrap"
+                   Margin="20,16,20,12"/>
+
+        <Border Grid.Row="1" Margin="16,0,16,16" Background="{DynamicResource BgInput}"
+                BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+            <ScrollViewer Margin="16,16,8,16" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Fields}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnDefinitions="*,140" Margin="4 2 6 2">
+                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TxtMute}" FontSize="12"/>
+                                <TextBox Grid.Column="1" Classes="field2"
+                                         Text="{Binding Spec, Mode=TwoWay}"
+                                         Watermark="{x:Static assets:Str.WatermarkOff}"
+                                         FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="2" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <Button Grid.Column="0" Classes="big" Click="OnRestore" Content="{x:Static assets:Str.BtnRestoreDefaults}"/>
+                <Button Grid.Column="2" Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}" Margin="0,0,10,0"/>
+                <Button Grid.Column="3" Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

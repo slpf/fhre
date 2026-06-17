@@ -1,0 +1,106 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:FH6RB"
+        xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:ctl="using:FH6RB.Controls"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
+        x:Class="FH6RB.Views.WaveformWindow"
+        x:DataType="vm:EditWindowViewModel"
+        Width="780" Height="600"
+        MinWidth="560" MinHeight="420"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        Title="{x:Static assets:Str.TitleMarkers}">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <StackPanel Margin="16,12,16,12">
+            <Grid ColumnDefinitions="*, Auto" Margin="0,0,0,8" ClipToBounds="True">
+                <StackPanel Grid.Column="0">
+                    <TextBlock  Text="{Binding FullName}" FontFamily="{DynamicResource MonoFont}"
+                               FontSize="11" Foreground="{DynamicResource TxtFaint}" TextTrimming="CharacterEllipsis"
+                               HorizontalAlignment="Left" VerticalAlignment="Bottom"/>
+                </StackPanel>
+                <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip.Tip="{x:Static assets:Str.TipWaveHotkeys}"/>
+                
+            </Grid>
+            
+            <Border BorderBrush="{DynamicResource LineSoft}" BorderThickness="1" CornerRadius="3">
+                <ctl:WaveformView x:Name="Wave" Height="170" Peaks="{Binding Peaks}" 
+                                  Markers="{Binding AllMarkers}" SampleLength="{Binding SampleLength}"/>
+            </Border>
+
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,12,0,0">
+                <Button Grid.Column="0" x:Name="PlayBtn" Classes="wave_act" Width="32" Height="32"
+                        Click="OnPlayPause" Background="{DynamicResource BgInput}">
+                    <Panel>
+                        <Image x:Name="PlayIcon" Source="avares://FH6RB/Assets/icons/icon_play.png"
+                               Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               ToolTip.Tip="{x:Static assets:Str.TipPlay}"/>
+                        <Image x:Name="PauseIcon" Source="avares://FH6RB/Assets/icons/icon_pause.png"
+                               Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"
+                               IsVisible="False" ToolTip.Tip="{x:Static assets:Str.TipPause}"/>
+                    </Panel>
+                </Button>
+                <TextBlock Grid.Column="1" x:Name="TimeText" Text="{x:Static assets:Str.TimeZero}"
+                           FontFamily="{DynamicResource MonoFont}" FontSize="11"
+                           Foreground="{DynamicResource TxtMute}" TextAlignment="Center"
+                           VerticalAlignment="Center" Margin="8,0,0,0"/>
+                <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Margin="0,0,0,0"
+                        Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="24" Height="24"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <Button Grid.Column="3" Classes="wave_act" Width="32" Height="32" Margin="8,0,0,0"
+                        Click="OnEditDefaults" ToolTip.Tip="{x:Static assets:Str.TipMarkerDefaults}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="24" Height="24"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+            </Grid>
+        </StackPanel>
+        
+        <Border Grid.Row="1" Margin="16,0,16,16" Background="{DynamicResource BgInput}"
+                            BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+            <ScrollViewer  Margin="16,16,8,16" HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Groups}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,0,8,0">
+                                <ItemsControl ItemsSource="{Binding Fields}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid ColumnDefinitions="*,120,Auto" Margin="4 1 6 1">
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource TxtMute}" FontSize="12"/>
+                                                <TextBox Grid.Column="1" Classes="field2"
+                                                         Text="{Binding SecondsText, Mode=TwoWay}"
+                                                         Watermark="{x:Static assets:Str.WatermarkOff}"
+                                                         FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
+                                                <Button Grid.Column="2" Classes="markers" Width="32" Height="32" Margin="6,0,0,0"
+                                                        Click="OnSetFromPlayhead" Tag="{Binding}"
+                                                        ToolTip.Tip="{x:Static assets:Str.TipSetPlayhead}">
+                                                    <Image Classes="icon" Width="14" Height="14"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Button>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="2" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
+                <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,21 +1,23 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:svc="using:FH6RB.Services"
         xmlns:cv="using:FH6RB.Converters"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Width="1000" MinWidth="1000" MaxWidth="1000" Height="800" MinHeight="650"
         Background="{DynamicResource Bg1}"
         Icon="avares://FH6RB/Assets/app.ico"
-        Title="Forza Horizon Radio Extender">
+        Title="{x:Static assets:Str.TitleMain}">
     
     <Grid RowDefinitions="Auto,*,Auto,Auto">
         <Border Grid.Row="0" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,0,0,1" Padding="10, 12, 14, 12">
             <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto">
                 <StackPanel Grid.Column="0" Margin="0,0,10,0">
-                    <TextBlock Classes="lbl" Text="LOCALIZATION"/>
+                    <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecLocalization}"/>
                     <ComboBox Width="165" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}">
                         <ComboBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:LangOption">
@@ -26,7 +28,7 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Margin="0,0,10,0">
-                    <TextBlock Classes="lbl" Text="STATION"/>
+                    <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecStation}"/>
                     <ComboBox Width="220" ItemsSource="{Binding Stations}" SelectedItem="{Binding SelectedStation}">
                         <ComboBox.ItemTemplate>
                             <DataTemplate x:DataType="svc:StationInfo">
@@ -37,16 +39,27 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="2">
-                    <TextBlock Classes="lbl" Text="BANK"/>
+                    <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecBank}"/>
                     <ComboBox Width="100" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}"/>
                 </StackPanel>
 
-                <Button Grid.Column="4" Classes="act" Click="OnSettings" ToolTip.Tip="Settings"
-                        Width="32" Height="32" VerticalAlignment="Bottom" Background="{DynamicResource BgInput}">
-                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="24" Height="24"
-                           HorizontalAlignment="Center"
-                           VerticalAlignment="Center"/>
-                </Button>
+                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Bottom">
+                    <Button Classes="act" Click="OnSaveBackup" ToolTip.Tip="{x:Static assets:Str.TipSaveBackup}"
+                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_save.png" Width="14" Height="14"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Classes="act" Click="OnBackups" ToolTip.Tip="{x:Static assets:Str.TipBackups}"
+                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_backups.png" Width="17" Height="17"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Classes="act" Click="OnSettings" ToolTip.Tip="{x:Static assets:Str.TipSettings}"
+                            Width="32" Height="32" Background="{DynamicResource BgInput}">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="24" Height="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
         
@@ -60,42 +73,39 @@
                                     <Grid ColumnDefinitions="Auto,*,Auto">
                                         <Button Grid.Column="0" Classes="act" IsVisible="{Binding CanPlay}"
                                                 Margin="0,0,12,0" VerticalAlignment="Center"
-                                                ToolTip.Tip="Play / Pause"
                                                 Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).PlayTrackCommand}"
                                                 CommandParameter="{Binding}">
                                             <Panel>
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_play.png" Width="24" Height="24"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       IsVisible="{Binding ShowPlayIcon}"/>
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding ShowPlayIcon}"
+                                                       ToolTip.Tip="{x:Static assets:Str.TipPlay}"/>
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_pause.png" Width="24" Height="24"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       IsVisible="{Binding IsPlayingNow}"/>
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       IsVisible="{Binding IsPlayingNow}"
+                                                       ToolTip.Tip="{x:Static assets:Str.TipPause}"/>
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_decoding.png" Width="24" Height="24"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       RenderTransformOrigin="50%,50%"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
                                                        Classes.spin="{Binding IsLoadingPlay}"
                                                        IsVisible="{Binding IsLoadingPlay}"/>
                                             </Panel>
                                         </Button>
-                                        <Grid Grid.Column="1" RowDefinitions="16,4,12" VerticalAlignment="Center" HorizontalAlignment="Left" Width="780" MaxWidth="800" Margin="0 0 12 0"
+                                        <Grid Grid.Column="1" RowDefinitions="16,4,12" VerticalAlignment="Center" HorizontalAlignment="Left" Width="745" MaxWidth="745" Margin="0 0 12 0"
                                                MinHeight="32" Opacity="{Binding Enabled, Converter={x:Static cv:Conv.EnabledOpacity}}">
                                             
                                             <Grid Grid.Row="0" Height="16" ClipToBounds="True">
                                                 <Grid ColumnDefinitions="Auto,*" VerticalAlignment="Bottom">
                                                     <Border Grid.Column="0" IsVisible="{Binding IsUnbuilt}"
                                                             Background="{DynamicResource AccentHi}" CornerRadius="3"
-                                                            Height="14" Width="28" Margin="0,0,6,0" VerticalAlignment="Center">
-                                                        <TextBlock Text="NEW" FontSize="8" FontWeight="Bold" Foreground="White"
-                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                            Height="14" Margin="0,0,6,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{x:Static assets:Str.BadgeNew}" FontSize="8" FontWeight="Bold" Foreground="White"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" Margin="3,0,3,0"/>
                                                     </Border>
                                                     
                                                     <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Left" Spacing="11" ClipToBounds="True" Margin="0 0 12 0">
-                                                        <TextBlock Text="{Binding Title}" MaxWidth="500" FontSize="14" VerticalAlignment="Bottom"
+                                                        <TextBlock Text="{Binding Title}" MaxWidth="480" FontSize="14" VerticalAlignment="Bottom"
                                                                    FontWeight="SemiBold" Foreground="{DynamicResource Header}" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Text="{Binding Artist}" FontSize="12" MaxWidth="240" VerticalAlignment="Bottom"
+                                                        <TextBlock Text="{Binding Artist}" FontSize="12" MaxWidth="230" VerticalAlignment="Bottom"
                                                                    Foreground="{DynamicResource TxtMute}" TextTrimming="CharacterEllipsis"/>
                                                     </StackPanel>
                                                 </Grid>
@@ -109,24 +119,38 @@
                                         </Grid>
 
                                         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6">
-                                            <Button Classes="act" IsVisible="{Binding CanDelete}" ToolTip.Tip="Delete"
+                                            <Button Classes="act" IsVisible="{Binding CanDelete}" ToolTip.Tip="{x:Static assets:Str.TipDelete}"
                                                     Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).DeleteCommand}"
                                                     CommandParameter="{Binding}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_delete.png" Width="24" Height="24"
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center"/>
                                             </Button>
-                                            <Button Classes="act" ToolTip.Tip="Edit" Click="OnEdit" Tag="{Binding}">
-                                                <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"/>
+                                            <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipReplaceAudio}" Click="OnReplace" Tag="{Binding}"
+                                                    IsVisible="{Binding CanReplace}">
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="24" Height="24"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       RenderTransformOrigin="50%,50%"/>
                                             </Button>
-                                            <Button Classes="act" ToolTip.Tip="Toggle"
-                                                    Command="{Binding $parent[ItemsControl].((vm:MainWindowViewModel)DataContext).ToggleEnabledCommand}"
-                                                    CommandParameter="{Binding}">
+                                            <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipMarkers}" Click="OnMarkers" Tag="{Binding}">
+                                                <Panel>
+                                                    <Image Source="avares://FH6RB/Assets/icons/icon_pulse.png" Width="22" Height="22"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
+                                                           IsVisible="{Binding !MarkersLoading}"/>
+                                                    <Image Source="avares://FH6RB/Assets/icons/icon_decoding.png" Width="24" Height="24"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
+                                                           Classes.spin="{Binding MarkersLoading}"
+                                                           IsVisible="{Binding MarkersLoading}"/>
+                                                </Panel>
+                                            </Button>
+                                            <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipEdit}" Click="OnEdit" Tag="{Binding}">
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Button>
+                                            <Button Classes="act" Click="OnToggle" Tag="{Binding}"
+                                                    ToolTip.Tip="{Binding Enabled, Converter={x:Static cv:Conv.ToggleToolTip}}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_toggle.png" Width="24" Height="24"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
                                                        Opacity="{Binding Enabled, Converter={x:Static cv:Conv.EnabledOpacity}}"/>
                                             </Button>
                                         </StackPanel>
@@ -139,7 +163,7 @@
             </ScrollViewer>
             
             <Border IsVisible="{Binding IsLoading}" Background="{DynamicResource Bg1}">
-                <TextBlock Text="Loading…" Foreground="{DynamicResource TxtMute}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <TextBlock Text="{x:Static assets:Str.Loading}" Foreground="{DynamicResource TxtMute}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
         </Grid>
         
@@ -147,11 +171,11 @@
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="16,16">
             <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
                 <Button Grid.Column="0" Classes="big" Width="100" MaxWidth="100" Click="OnAddTrack" IsEnabled="{Binding !IsBuilding}" HorizontalContentAlignment="Center"
-                        Padding="0" Height="48" MaxHeight="48" ToolTip.Tip="Add track">
+                        Padding="0" Height="48" MaxHeight="48" ToolTip.Tip="{x:Static assets:Str.TipAddTrack}">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_add.png" Width="24" Height="24"
+                        <Image Source="avares://FH6RB/Assets/icons/icon_add.png" Width="20" Height="20"
                                HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"/>
-                        <TextBlock Text="ADD" VerticalAlignment="Center"/>
+                        <TextBlock Text="{x:Static assets:Str.BtnAddLabel}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
                 
@@ -160,7 +184,7 @@
                       MaxWidth="550" Width="550" Height="48" MaxHeight="48">
 
                     <Button Grid.Column="0" Classes="big" Width="48" Height="48" VerticalAlignment="Center"
-                            Command="{Binding TogglePlayCommand}" ToolTip.Tip="Play / Pause"
+                            Command="{Binding TogglePlayCommand}" ToolTip.Tip="{x:Static assets:Str.TipPlayPause}"
                             Margin="0 0 16 0">
                         <Panel>
                             <Image Source="avares://FH6RB/Assets/icons/icon_play.png" Width="24" Height="24"
@@ -194,18 +218,18 @@
                     </StackPanel>
 
                     <Button Grid.Column="2" Classes="big" Width="48" Height="48" VerticalAlignment="Center"
-                            Click="OnTransportEdit" ToolTip.Tip="Edit" Margin="16 0 0 0">
+                            Click="OnTransportEdit" ToolTip.Tip="{x:Static assets:Str.TipEdit}" Margin="16 0 0 0">
                         <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Button>
                 </Grid>
 
                 <Button Grid.Column="2" Classes="big primary" Width="100" MaxWidth="100" Click="OnBuild" IsEnabled="{Binding !IsBuilding}" HorizontalContentAlignment="Center"
-                        Height="48" MaxHeight="48" Padding="0" ToolTip.Tip="Build current bank">
+                        Height="48" MaxHeight="48" Padding="0" ToolTip.Tip="{x:Static assets:Str.TipBuildBank}">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_build.png" Width="24" Height="24"
+                        <Image Source="avares://FH6RB/Assets/icons/icon_build.png" Width="16" Height="16"
                                HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"/>
-                        <TextBlock Text="BUILD" VerticalAlignment="Center"/>
+                        <TextBlock Text="{x:Static assets:Str.BtnBuildLabel}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
             </Grid>

@@ -20,7 +20,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public int SampleRate { get; set; }
     public int SubIndex { get; set; } = -1;
     
-    public bool CanPlay => IsUnbuilt
+    public bool CanPlay => UsesFileSource
         ? Tools.HasFfmpeg
         : SubIndex >= 0 && SampleLength > 0 && Tools.HasVgmstream;
 
@@ -39,6 +39,25 @@ public sealed partial class TrackItemViewModel : ObservableObject
     
     public string? SourcePath { get; set; }
 
+    [ObservableProperty] private string? _replacementPath;
+
+    [ObservableProperty] private bool _markersLoading;
+
+    public bool IsReplacing => ReplacementPath is not null;
+    public bool CanReplace => !IsCustom;
+    public bool UsesFileSource => IsUnbuilt || IsReplacing;
+    public string? FileSource => IsUnbuilt ? SourcePath : ReplacementPath;
+
+    partial void OnReplacementPathChanged(string? value)
+    {
+        OnPropertyChanged(nameof(IsReplacing));
+        OnPropertyChanged(nameof(UsesFileSource));
+        OnPropertyChanged(nameof(FileSource));
+        OnPropertyChanged(nameof(CanPlay));
+    }
+
+    public Dictionary<string, long>? Markers { get; set; }
+
     [ObservableProperty] private string _title = "";
     [ObservableProperty] private string? _artist;
     [ObservableProperty] private bool _enabled;
@@ -53,6 +72,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
         SampleLength = track.SampleLength;
         SampleRate = track.SampleRate;
         SubIndex = track.SubIndex;
+        Markers = track.Markers is { } m ? new Dictionary<string, long>(m) : null;
 
         _title = track.DisplayName ?? track.SoundName;
         _artist = track.Artist;
@@ -60,18 +80,35 @@ public sealed partial class TrackItemViewModel : ObservableObject
         _gainDb = gainDb;
     }
 
+    [ObservableProperty] private double? _pendingDurationSeconds;
+
     public string DurationText
     {
         get
         {
-            if (SampleRate <= 0)
+            double seconds;
+            if (SampleRate > 0 && SampleLength > 0)
+            {
+                seconds = SampleLength / (double)SampleRate;
+            }
+            else if (PendingDurationSeconds is { } pd && pd > 0)
+            {
+                seconds = pd;
+            }
+            else
             {
                 return "--:--";
             }
 
-            var seconds = (int)(SampleLength / SampleRate);
-            return $"{seconds / 60}:{seconds % 60:00}";
+            var s = (int)seconds;
+            return $"{s / 60}:{s % 60:00}";
         }
+    }
+
+    partial void OnPendingDurationSecondsChanged(double? value)
+    {
+        OnPropertyChanged(nameof(DurationText));
+        OnPropertyChanged(nameof(InfoLine));
     }
     
     public string InfoLine

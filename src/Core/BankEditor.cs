@@ -9,14 +9,18 @@ public sealed class BankEditor
     public BankEditor(byte[] sourceAssetsBank)
     {
         _bank = new FevBank(sourceAssetsBank);
-        _fsb  = Fsb5.Parse(_bank.ExtractFsb5());
+        _fsb = Fsb5.Parse(_bank.ExtractFsb5());
         _indexToHash = new Dictionary<int, ulong>();
+        
         foreach (var (id, index) in _bank.ReadStbl())
+        {
             _indexToHash[index] = id;
+        }
 
         if (_indexToHash.Count != _fsb.Samples.Count)
-            throw new InvalidDataException(
-                $"STBL entries ({_indexToHash.Count}) != FSB5 samples ({_fsb.Samples.Count})");
+        {
+            throw new InvalidDataException($"STBL entries ({_indexToHash.Count}) != FSB5 samples ({_fsb.Samples.Count})");
+        }
     }
 
     public int SourceSampleCount => _fsb.Samples.Count;
@@ -28,8 +32,8 @@ public sealed class BankEditor
         if (plan.Count == 0) throw new ArgumentException("plan is empty");
 
         var outSamples = new List<Fsb5Sample>(plan.Count);
-        var stbl       = new List<(ulong Id, int Index)>(plan.Count);
-        var seen       = new HashSet<ulong>();
+        var stbl = new List<(ulong Id, int Index)>(plan.Count);
+        var seen = new HashSet<ulong>();
 
         for (var newIndex = 0; newIndex < plan.Count; newIndex++)
         {
@@ -40,23 +44,26 @@ public sealed class BankEditor
             if (it.IsNew)
             {
                 sample = it.NewSample ?? throw new InvalidOperationException("new item missing sample");
-                hash   = it.Hash;
+                hash = it.Hash;
             }
             else
             {
                 sample = _fsb.Samples[it.SourceIndex];
-                hash   = _indexToHash[it.SourceIndex];
+                hash = _indexToHash[it.SourceIndex];
             }
 
             if (!seen.Add(hash))
+            {
                 throw new InvalidOperationException($"duplicate STBL id 0x{hash:x16} in plan (index {newIndex})");
+            }
 
             outSamples.Add(sample);
             stbl.Add((hash, newIndex));
         }
 
-        var newFsb5     = _fsb.Build(outSamples);
+        var newFsb5 = _fsb.Build(outSamples);
         var stblPayload = FevBank.BuildStbl(stbl);
+        
         return _bank.WithStblAndFsb(stblPayload, newFsb5);
     }
 }

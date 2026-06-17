@@ -1,30 +1,32 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.EditWindow"
         x:DataType="vm:EditWindowViewModel"
-        Width="520" Height="330"
+        Width="520" MaxHeight="760"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
-        Title="Editing"
+        Title="{x:Static assets:Str.TitleEditing}"
         SizeToContent="Height">
     
     <Grid RowDefinitions="*,Auto">
         <StackPanel Margin="16">
-            <TextBlock Classes="sect" Text="SOUND NAME" Margin="16,0,16,4"/>
+            <TextBlock Classes="sect" Text="{x:Static assets:Str.LblSoundName}" Margin="16,0,16,4"/>
             <TextBlock Text="{Binding SoundName}" FontFamily="{DynamicResource MonoFont}"
                        FontSize="11" Foreground="{DynamicResource TxtFaint}" Margin="16,0,16,16"/>
 
-            <TextBlock Text="TITLE" Classes="sect" Margin="16,0,16,4"/>
+            <TextBlock Text="{x:Static assets:Str.LblTitle}" Classes="sect" Margin="16,0,16,4"/>
             <TextBox Classes="field" Text="{Binding Title}" MaxWidth="480"/>
 
-            <TextBlock Text="ARTIST" Classes="sect" Margin="16,16,16,4"/>
+            <TextBlock Text="{x:Static assets:Str.LblArtist}" Classes="sect" Margin="16,16,16,4"/>
             <TextBox Classes="field" Text="{Binding Artist}" MaxWidth="480"/>
 
             <StackPanel IsVisible="{Binding ShowVolume}">
                 <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Text="VOLUME COMPENSATION" Classes="sect" Margin="16,16,0,0"/>
+                    <TextBlock Text="{x:Static assets:Str.LblVolumeCompensation}" Classes="sect" Margin="16,16,0,0"/>
                     <TextBlock Grid.Column="1" Text="{Binding GainText}" FontFamily="{DynamicResource MonoFont}"
                                FontSize="11" Foreground="{DynamicResource AccentHi}" MinWidth="62"
                                TextAlignment="Right" VerticalAlignment="Center" Margin="0,16,16,0"/>
@@ -39,8 +41,8 @@
         <Border Grid.Row="1" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-                <Button Classes="big" Click="OnCancel" Content="Cancel"/>
-                <Button Classes="big primary" Click="OnSave" Content="Save"/>
+                <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
+                <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
             </StackPanel>
         </Border>
     </Grid>

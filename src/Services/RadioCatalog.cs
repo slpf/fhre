@@ -3,16 +3,13 @@ using FH6RB.Core;
 
 namespace FH6RB.Services;
 
-public sealed record StationInfo(int Number, string Name,
-                                 IReadOnlyList<string> Variants,
-                                 IReadOnlyDictionary<string, string> VariantBanks)
+public sealed record StationInfo(int Number, string Name, IReadOnlyList<string> Variants, IReadOnlyDictionary<string, string> VariantBanks)
 {
     public string Display => $"R{Number} · {Name}";
     
     public string Prefix => $"R{Number}_Tracks_";
     
-    public string BankName(string variant) =>
-        VariantBanks.TryGetValue(variant, out var b) ? b : $"R{Number}_Tracks_{variant}";
+    public string BankName(string variant) => VariantBanks.TryGetValue(variant, out var b) ? b : $"R{Number}_Tracks_{variant}";
 }
 
 public static partial class RadioCatalog
@@ -27,6 +24,7 @@ public static partial class RadioCatalog
             string label;
 
             var m = VariantRegex().Match(bank);
+            
             if (m.Success)
             {
                 number = int.Parse(m.Groups[1].Value);
@@ -35,6 +33,7 @@ public static partial class RadioCatalog
             else
             {
                 var m4 = PlainRegex().Match(bank);
+                
                 if (!m4.Success)
                 {
                     continue;
@@ -54,11 +53,12 @@ public static partial class RadioCatalog
         }
         
         var names = new Dictionary<int, string>();
+        
         if (radio is not null)
         {
             foreach (var st in radio.Document.Descendants("RadioStation"))
             {
-                if ((int?)st.Attribute("Number") is { } n)
+                if ((int?) st.Attribute("Number") is { } n)
                 {
                     names[n] = (string?)st.Attribute("Name") ?? $"Station {n}";
                 }
@@ -67,18 +67,16 @@ public static partial class RadioCatalog
 
         var stations = groups
             .OrderBy(g => g.Key)
-            .Select(g => new StationInfo(
-                g.Key,
-                names.GetValueOrDefault(g.Key, $"Station {g.Key}"),
-                g.Value.Keys.OrderBy(v => v).ToList(),
-                g.Value))
+            .Select(g => new StationInfo(g.Key, names.GetValueOrDefault(g.Key, $"Station {g.Key}"), g.Value.Keys.OrderBy(v => v).ToList(), g.Value))
             .ToList();
 
         Log.Line($"RadioCatalog: {stations.Count} stations");
+        
         foreach (var st in stations)
         {
             Log.Line($"  #{st.Number} '{st.Name}' variants=[{string.Join(", ", st.Variants)}]");
         }
+        
         return stations;
     }
 

@@ -14,10 +14,8 @@ public sealed class RadioTrack
     public long SampleLength { get; set; }
     public int SampleRate { get; set; }
     public int SubIndex { get; set; } = -1;
+    public IReadOnlyDictionary<string, long>? Markers { get; set; }
 
-    public bool CanDisable => true;
-    public bool CanEditInfo => true;
-    public bool CanDelete => Origin == TrackOrigin.Custom;
 }
 
 public sealed class RadioInfo
@@ -29,7 +27,17 @@ public sealed class RadioInfo
 
     public static RadioInfo Load(string path) => new(XDocument.Load(path));
 
-    public void Save(string path) => _doc.Save(path);
+    public const string XmlMarker = "FH6RB";
+
+    public void Save(string path)
+    {
+        if (!_doc.Nodes().OfType<XComment>().Any(c => c.Value.Contains(XmlMarker)))
+        {
+            _doc.AddFirst(new XComment($" {XmlMarker} edited "));
+        }
+
+        _doc.Save(path);
+    }
 
     public int MaxCustomSeq()
     {
@@ -107,6 +115,7 @@ public sealed class RadioStationEditor(XElement station)
             .ToHashSet();
 
         var result = new List<RadioTrack>();
+        
         foreach (var s in TrackList.Elements("Sample"))
         {
             var sn = (string?) s.Attribute("SoundName");
@@ -115,13 +124,13 @@ public sealed class RadioStationEditor(XElement station)
             
             result.Add(new RadioTrack
             {
-                SoundName    = sn,
-                Origin       = sn.StartsWith(Naming.CustomPrefix) ? TrackOrigin.Custom : TrackOrigin.Original,
-                Enabled      = live.Contains(sn),
-                DisplayName  = (string?) s.Attribute("DisplayName"),
-                Artist       = (string?) s.Attribute("Artist"),
+                SoundName = sn,
+                Origin = sn.StartsWith(Naming.CustomPrefix) ? TrackOrigin.Custom : TrackOrigin.Original,
+                Enabled = live.Contains(sn),
+                DisplayName = (string?) s.Attribute("DisplayName"),
+                Artist = (string?) s.Attribute("Artist"),
                 SampleLength = (long?) s.Attribute("SampleLength") ?? 0,
-                SampleRate   = (int?) s.Attribute("SampleRate") ?? 0,
+                SampleRate = (int?) s.Attribute("SampleRate") ?? 0,
             });
         }
         return result;
@@ -171,13 +180,6 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
     
-    public void EditInfo(string soundName, string? displayName, string? artist)
-    {
-        var s = FindSample(soundName) ?? throw new InvalidOperationException($"no Sample def for {soundName}");
-        if (displayName is not null) s.SetAttributeValue("DisplayName", displayName);
-        if (artist is not null)      s.SetAttributeValue("Artist", artist);
-    }
-    
     public RadioTrack AddCustom(string soundName, long sampleLength, int sampleRate,
                                 string? displayName, string? artist)
     {
@@ -219,37 +221,140 @@ public sealed class RadioStationEditor(XElement station)
         };
     }
 
+    public static readonly string[] MarkerNames =
+    [
+        "VeryStart", "TrackStart", "End",
+        "DJDrop", "TrackDrop", "DJSegment", "PostDrop", "TrackBreakDown", "DJStart", "StingerStart",
+        "TrackLoopStart", "TrackLoopEnd", "PostRaceLoopStart", "PostRaceLoopEnd",
+        "Loop1Start", "Loop1End", "Loop2Start", "Loop2End", "Loop3Start", "Loop3End",
+        "Loop4Start", "Loop4End", "Loop5Start", "Loop5End",
+        "Section1", "Section2", "Section3", "Section4", "Section5",
+        "BinkTransition",
+    ];
+
+    public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength) =>
+        ComputeAutoMarkers(sampleLength, 48000);
+
+    public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength, int sampleRate) =>
+        MarkerDefaults.Compute(sampleLength, sampleRate);
+
+    public static Dictionary<string, long> ReadMarkers(XElement sample)
+    {
+        var result = new Dictionary<string, long>();
+
+        var elems = sample.Elements("Marker").ToList();
+        if (elems.Count > 0)
+        {
+            foreach (var mk in elems)
+            {
+                var n = (string?) mk.Attribute("Name");
+                if (n is not null && long.TryParse((string?) mk.Attribute("Position"), out var p))
+                {
+                    result[n] = p;
+                }
+            }
+        }
+        else
+        {
+            foreach (var name in MarkerNames)
+            {
+                if (long.TryParse((string?) sample.Attribute(name), out var p))
+                {
+                    result[name] = p;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    public bool SetMarkers(string soundName, IReadOnlyDictionary<string, long> markers)
+    {
+        var s = FindSample(soundName);
+        if (s is null) return false;
+
+        var elems = s.Elements("Marker").ToList();
+        if (elems.Count > 0)
+        {
+            foreach (var mk in elems)
+            {
+                var n = (string?) mk.Attribute("Name");
+                if (n is not null && markers.TryGetValue(n, out var p))
+                {
+                    mk.SetAttributeValue("Position", p);
+                }
+            }
+        }
+        else
+        {
+            foreach (var (name, p) in markers)
+            {
+                if (s.Attribute(name) is not null)
+                {
+                    s.SetAttributeValue(name, p);
+                }
+            }
+        }
+
+        return true;
+    }
+
+    public bool ResetMarkersAuto(string soundName, long sampleLength)
+    {
+        var s = FindSample(soundName);
+        if (s is null) return false;
+        ApplyCustomMarkers(s, sampleLength);
+        return true;
+    }
+
+    public bool ApplyReplacement(string soundName, long sampleLength, int sampleRate)
+    {
+        var s = FindSample(soundName);
+        if (s is null) return false;
+
+        s.SetAttributeValue("SampleLength", sampleLength);
+        s.SetAttributeValue("SampleRate", sampleRate);
+        ApplyCustomMarkers(s, sampleLength);
+        return true;
+    }
+    
+    public bool SetSampleMeta(string soundName, string? displayName, string? artist)
+    {
+        var s = FindSample(soundName);
+        
+        if (s is null) return false;
+        
+        if (displayName is not null)
+        {
+            s.SetAttributeValue("DisplayName", displayName);
+        }
+        
+        if (artist is not null)
+        {
+            s.SetAttributeValue("Artist", artist);
+        }
+        
+        return true;
+    }
+    
+    public (string? DisplayName, string? Artist)? GetSampleMeta(string soundName)
+    {
+        var s = FindSample(soundName);
+        if (s is null) return null;
+        return ((string?) s.Attribute("DisplayName"), (string?) s.Attribute("Artist"));
+    }
+
     private static void ApplyCustomMarkers(XElement sample, long sampleLength)
     {
-        var e = sampleLength - 1;
-        var stinger = Math.Max(0, e - 96000);
-        var djStart = Math.Min(e, stinger + 1000);
-        var loopEnd = Math.Max(0, stinger - 1);
-        var djSeg = sampleLength / 2;
-
-        var pos = new Dictionary<string, long>
-        {
-            ["TrackStart"] = 0,
-            ["DJDrop"] = 0,
-            ["TrackDrop"] = 0,
-            ["TrackLoopStart"] = 0,
-            ["TrackLoopEnd"] = loopEnd,
-            ["DJSegment"] = djSeg,
-            ["PostDrop"] = loopEnd,
-            ["TrackBreakDown"] = loopEnd,
-            ["PostRaceLoopStart"] = 0,
-            ["PostRaceLoopEnd"] = loopEnd,
-            ["StingerStart"] = stinger,
-            ["DJStart"] = djStart,
-            ["End"] = e,
-        };
-
+        var pos = ComputeAutoMarkers(sampleLength);
         var markerElems = sample.Elements("Marker").ToList();
+        
         if (markerElems.Count > 0)
         {
             foreach (var mk in markerElems)
             {
                 var n = (string?) mk.Attribute("Name");
+                
                 if (n is not null && pos.TryGetValue(n, out var p))
                 {
                     mk.SetAttributeValue("Position", p);
@@ -275,19 +380,19 @@ public sealed class RadioStationEditor(XElement station)
     public int FixCustomMarkers()
     {
         var fixedCount = 0;
+        
         foreach (var s in TrackList.Elements("Sample"))
         {
             var sn = (string?) s.Attribute("SoundName");
+            
             if (sn is null || !sn.StartsWith(Naming.CustomPrefix))
             {
                 continue;
             }
 
-            if (long.TryParse((string?) s.Attribute("SampleLength"), out var len) && len > 0)
-            {
-                ApplyCustomMarkers(s, len);
-                fixedCount++;
-            }
+            if (!long.TryParse((string?)s.Attribute("SampleLength"), out var len) || len <= 0) continue;
+            ApplyCustomMarkers(s, len);
+            fixedCount++;
         }
 
         return fixedCount;
@@ -305,11 +410,11 @@ public sealed class RadioStationEditor(XElement station)
 
     public IEnumerable<string> TrackBankNames()
     {
-        return station.Element("Banks")?.Elements("Bank")
+        return station.Element("Banks")?
+                   .Elements("Bank")
                    .Select(b => (string?) b.Attribute("Name"))
                    .Where(n => n is not null && System.Text.RegularExpressions.Regex.IsMatch(n, @"^R\d+_Tracks(_|$)"))
-                   .Select(n => n!)
-               ?? [];
+                   .Select(n => n!) ?? [];
     }
 
     public int ReconcileTracks(IReadOnlySet<ulong> bankIds, Func<string, ulong> hash, Action<string>? log = null)
@@ -347,7 +452,7 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
-public bool IsCustomEnabled(string soundName)
+    private bool IsCustomEnabled(string soundName)
     {
         var fr = MusicPlaylists.FirstOrDefault(pl => (string?) pl.Attribute("Type") == "FreeRoam");
         return fr?.Elements("Entry").Any(e => (string?) e.Attribute("Name") == soundName) == true;
@@ -376,5 +481,5 @@ public bool IsCustomEnabled(string soundName)
         }
     }
 
-        private XElement? FindSample(string soundName) => TrackList.Elements("Sample").FirstOrDefault(s => (string?) s.Attribute("SoundName") == soundName);
+    private XElement? FindSample(string soundName) => TrackList.Elements("Sample").FirstOrDefault(s => (string?) s.Attribute("SoundName") == soundName);
 }

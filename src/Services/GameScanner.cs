@@ -63,6 +63,7 @@ public static partial class GameScanner
 
         var result = names.Distinct().OrderBy(x => x).ToList();
         Log.Line($"GameScanner: radio banks = {result.Count} [{string.Join(", ", result)}]");
+        
         return result;
     }
 

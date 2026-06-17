@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia.Threading;
+using FH6RB.Assets;
 using FH6RB.Core;
 using FH6RB.Services;
 
@@ -9,7 +10,7 @@ namespace FH6RB.ViewModels;
 
 public sealed record LangOption(string Code, string FileName)
 {
-    public string Display => FileName == MainWindowViewModel.AllLanguagesFile ? "All languages" : FileName;
+    public string Display => FileName == MainWindowViewModel.AllLanguagesFile ? Str.LangAll : FileName;
 }
 
 public sealed partial class MainWindowViewModel : ObservableObject
@@ -29,10 +30,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isBuilding;
     [ObservableProperty] private bool _isAddingTracks;
+    [ObservableProperty] private bool _isBackingUp;
 
-    public bool IsBusy => IsBuilding || IsAddingTracks;
+    public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp;
+
+    [ObservableProperty] private bool _hasUnsavedChanges;
+    public void MarkDirty() => HasUnsavedChanges = true;
     partial void OnIsBuildingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsAddingTracksChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsBackingUpChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     public string? PendingErrorDialog { get; set; }
 
     [ObservableProperty] private string _status = "Ready.";
@@ -61,13 +67,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _transportPlaying;
     [ObservableProperty] private string _nowTitle = "";
     [ObservableProperty] private string? _nowArtist;
-    [ObservableProperty] private bool _nowShowVolume;
     [ObservableProperty] private double _positionSeconds;
     [ObservableProperty] private double _durationSeconds = 1;
     [ObservableProperty] private string _nowPositionText = "0:00";
     [ObservableProperty] private string _nowDurationText = "0:00";
-    [ObservableProperty] private double _nowGainDb;
-    [ObservableProperty] private string _nowGainText = "0.0 dB";
 
     public TrackItemViewModel? NowPlaying => _nowPlaying;
 
@@ -88,7 +91,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         ReloadFromGame();
     }
 
-    public void ReloadFromGame()
+    public void ReloadFromGame() => Dispatcher.UIThread.Invoke(ReloadFromGameCore);
+
+    private void ReloadFromGameCore()
     {
         var wasSuppressed = _suppressReload;
         _suppressReload = true;
@@ -231,6 +236,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    public Task ReloadAsync()
+    {
+        _radioForFile = null;
+        _radio = null;
+        return LoadAsync();
+    }
+
     private async Task LoadAsync()
     {
         if (SelectedStation is null || SelectedLanguage is null || SelectedVariant is null)
@@ -239,14 +251,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         var gen = ++_loadGen;
-        StopPlayback();
         var station = SelectedStation;
         var bank = station.BankName(SelectedVariant);
 
         Log.Line($"LoadAsync #{gen}: lang={SelectedLanguage.FileName} station=#{station.Number} variant={SelectedVariant} bank={bank}");
 
-        IsLoading = true;
-        Status = $"Loading {bank}…";
+        Dispatcher.UIThread.Invoke(() =>
+        {
+            StopPlayback();
+            IsLoading = true;
+            Status = string.Format(Str.StatusLoadingFmt, bank);
+        });
 
         EnsureRadio();
         var radio = _radio;
@@ -263,19 +278,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        Tracks.Clear();
-        foreach (var rt in result.Tracks)
+        Dispatcher.UIThread.Invoke(() =>
         {
-            Tracks.Add(new TrackItemViewModel(rt));
-        }
-        
-        _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
-        IsLoading = false;
-        Recount();
+            Tracks.Clear();
+            foreach (var rt in result.Tracks)
+            {
+                Tracks.Add(new TrackItemViewModel(rt));
+            }
 
-        Status = result.Error is { } err
-            ? $"{bank}: {err}"
-            : $"Loaded {bank}";
+            _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
+            IsLoading = false;
+            Recount();
+            HasUnsavedChanges = false;
+
+            Status = result.Error is { } err
+                ? string.Format(Str.StatusBankErrorFmt, bank, err)
+                : string.Format(Str.StatusLoadedFmt, bank);
+        });
 
         Settings.LastLanguage = SelectedLanguage.FileName;
         Settings.LastStationBank = station.Prefix;
@@ -341,6 +360,37 @@ public sealed partial class MainWindowViewModel : ObservableObject
         CountText = $"{total} tracks · {custom} custom · {on} in playlist";
     }
 
+    public async Task<(float[]? Peaks, string? Wav)> LoadPeaksAsync(TrackItemViewModel track)
+    {
+        var bankPath = _loadedBankPath;
+        return await Task.Run<(float[]?, string?)>(() =>
+        {
+            try
+            {
+                var wav = track.UsesFileSource
+                    ? AudioDecoder.DecodeAdded(track.FileSource!, Settings)
+                    : AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
+                var peaks = WaveformService.Peaks(wav, 1600);
+
+                if (track.SampleLength <= 0 || track.SampleRate <= 0)
+                {
+                    var (rate, frames) = WaveformService.Probe(wav);
+                    if (rate > 0 && frames > 0)
+                    {
+                        track.SampleRate = rate;
+                        track.SampleLength = frames;
+                    }
+                }
+
+                return (peaks, wav);
+            }
+            catch
+            {
+                return (null, null);
+            }
+        });
+    }
+
     [RelayCommand]
     private async Task PlayTrack(TrackItemViewModel? track)
     {
@@ -397,17 +447,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         TransportPlaying = false;
         NowTitle = track.Title;
         NowArtist = track.Artist;
-        NowShowVolume = track.IsUnbuilt;
-        NowGainDb = track.GainDb ?? 0;
         PositionSeconds = 0;
         NowPositionText = "0:00";
-        Status = $"Decoding {track.Title}…";
+        Status = string.Format(Str.StatusDecodingFmt, track.Title);
 
         try
         {
             var bankPath = _loadedBankPath;
-            var wav = await Task.Run(() => track.IsUnbuilt
-                ? AudioDecoder.DecodeAdded(track.SourcePath!, Settings)
+            var wav = await Task.Run(() => track.UsesFileSource
+                ? AudioDecoder.DecodeAdded(track.FileSource!, Settings)
                 : AudioDecoder.DecodeBank(bankPath!, track.SubIndex));
 
             if (gen != _playGen)
@@ -415,14 +463,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 return;
             }
             
-            var volDb = track.IsUnbuilt ? track.GainDb ?? 0 : 0;
+            var volDb = track.UsesFileSource ? track.GainDb ?? 0 : 0;
             _player.Play(wav, volDb);
 
             track.PlayState = TrackPlayState.Playing;
             TransportPlaying = true;
             DurationSeconds = Math.Max(0.1, _player.Duration.TotalSeconds);
             NowDurationText = Fmt(_player.Duration);
-            Status = $"Playing {track.Title}";
+            Status = string.Format(Str.StatusPlayingFmt, track.Title);
             _tick?.Start();
         }
         catch (Exception ex)
@@ -430,7 +478,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (gen == _playGen)
             {
                 Log.Line("playback error: " + ex);
-                Status = "Playback error: " + ex.Message;
+                Status = string.Format(Str.StatusPlaybackErrorFmt, ex.Message);
                 StopPlayback();
             }
         }
@@ -467,9 +515,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         NowTitle = _nowPlaying.Title;
         NowArtist = _nowPlaying.Artist;
 
+        // живое обновление громкости плеера: усиление несобранного кастома применяется в рантайме,
+        // поэтому при правке громкости во время проигрывания сразу подхватываем новое значение
         if (_nowPlaying.IsUnbuilt)
         {
-            NowGainDb = _nowPlaying.GainDb ?? 0;
+            _player.SetVolumeDb(_nowPlaying.GainDb ?? 0);
         }
     }
 
@@ -482,24 +532,28 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    partial void OnNowGainDbChanged(double value)
-    {
-        NowGainText = $"{(value > 0 ? "+" : "")}{value:0.0} dB";
-
-        if (_nowPlaying is { IsUnbuilt: true })
-        {
-            _nowPlaying.GainDb = value;
-            _player.SetVolumeDb(value);
-        }
-    }
-
     private static string Fmt(TimeSpan t) => $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
-    [RelayCommand]
-    private void ToggleEnabled(TrackItemViewModel track)
+    public void ToggleEnabled(TrackItemViewModel track, bool above = false, bool below = false)
     {
-        track.Enabled = !track.Enabled;
-        Status = (track.Enabled ? "Enabled: " : "Disabled: ") + track.SoundName;
+        var state = !track.Enabled;
+        track.Enabled = state;
+
+        if (above || below)
+        {
+            var idx = Tracks.IndexOf(track);
+
+            for (var i = 0; i < Tracks.Count; i++)
+            {
+                if ((above && i < idx) || (below && i > idx))
+                {
+                    Tracks[i].Enabled = state;
+                }
+            }
+        }
+
+        Status = string.Format(state ? Str.StatusEnabledFmt : Str.StatusDisabledFmt, track.SoundName);
+        HasUnsavedChanges = true;
         Recount();
     }
 
@@ -512,7 +566,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         Tracks.Remove(track);
-        Status = "Deleted: " + track.SoundName;
+        Status = string.Format(Str.StatusDeletedFmt, track.SoundName);
+        HasUnsavedChanges = true;
         Recount();
     }
 
@@ -545,7 +600,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var missing = Tools.MissingForBuild().ToList();
         if (missing.Count > 0)
         {
-            Status = "Build: missing " + string.Join(", ", missing) + " (put them in app folder)";
+            Status = string.Format(Str.StatusBuildMissingFmt, string.Join(", ", missing));
             return;
         }
 
@@ -554,7 +609,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var bankPath = GameScanner.BankPath(Settings.GamePath, bankName);
         if (bankPath is null)
         {
-            Status = $"Build: bank file not found ({bankName})";
+            Status = string.Format(Str.StatusBuildBankNotFoundFmt, bankName);
             return;
         }
 
@@ -565,19 +620,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
             : null;
         if (radio is null || radioPath is null)
         {
-            Status = "Build: RadioInfo not available";
+            Status = Str.StatusBuildNoRadioInfo;
             return;
         }
         
-        var items = Tracks.Select(t => new BuildItem(
-            t.SoundName,
-            t.IsCustom && t.SourcePath is not null,
-            t.SourcePath, t.Title, t.Artist, t.GainDb, t.Enabled)).ToList();
+        var items = Tracks.Select(t =>
+        {
+            var newCustom = t.IsCustom && t.SourcePath is not null;
+            var replacing = !t.IsCustom && t.ReplacementPath is not null;
+            var encodeSrc = newCustom ? t.SourcePath : replacing ? t.ReplacementPath : null;
+            return new BuildItem(
+                t.SoundName, newCustom, encodeSrc, t.Title, t.Artist, t.GainDb, t.Enabled,
+                t.Markers, replacing);
+        }).ToList();
         var settings = Settings;
 
         IsBuilding = true;
         StopPlayback();
-        Status = $"Processing {bankName}…";
+        Status = string.Format(Str.StatusProcessingFmt, bankName);
         Log.Line($"=== BUILD {bankName} (station #{station.Number}) ===");
         
         void Progress(string m) => Dispatcher.UIThread.Post(() =>
@@ -657,6 +717,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ed.RegisterBank(bankName);
                 ed.SyncCustomsFrom(refStation);
 
+                foreach (var a in addedSamples.Where(a => a.IsReplacement))
+                {
+                    ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
+                }
+
                 if (!suspicious && union.Count > 0)
                 {
                     dead += ed.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line);
@@ -672,20 +737,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Log.Line($"reconcile: removed {dead} dead track(s) total");
             }
 
-            Status = $"Built {bankName}: +{addedSamples.Count} custom, {items.Count} tracks total"
-                     + (savedXml > 1 ? $", {savedXml} xml" : "")
-                     + (dead > 0 ? $", cleaned {dead} dead" : "");
+            var nCustom = addedSamples.Count(a => !a.IsReplacement);
+            var nRepl = addedSamples.Count(a => a.IsReplacement);
+            Status = string.Format(Str.StatusBuiltFmt, bankName, items.Count)
+                     + (nCustom > 0 ? string.Format(Str.StatusBuiltCustomFmt, nCustom) : "")
+                     + (nRepl > 0 ? string.Format(Str.StatusBuiltReplacedFmt, nRepl) : "")
+                     + (savedXml > 1 ? string.Format(Str.StatusBuiltXmlFmt, savedXml) : "")
+                     + (dead > 0 ? string.Format(Str.StatusBuiltCleanedFmt, dead) : "");
         }
         catch (BankTooLargeException ex)
         {
             Log.Line("BUILD ERROR: " + ex);
-            Status = "Build stopped: bank exceeds the 2 GB limit";
+            Status = Str.StatusBuildTooLarge;
             PendingErrorDialog = ex.Message;
         }
         catch (Exception ex)
         {
             Log.Line("BUILD ERROR: " + ex);
-            Status = "Build error: " + ex.Message;
+            Status = string.Format(Str.StatusBuildErrorFmt, ex.Message);
         }
         finally
         {
@@ -706,7 +775,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         string bankPath, IReadOnlyList<BuildItem> items, AppSettings settings, Action<string> progress)
     {
         var bankBak = bankPath + ".bak";
-        if (!File.Exists(bankBak)) File.Copy(bankPath, bankBak);
+        if (!File.Exists(bankBak))
+        {
+            File.Copy(bankPath, bankBak);
+        }
+        else if (!BankLooksModified(bankPath))
+        {
+            File.Copy(bankPath, bankBak, overwrite: true);
+            Log.Line($"  .bak refreshed from clean (vanilla) bank: {Path.GetFileName(bankPath)}");
+        }
 
         var tmp = bankPath + ".tmp";
         try
@@ -727,8 +804,47 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static void SaveXmlWithBackup(RadioInfo radio, string path)
     {
         var bak = path + ".bak";
-        if (!File.Exists(bak)) File.Copy(path, bak);
+        if (!File.Exists(bak))
+        {
+            File.Copy(path, bak);
+        }
+        else if (!XmlIsMarked(path))
+        {
+            File.Copy(path, bak, overwrite: true);
+        }
+
         radio.Save(path);
+    }
+    
+    private static bool BankLooksModified(string bankPath)
+    {
+        if (FevBank.HasModMarker(bankPath))
+        {
+            return true;
+        }
+
+        try
+        {
+            var ids = FevBank.ReadStblIdsFromFile(bankPath);
+            return Naming.ScanCustomTracks(ids).Count > 0;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static bool XmlIsMarked(string path)
+    {
+        try
+        {
+            var text = File.ReadAllText(path);
+            return text.Contains(RadioInfo.XmlMarker) || text.Contains(Naming.CustomPrefix);
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static void ApplyRadioInfo(RadioInfo radio, StationInfo station, string bankName,
@@ -741,7 +857,37 @@ public sealed partial class MainWindowViewModel : ObservableObject
         
         foreach (var a in added)
         {
-            editor.AddCustom(a.SoundName, a.Frames, a.SampleRate, a.DisplayName, a.Artist);
+            if (a.IsReplacement)
+            {
+                editor.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
+                editor.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist);
+            }
+            else
+            {
+                editor.AddCustom(a.SoundName, a.Frames, a.SampleRate, a.DisplayName, a.Artist);
+            }
+        }
+        
+        foreach (var it in items)
+        {
+            if (editor.GetSampleMeta(it.SoundName) is not { } cur)
+            {
+                continue;
+            }
+
+            var nameChanged =
+                it.DisplayName is not null
+                && !string.Equals(cur.DisplayName, it.DisplayName, StringComparison.Ordinal)
+                && !(cur.DisplayName is null && string.Equals(it.DisplayName, it.SoundName, StringComparison.Ordinal));
+
+            var artistChanged =
+                it.Artist is not null
+                && !string.Equals(cur.Artist, it.Artist, StringComparison.Ordinal);
+
+            if (nameChanged || artistChanged)
+            {
+                editor.SetSampleMeta(it.SoundName, it.DisplayName, it.Artist);
+            }
         }
 
         foreach (var it in items)
@@ -756,5 +902,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         
         editor.FixCustomMarkers();
+
+        foreach (var it in items)
+        {
+            if (it.Markers is { } mk)
+            {
+                editor.SetMarkers(it.SoundName, mk);
+            }
+        }
     }
 }

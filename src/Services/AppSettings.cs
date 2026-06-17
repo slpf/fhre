@@ -14,13 +14,16 @@ public sealed class AppSettings
 
 
     public int EncodeParallelism { get; set; } = 0;
+
+    public Dictionary<string, string> MarkerDefaults { get; set; } = new();
+
+    public Dictionary<string, int> WaveformLabelRows { get; set; } = new();
     public static int RecommendedParallelism => Math.Max(1, Environment.ProcessorCount * 3 / 4);
 }
 
 public static class SettingsService
 {
-    private static string Dir =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FHRE");
+    private static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FHRE");
 
     private static string FilePath => Path.Combine(Dir, "settings.json");
 

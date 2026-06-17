@@ -1,5 +1,6 @@
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
+using FH6RB.Assets;
 using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
@@ -8,8 +9,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 {
     private readonly AppSettings _settings;
 
-    public string AppVersion =>
-        $"v{Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0"}";
+    public string AppVersion => $"v{Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0"}";
 
     [ObservableProperty] private string _gamePath;
     [ObservableProperty] private bool _isValid;
@@ -33,14 +33,14 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public string EncodeParallelismText => $"{EncodeParallelism} / {MaxThreads}";
     
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(BackupVisible))]
-    private bool _hasBackups;
+    [NotifyPropertyChangedFor(nameof(CardVisible))]
+    private bool _canRestore;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(BackupVisible))]
-    private string _restoreLine = "";
+    [NotifyPropertyChangedFor(nameof(CardVisible))]
+    private string _backupLine = "";
 
-    public bool BackupVisible => HasBackups || !string.IsNullOrWhiteSpace(RestoreLine);
+    public bool CardVisible => CanRestore || !string.IsNullOrWhiteSpace(BackupLine);
     
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowAdvanced))]
@@ -49,6 +49,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public bool ShowAdvanced => !IsFirstRun;
 
     public bool Saved { get; private set; }
+    public bool Restored { get; private set; }
 
     public SettingsWindowViewModel(AppSettings settings)
     {
@@ -66,6 +67,9 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public void Validate() => _ = ValidateAsync();
 
     private CancellationTokenSource? _validateCts;
+    
+    private static GameScan? _gameScanCache;
+    private sealed record GameScan(string Path, string? Exe, int LangCount, int BankCount);
 
     public async Task ValidateAsync()
     {
@@ -75,19 +79,34 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         var token = cts.Token;
 
         var path = GamePath;
-        Scanning = true;
-        IsValid = false;
         Error = "";
+
+        var cachedGame = _gameScanCache is { } gc && string.Equals(gc.Path, path, StringComparison.OrdinalIgnoreCase) ? gc : null;
+        
+        if (cachedGame is not null)
+        {
+            ApplyGameScan(cachedGame);
+            Scanning = false;
+        }
+        else
+        {
+            Scanning = true;
+            IsValid = false;
+        }
 
         try
         {
             var r = await Task.Run(() =>
             {
+                var game = cachedGame ?? new GameScan(
+                    path,
+                    GameScanner.FindExe(path),
+                    string.IsNullOrWhiteSpace(path) ? 0 : GameScanner.LanguageFiles(path).Count,
+                    string.IsNullOrWhiteSpace(path) ? 0 : GameScanner.RadioBankNames(path).Count);
+                
                 var hasBackups = BackupService.Has(path);
-                var exe = GameScanner.FindExe(path);
-                var langs = string.IsNullOrWhiteSpace(path) ? [] : GameScanner.LanguageFiles(path);
-                var banks = string.IsNullOrWhiteSpace(path) ? [] : GameScanner.RadioBankNames(path);
-                return (hasBackups, exe, langCount: langs.Count, bankCount: banks.Count);
+                var modified = hasBackups && BackupService.HasModified(path);
+                return (game, hasBackups, modified);
             }, token);
 
             if (token.IsCancellationRequested)
@@ -95,22 +114,18 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 return;
             }
 
-            HasBackups = r.hasBackups;
-            IsValid = r.exe is not null && r.langCount > 0;
-
-            if (IsValid)
+            _gameScanCache = r.game;
+            
+            if (cachedGame is null)
             {
-                ExeLine = $"Found {Path.GetFileName(r.exe)}";
-                LangLine = $"Localizations: {r.langCount}";
-                BankLine = $"Radio banks: {r.bankCount}";
-                Error = "";
+                ApplyGameScan(r.game);
             }
-            else
+
+            CanRestore = r.modified;
+
+            if (!Restored)
             {
-                ExeLine = "";
-                LangLine = "";
-                BankLine = "";
-                Error = "No RadioInfo_*.xml found. Check the game folder, or close the program.";
+                BackupLine = CanRestore ? Str.HintRestore : "";
             }
         }
         catch (OperationCanceledException)
@@ -126,13 +141,34 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         }
     }
 
+    private void ApplyGameScan(GameScan game)
+    {
+        IsValid = game.Exe is not null && game.LangCount > 0;
+
+        if (IsValid)
+        {
+            ExeLine = string.Format(Str.FoundFmt, Path.GetFileName(game.Exe));
+            LangLine = string.Format(Str.LocalizationsFmt, game.LangCount);
+            BankLine = string.Format(Str.RadioBanksFmt, game.BankCount);
+            Error = "";
+        }
+        else
+        {
+            ExeLine = "";
+            LangLine = "";
+            BankLine = "";
+            Error = Str.ErrNoRadioInfo;
+        }
+    }
+
     public void RestoreBackups()
     {
         var (restored, failed) = BackupService.Restore(GamePath, Log.Line);
-        RestoreLine = failed == 0
-            ? $"Restored {restored} file(s)"
-            : $"Restored {restored}, {failed} failed";
-        HasBackups = BackupService.Has(GamePath);
+        BackupLine = failed == 0
+            ? string.Format(Str.EditRestoredFmt, restored)
+            : string.Format(Str.EditRestoredFailedFmt, restored, failed);
+        CanRestore = false;
+        Restored = true;
     }
 
     public void Commit()

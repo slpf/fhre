@@ -26,6 +26,7 @@ public static class BankReader
 
         var tracks = FevBank.ReadTrackInfoFromFile(bankPath);
         Log.Line($"  STBL count = {tracks.Count}");
+        
         if (tracks.Count == 0)
         {
             Log.Line("  -> empty STBL, returning 0 tracks");
@@ -33,61 +34,41 @@ public static class BankReader
         }
 
         var withAudio = tracks.Count(t => t.SampleRate > 0);
+        
         Log.Line($"  FSB5 samples = {withAudio}" + (withAudio == 0 ? " (streamed/empty — durations unavailable)" : ""));
 
         var ids = tracks.Select(t => t.Id).ToHashSet();
+        var customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
         
-        var bakPath = bankPath + ".bak";
-        HashSet<ulong> customIds;
-        Dictionary<ulong, string> customs;
-        if (File.Exists(bakPath))
-        {
-            HashSet<ulong> originalIds;
-            try { originalIds = FevBank.ReadStblIdsFromFile(bakPath); }
-            catch (Exception ex) { Log.Line($"  .bak read failed: {ex.Message}"); originalIds = []; }
-
-            if (originalIds.Count > 0)
-            {
-                customIds = ids.Where(id => !originalIds.Contains(id)).ToHashSet();
-                customs = Naming.ResolveCustomNames(customIds);
-                Log.Line($"  customs by .bak diff = {customIds.Count}, named = {customs.Count}");
-            }
-            else
-            {
-                customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
-                customIds = customs.Keys.ToHashSet();
-                Log.Line($"  .bak empty -> name-probe customs = {customs.Count}");
-            }
-        }
-        else
-        {
-            customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
-            customIds = customs.Keys.ToHashSet();
-            Log.Line($"  no .bak -> name-probe customs = {customs.Count}");
-        }
+        Log.Line($"  custom name-probe (for id->name) = {customs.Count}");
 
         var meta = new Dictionary<ulong, (string Sn, string? Dn, string? Ar)>();
+        var markersById = new Dictionary<ulong, Dictionary<string, long>>();
         var enabled = new HashSet<ulong>();
 
         if (radio is not null)
         {
             foreach (var s in radio.Document.Descendants("Sample"))
             {
-                if ((string?)s.Attribute("SoundName") is { } sn)
-                {
-                    meta.TryAdd(Lookup.SoundNameToId(sn),
-                        (sn, (string?)s.Attribute("DisplayName"), (string?)s.Attribute("Artist")));
-                }
+                if ((string?) s.Attribute("SoundName") is not { } sn) continue;
+                
+                var id = Lookup.SoundNameToId(sn);
+                meta.TryAdd(id, (sn, (string?) s.Attribute("DisplayName"), (string?) s.Attribute("Artist")));
+
+                if (markersById.ContainsKey(id)) continue;
+                
+                var mk = RadioStationEditor.ReadMarkers(s);
+                if (mk.Count > 0) markersById[id] = mk;
             }
 
             var freeRoam = radio.Document.Descendants("RadioStation")
-                .FirstOrDefault(st => (int?)st.Attribute("Number") == stationNumber)
+                .FirstOrDefault(st => (int?) st.Attribute("Number") == stationNumber)
                 ?.Elements("PlayList")
-                .FirstOrDefault(pl => (string?)pl.Attribute("Type") == "FreeRoam");
+                .FirstOrDefault(pl => (string?) pl.Attribute("Type") == "FreeRoam");
 
             if (freeRoam is not null)
             {
-                foreach (var name in freeRoam.Elements("Entry").Select(e => (string?)e.Attribute("Name")))
+                foreach (var name in freeRoam.Elements("Entry").Select(e => (string?) e.Attribute("Name")))
                 {
                     if (name is not null)
                     {
@@ -96,8 +77,7 @@ public static class BankReader
                 }
             }
 
-            Log.Line($"  XML: meta entries = {meta.Count}, FreeRoam@#{stationNumber} = {enabled.Count}"
-                     + (freeRoam is null ? " (FreeRoam NOT FOUND)" : ""));
+            Log.Line($"  XML: meta entries = {meta.Count}, FreeRoam@#{stationNumber} = {enabled.Count}" + (freeRoam is null ? " (FreeRoam NOT FOUND)" : ""));
         }
         else
         {
@@ -113,14 +93,14 @@ public static class BankReader
         }
 
         var result = new List<RadioTrack>(tracks.Count);
+        
         foreach (var t in tracks.OrderBy(e => e.Index))
         {
             var hasAudio = t.SampleRate > 0;
             var customName = customs.GetValueOrDefault(t.Id);
-            var isCustom = customIds.Contains(t.Id);
             var hasMeta = meta.TryGetValue(t.Id, out var m);
-
             var soundName = hasMeta ? m.Sn : customName ?? $"sound_{t.Index}";
+            var isCustom = soundName.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal);
 
             result.Add(new RadioTrack
             {
@@ -132,11 +112,13 @@ public static class BankReader
                 SampleLength = t.Frames,
                 SampleRate = t.SampleRate,
                 SubIndex = hasAudio ? t.Index : -1,
+                Markers = markersById.TryGetValue(t.Id, out var mk) ? mk : null,
             });
         }
 
         var named = result.Count(r => !r.SoundName.StartsWith("sound_"));
         Log.Line($"  -> {result.Count} tracks, {named} named, {result.Count(r => r.Enabled)} enabled");
+        
         return result;
     }
 }
