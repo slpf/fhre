@@ -13,6 +13,7 @@ public partial class WaveformWindow : Window
     private readonly DispatcherTimer _timer;
     private readonly List<(MarkerField Marker, long Position)> _snapshot = [];
     private double _cursorSec;
+    private MarkerField? _hoverField;
 
     private const double SeekStep = 0.25;
 
@@ -35,6 +36,8 @@ public partial class WaveformWindow : Window
 
         Wave.SeekRequested += OnSeek;
         Wave.LabelRowsChanged += OnLabelRowsChanged;
+        Wave.RegionChanged += OnRegionChanged;
+        _player.Ended += OnPlaybackEnded;
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -93,21 +96,11 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        if (!_player.HasMedia)
-        {
-            var startSec = _cursorSec < RegionStartSec - 0.001 || _cursorSec >= RegionEndSec
-                ? RegionStartSec
-                : _cursorSec;
-
-            _player.Play(wav, 0);
-            _player.Position = TimeSpan.FromSeconds(startSec);
-            _timer.Start();
-        }
-        else if (_player.IsPlaying)
+        if (_player.IsPlaying)
         {
             _player.TogglePause();
         }
-        else
+        else if (_player.IsPaused)
         {
             var pos = _player.Position.TotalSeconds;
 
@@ -117,6 +110,16 @@ public partial class WaveformWindow : Window
             }
 
             _player.TogglePause();
+        }
+        else
+        {
+            var startSec = _cursorSec < RegionStartSec - 0.001 || _cursorSec >= RegionEndSec
+                ? RegionStartSec
+                : _cursorSec;
+
+            _player.Play(wav, 0);
+            _player.Position = TimeSpan.FromSeconds(startSec);
+            _timer.Start();
         }
 
         UpdateUi();
@@ -146,6 +149,17 @@ public partial class WaveformWindow : Window
                 {
                     Wave.Focus();
                     e.Handled = true;
+                }
+
+                break;
+
+            case Key.LeftShift:
+            case Key.RightShift:
+                var target = _hoverField ?? FocusedField();
+
+                if (target is not null)
+                {
+                    Wave.FocusMarker(target);
                 }
 
                 break;
@@ -210,8 +224,7 @@ public partial class WaveformWindow : Window
     {
         if (_player.HasMedia && _player.IsPlaying && _player.Position.TotalSeconds >= RegionEndSec)
         {
-            _player.TogglePause();
-            _player.Position = TimeSpan.FromSeconds(RegionEndSec);
+            ResetToStart();
         }
 
         UpdateUi();
@@ -278,6 +291,81 @@ public partial class WaveformWindow : Window
         if (Vm.Settings is { } s)
         {
             SettingsService.Save(s);
+        }
+    }
+
+    private void OnRegionChanged()
+    {
+        if (_player.HasMedia)
+        {
+            _player.Stop();
+        }
+
+        UpdateUi();
+    }
+
+    private void ResetToStart()
+    {
+        _cursorSec = RegionStartSec;
+        _player.Stop();
+    }
+
+    private void OnPlaybackEnded() =>
+        Dispatcher.UIThread.Post(() =>
+        {
+            ResetToStart();
+            UpdateUi();
+        });
+
+    private void OnFieldNamePressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control { Tag: MarkerField field }
+            || !e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            return;
+        }
+
+        var props = e.GetCurrentPoint(this).Properties;
+
+        if (props.IsLeftButtonPressed)
+        {
+            Wave.SetRegionStart(field.Position);
+        }
+        else if (props.IsRightButtonPressed)
+        {
+            Wave.SetRegionEnd(field.Position);
+        }
+        else
+        {
+            return;
+        }
+
+        e.Handled = true;
+    }
+
+    private MarkerField? FocusedField() =>
+        (FocusManager?.GetFocusedElement() as Control)?.Tag as MarkerField;
+
+    private void OnFieldNameEntered(object? sender, PointerEventArgs e)
+    {
+        if (sender is not Control { Tag: MarkerField field })
+        {
+            return;
+        }
+
+        _hoverField = field;
+
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+        {
+            Wave.FocusMarker(field);
+        }
+    }
+
+    private void OnFieldNameExited(object? sender, PointerEventArgs e)
+    {
+        if (sender is Control { Tag: MarkerField field } && ReferenceEquals(_hoverField, field))
+        {
+            _hoverField = null;
         }
     }
 

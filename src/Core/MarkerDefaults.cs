@@ -9,12 +9,11 @@ public static class MarkerDefaults
     private static readonly (string Name, string Spec)[] BaseDefaults =
     [
         ("TrackStart", "0%"),
-        ("DJDrop", "0%"),
+        ("DJDrop", "5%"),
         ("TrackDrop", "15%"),
         ("TrackLoopStart", "15%"),
         ("PostRaceLoopStart", "75%"),
         ("DJSegment", "70%"),
-        ("StingerStart", "92%"),
         ("DJStart", "95%"),
         ("TrackLoopEnd", "90%"),
         ("PostDrop", "75%"),

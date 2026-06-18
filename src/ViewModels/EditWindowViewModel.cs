@@ -10,6 +10,7 @@ namespace FH6RB.ViewModels;
 public sealed partial class MarkerField : ObservableObject
 {
     public string Name { get; init; } = "";
+    public string Description { get; init; } = "";
     public int SampleRate { get; init; }
     public long SampleLength { get; init; }
 
@@ -119,12 +120,25 @@ public sealed partial class EditWindowViewModel : ObservableObject
     private static readonly (string Group, string[] Names)[] Schema =
     [
         (Str.GrpCore, ["TrackStart", "End"]),
-        (Str.GrpDjDrops, ["DJStart", "DJDrop", "DJSegment", "StingerStart", "TrackDrop", "PostDrop", "TrackBreakDown"]),
-        (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostRaceLoopStart", "PostRaceLoopEnd"]),
-        (Str.GrpExtraLoops, ["Loop1Start", "Loop1End", "Loop2Start", "Loop2End", "Loop3Start", "Loop3End", "Loop4Start", "Loop4End", "Loop5Start", "Loop5End"]),
-        (Str.GrpSections, ["Section1", "Section2", "Section3", "Section4", "Section5"]),
-        (Str.GrpOther, ["VeryStart", "BinkTransition"]),
+        (Str.GrpDjDrops, ["DJStart", "DJDrop", "DJSegment", "TrackDrop", "PostDrop"]),
+        (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostRaceLoopStart", "PostRaceLoopEnd", "TrackBreakDown"]),
     ];
+
+    private static readonly Dictionary<string, string> Descriptions = new()
+    {
+        ["TrackStart"] = Str.MkTrackStart,
+        ["End"] = Str.MkEnd,
+        ["DJStart"] = Str.MkDjStart,
+        ["DJDrop"] = Str.MkDjDrop,
+        ["DJSegment"] = Str.MkDjSegment,
+        ["TrackDrop"] = Str.MkTrackDrop,
+        ["PostDrop"] = Str.MkPostDrop,
+        ["TrackBreakDown"] = Str.MkTrackBreakDown,
+        ["TrackLoopStart"] = Str.MkTrackLoopStart,
+        ["TrackLoopEnd"] = Str.MkTrackLoopEnd,
+        ["PostRaceLoopStart"] = Str.MkPostRaceLoopStart,
+        ["PostRaceLoopEnd"] = Str.MkPostRaceLoopEnd,
+    };
 
     public EditWindowViewModel(TrackItemViewModel track)
     {
@@ -172,7 +186,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
                     };
                 }
 
-                grp.Fields.Add(new MarkerField { Name = name, SampleRate = rate, SampleLength = len, Position = position });
+                grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position });
             }
 
             Groups.Add(grp);

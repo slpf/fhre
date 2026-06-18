@@ -238,6 +238,19 @@ public sealed class RadioStationEditor(XElement station)
     public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength, int sampleRate) =>
         MarkerDefaults.Compute(sampleLength, sampleRate);
 
+    public static void ApplyXmlMarkerRules(IDictionary<string, long> markers)
+    {
+        if (markers.TryGetValue("End", out var end))
+        {
+            markers["End"] = Math.Max(0, end - 1);
+        }
+
+        if (markers.TryGetValue("DJStart", out var dj))
+        {
+            markers["StingerStart"] = Math.Max(0, dj - 1000);
+        }
+    }
+
     public static Dictionary<string, long> ReadMarkers(XElement sample)
     {
         var result = new Dictionary<string, long>();
@@ -273,13 +286,16 @@ public sealed class RadioStationEditor(XElement station)
         var s = FindSample(soundName);
         if (s is null) return false;
 
+        var m = new Dictionary<string, long>(markers);
+        ApplyXmlMarkerRules(m);
+
         var elems = s.Elements("Marker").ToList();
         if (elems.Count > 0)
         {
             foreach (var mk in elems)
             {
                 var n = (string?) mk.Attribute("Name");
-                if (n is not null && markers.TryGetValue(n, out var p))
+                if (n is not null && m.TryGetValue(n, out var p))
                 {
                     mk.SetAttributeValue("Position", p);
                 }
@@ -287,7 +303,7 @@ public sealed class RadioStationEditor(XElement station)
         }
         else
         {
-            foreach (var (name, p) in markers)
+            foreach (var (name, p) in m)
             {
                 if (s.Attribute(name) is not null)
                 {
@@ -347,6 +363,7 @@ public sealed class RadioStationEditor(XElement station)
     private static void ApplyCustomMarkers(XElement sample, long sampleLength)
     {
         var pos = ComputeAutoMarkers(sampleLength);
+        ApplyXmlMarkerRules(pos);
         var markerElems = sample.Elements("Marker").ToList();
         
         if (markerElems.Count > 0)

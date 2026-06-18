@@ -41,6 +41,7 @@ public sealed class WaveformView : Control
 
     public event Action<double>? SeekRequested;
     public event Action? LabelRowsChanged;
+    public event Action? RegionChanged;
 
     private static readonly IBrush BgBrush = new SolidColorBrush(Color.Parse("#15181d"));
     private static readonly IBrush MidBrush = new SolidColorBrush(Color.Parse("#2a2f37"));
@@ -133,6 +134,10 @@ public sealed class WaveformView : Control
             Hook(change.OldValue as IEnumerable, false);
             Hook(change.NewValue as IEnumerable, true);
         }
+        else if (change.Property == RegionStartProperty || change.Property == RegionEndProperty)
+        {
+            RegionChanged?.Invoke();
+        }
     }
 
     private void Hook(IEnumerable? items, bool add)
@@ -166,29 +171,6 @@ public sealed class WaveformView : Control
         }
 
         return null;
-    }
-
-    private MarkerField? NearestLine(double x, double tol)
-    {
-        if (Markers is null) return null;
-
-        MarkerField? best = null;
-        var bestD = tol;
-        foreach (var o in Markers)
-        {
-            if (o is not MarkerField m || m.Position < 0) continue;
-            var d = Math.Abs(XOf(m.Position) - x);
-            
-            if (!(d <= bestD))
-            {
-                continue;
-            }
-            
-            bestD = d;
-            best = m;
-        }
-
-        return best;
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -238,18 +220,6 @@ public sealed class WaveformView : Control
             e.Pointer.Capture(this);
             e.Handled = true;
             return;
-        }
-
-        if (SampleLength > 0)
-        {
-            _drag = HitLabel(pt) ?? NearestLine(pt.X, 6);
-            if (_drag is not null)
-            {
-                _dragOffset = pt.X - XOf(_drag.Position);
-                e.Pointer.Capture(this);
-                e.Handled = true;
-                return;
-            }
         }
 
         _seeking = true;
@@ -344,18 +314,24 @@ public sealed class WaveformView : Control
         e.Handled = true;
     }
 
-    private void SetRegionStart(long frame)
+    public void SetRegionStart(long frame)
     {
         if (SampleLength <= 1) return;
         var end = RegionEnd >= 0 ? RegionEnd : SampleLength - 1;
         RegionStart = Math.Clamp(Math.Min(frame, end), 0, SampleLength - 1);
     }
 
-    private void SetRegionEnd(long frame)
+    public void SetRegionEnd(long frame)
     {
         if (SampleLength <= 1) return;
         var start = RegionStart >= 0 ? RegionStart : 0;
         RegionEnd = Math.Clamp(Math.Max(frame, start), 0, SampleLength - 1);
+    }
+
+    public void FocusMarker(MarkerField? marker)
+    {
+        _labelLock = marker;
+        InvalidateVisual();
     }
 
     private void RaiseSeek(double x)

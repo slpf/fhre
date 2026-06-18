@@ -112,8 +112,6 @@ public static class Str
         "(a .bak backup exists to restore from). Quit anyway?";
     public const string DlgBuildProgressOk = "Quit";
     public const string DlgBuildProgressCancel = "Keep building";
-
-
     
     public const string GrpCore = "Core";
     public const string GrpDjDrops = "DJ / Drops";
@@ -121,6 +119,18 @@ public static class Str
     public const string GrpExtraLoops = "Extra loops";
     public const string GrpSections = "Sections";
     public const string GrpOther = "Other";
+    public const string MkTrackStart = "TrackStart — description TBD.";
+    public const string MkEnd = "End — description TBD.";
+    public const string MkDjStart = "DJStart — description TBD.";
+    public const string MkDjDrop = "DJDrop — description TBD.";
+    public const string MkDjSegment = "DJSegment — description TBD.";
+    public const string MkTrackDrop = "TrackDrop — description TBD.";
+    public const string MkPostDrop = "PostDrop — description TBD.";
+    public const string MkTrackBreakDown = "TrackBreakDown — description TBD.";
+    public const string MkTrackLoopStart = "TrackLoopStart — description TBD.";
+    public const string MkTrackLoopEnd = "TrackLoopEnd — description TBD.";
+    public const string MkPostRaceLoopStart = "PostRaceLoopStart — description TBD.";
+    public const string MkPostRaceLoopEnd = "PostRaceLoopEnd — description TBD.";
     
     public const string LangAll = "All languages";
     
@@ -132,7 +142,7 @@ public static class Str
     public const string FilterAudioFiles = "Audio files";
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
-    public const string TipWaveHotkeys = "SPACE - play/pause\nClick, drag — move playhead\nArrows on keyboard - also move playhead\nDrag a marker — move this marker\nSHIFT + hover a label — focus that marker\nSHIFT + wheel — raise/lower its label row\nSHIFT + drag — move the focused marker\nCTRL + LMB click — set play region start\nCTRL + RMB click — set play region end\nCTRL + LMB/RMB click a label — region edge to it";
+    public const string TipWaveHotkeys = "Click or drag — move playhead\nShift + hover a label — focus that marker\nShift + wheel — raise / lower its label row\nShift + drag — move the focused marker\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap region edge to it";
     public const string TipResetMarkers = "Replace markers to custom-track defaults";
     public const string TitleMarkerDefaults = "Custom-track marker values";
     public const string HintMarkerDefaults = "Default positions for custom-track markers.";
