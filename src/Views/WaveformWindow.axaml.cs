@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using FH6RB.Services;
@@ -12,6 +13,8 @@ public partial class WaveformWindow : Window
     private readonly DispatcherTimer _timer;
     private readonly List<(MarkerField Marker, long Position)> _snapshot = [];
     private double _cursorSec;
+
+    private const double SeekStep = 0.25;
 
     private EditWindowViewModel Vm => (EditWindowViewModel) DataContext!;
 
@@ -32,6 +35,11 @@ public partial class WaveformWindow : Window
 
         Wave.SeekRequested += OnSeek;
         Wave.LabelRowsChanged += OnLabelRowsChanged;
+
+        AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+        Wave.Focusable = true;
 
         Opened += (_, _) =>
         {
@@ -114,6 +122,65 @@ public partial class WaveformWindow : Window
         UpdateUi();
     }
 
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.Space:
+                OnPlayPause(this, new RoutedEventArgs());
+                e.Handled = true;
+                break;
+
+            case Key.Left:
+                Nudge(-SeekStep);
+                e.Handled = true;
+                break;
+
+            case Key.Right:
+                Nudge(SeekStep);
+                e.Handled = true;
+                break;
+
+            case Key.Escape:
+                if (FocusManager?.GetFocusedElement() is TextBox)
+                {
+                    Wave.Focus();
+                    e.Handled = true;
+                }
+
+                break;
+        }
+    }
+
+    private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (e.Text == " ")
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void Nudge(double deltaSec)
+    {
+        var total = Vm.TotalSeconds;
+
+        if (total <= 0)
+        {
+            return;
+        }
+
+        var endSec = RegionEndSec >= total ? total : RegionEndSec;
+        var baseSec = _player.HasMedia ? _player.Position.TotalSeconds : _cursorSec;
+        _cursorSec = Math.Clamp(baseSec + deltaSec, RegionStartSec, endSec);
+
+        if (_player.HasMedia)
+        {
+            _player.Position = TimeSpan.FromSeconds(_cursorSec);
+        }
+
+        UpdateUi();
+    }
+
     private void OnSeek(double fraction)
     {
         if (_player.HasMedia && _player.Duration > TimeSpan.Zero)
@@ -152,21 +219,35 @@ public partial class WaveformWindow : Window
 
     private void UpdateUi()
     {
+        var total = Vm.TotalSeconds;
+        double cur;
+
         if (_player.HasMedia)
         {
             _cursorSec = _player.Position.TotalSeconds;
             var dur = _player.Duration.TotalSeconds;
-            Wave.PlayFraction = dur > 0 ? _cursorSec / dur : -1;
-            TimeText.Text = $"{Fmt(_player.Position)} / {Fmt(_player.Duration)}";
+
+            if (dur > 0)
+            {
+                total = dur;
+            }
+
+            cur = _cursorSec;
+            Wave.PlayFraction = dur > 0 ? cur / dur : -1;
             SetPlaying(_player.IsPlaying);
         }
         else
         {
-            var total = Vm.TotalSeconds;
-            Wave.PlayFraction = total > 0 ? Math.Clamp(_cursorSec / total, 0, 1) : -1;
-            TimeText.Text = $"{Fmt(TimeSpan.FromSeconds(_cursorSec))} / {Fmt(TimeSpan.FromSeconds(total))}";
+            cur = _cursorSec;
+            Wave.PlayFraction = total > 0 ? Math.Clamp(cur / total, 0, 1) : -1;
             SetPlaying(false);
         }
+
+        var start = RegionStartSec;
+        var end = RegionEndSec >= total ? total : RegionEndSec;
+
+        TimeText.Text =
+            $"{Fmt(TimeSpan.FromSeconds(start))} / {Fmt(TimeSpan.FromSeconds(cur))} / {Fmt(TimeSpan.FromSeconds(end))}";
     }
 
     private void SetPlaying(bool playing)

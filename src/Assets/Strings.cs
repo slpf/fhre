@@ -132,7 +132,7 @@ public static class Str
     public const string FilterAudioFiles = "Audio files";
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
-    public const string TipWaveHotkeys = "Click or drag — move playhead\nDrag a marker — move this marker\nSHIFT + hover a label — focus that marker\nSHIFT + wheel — raise/lower its label row\nSHIFT + drag — move the focused marker\nCTRL + LMB click — set play region start\nCTRL + RMB click — set play region end\nCTRL + LMB/RMB click a label — region edge to it";
+    public const string TipWaveHotkeys = "SPACE - play/pause\nClick, drag — move playhead\nArrows on keyboard - also move playhead\nDrag a marker — move this marker\nSHIFT + hover a label — focus that marker\nSHIFT + wheel — raise/lower its label row\nSHIFT + drag — move the focused marker\nCTRL + LMB click — set play region start\nCTRL + RMB click — set play region end\nCTRL + LMB/RMB click a label — region edge to it";
     public const string TipResetMarkers = "Replace markers to custom-track defaults";
     public const string TitleMarkerDefaults = "Custom-track marker values";
     public const string HintMarkerDefaults = "Default positions for custom-track markers.";
