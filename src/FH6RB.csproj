@@ -12,20 +12,20 @@
         <ServerGarbageCollection>false</ServerGarbageCollection>
         <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     </PropertyGroup>
-    
+
     <PropertyGroup Condition="'$(Configuration)' == 'Release'">
         <DebugType>none</DebugType>
         <DebugSymbols>false</DebugSymbols>
     </PropertyGroup>
 
-	<PropertyGroup>
-		<GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
-		<GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
-		<GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
-		<GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
-		<GenerateAssemblyAssemblyCopyrightAttribute>false</GenerateAssemblyAssemblyCopyrightAttribute>
-		<GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
-	  </PropertyGroup>
+    <PropertyGroup>
+        <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
+        <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+        <GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
+        <GenerateAssemblyProductAttribute>false</GenerateAssemblyProductAttribute>
+        <GenerateAssemblyAssemblyCopyrightAttribute>false</GenerateAssemblyAssemblyCopyrightAttribute>
+        <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
+    </PropertyGroup>
 
     <ItemGroup>
         <AvaloniaResource Include="Assets/icons/*.png" />
@@ -40,8 +40,9 @@
         <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.3" />
         <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
         <PackageReference Include="NAudio" Version="2.3.0" />
+        <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
     </ItemGroup>
-    
+
     <Target Name="RelocateDepsToLibs" AfterTargets="Build"
             Condition="'$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
         <ItemGroup>
@@ -97,7 +98,7 @@
               OverwriteReadOnlyFiles="true" Condition="'@(_NativeDllP)' != ''" />
         <RemoveDir Directories="$(PublishDir)runtimes" />
     </Target>
-    
+
     <Target Name="RenameExePublish" AfterTargets="Publish"
             Condition="Exists('$(PublishDir)$(TargetName).exe') And '$(TargetName)' != 'fhre'">
         <Move SourceFiles="$(PublishDir)$(TargetName).exe" DestinationFiles="$(PublishDir)fhre.exe"
