@@ -697,7 +697,7 @@ public sealed class FevBank
             throw new InvalidOperationException("headers/data count mismatch");
         }
 
-        var headersLen = sampleHeaders.Aggregate<byte[]?, long>(0, (current, h) => current + h.Length);
+        var headersLen = sampleHeaders.Aggregate(0L, (current, h) => current + h.Length);
 
         var offs = new long[sampleData.Count];
         long dataLen = 0;
