@@ -9,17 +9,17 @@ public static class MarkerDefaults
     private static readonly (string Name, string Spec)[] BaseDefaults =
     [
         ("TrackStart", "0%"),
+        ("End", "100%"),
+        ("DJStart", "100%"),
         ("DJDrop", "0%"),
+        ("DJSegment", "60%"),
         ("TrackDrop", "0%"),
         ("TrackLoopStart", "0%"),
-        ("PostRaceLoopStart", "70%"),
-        ("DJSegment", "60%"),
-        ("DJStart", "100%"),
         ("TrackLoopEnd", "100%"),
-        ("PostDrop", "100%"),
-        ("TrackBreakDown", "70%"),
+        ("PostDrop", "70%"),
+        ("PostRaceLoopStart", "70%"),
         ("PostRaceLoopEnd", "90%"),
-        ("End", "100%"),
+        
     ];
     
     public static readonly IReadOnlyDictionary<string, int> DefaultLabelRows = new Dictionary<string, int>
@@ -35,7 +35,6 @@ public static class MarkerDefaults
         ["PostRaceLoopEnd"] = 24,
         ["TrackLoopStart"] = 28,
         ["TrackLoopEnd"] = 28,
-        ["TrackBreakDown"] = 20,
     };
 
     private static readonly Dictionary<string, string> Current =

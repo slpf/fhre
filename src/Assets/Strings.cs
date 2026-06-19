@@ -133,7 +133,6 @@ public static class Str
     public const string MkDjSegment = "Free-roam: point where a DJ line plays over the middle of the track.";
     public const string MkTrackDrop = "Events: where the track starts when an event begins, right after the countdown.";
     public const string MkPostDrop = "Events: the point reached when you cross the finish line.";
-    public const string MkTrackBreakDown = "Purpose not confirmed yet.";
     public const string MkTrackLoopStart = "Events: where the track loops back to while the event is still going.";
     public const string MkTrackLoopEnd = "Events: how far the track plays during an event.";
     public const string MkPostRaceLoopStart = "Events: start of the loop played on the results screen.";

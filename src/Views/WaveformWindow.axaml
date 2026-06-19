@@ -6,9 +6,9 @@
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.WaveformWindow"
         x:DataType="vm:EditWindowViewModel"
-        Width="780" Height="800"
-        MinWidth="560" MinHeight="800"
-        MaxHeight="800"
+        Width="780" Height="765"
+        MinWidth="560" MinHeight="765"
+        MaxHeight="765"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
         Title="{x:Static assets:Str.TitleMarkers}">
@@ -77,7 +77,7 @@
                 <ItemsControl ItemsSource="{Binding Groups}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Margin="0,0,8,0">
+                            <StackPanel>
                                 <ItemsControl ItemsSource="{Binding Fields}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>

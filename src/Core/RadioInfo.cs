@@ -245,6 +245,17 @@ public sealed class RadioStationEditor(XElement station)
             markers["StingerStart"] = Math.Max(0, dj - 1000);
         }
 
+        if (markers.TryGetValue("PostDrop", out var pd) && markers.TryGetValue("PostRaceLoopStart", out var prls)
+            && pd >= 0 && prls >= 0 && pd > prls)
+        {
+            markers["PostDrop"] = prls;
+        }
+
+        if (markers.TryGetValue("PostDrop", out var pdForBreak))
+        {
+            markers["TrackBreakDown"] = pdForBreak;
+        }
+
         if (sampleLength > 0)
         {
             var last = sampleLength - 1;

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FH6RB.Assets;
@@ -121,8 +122,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
     private static readonly (string Group, string[] Names)[] Schema =
     [
         (Str.GrpCore, ["TrackStart", "End"]),
-        (Str.GrpDjDrops, ["DJStart", "DJDrop", "DJSegment", "TrackDrop", "PostDrop"]),
-        (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostRaceLoopStart", "PostRaceLoopEnd", "TrackBreakDown"]),
+        (Str.GrpDjDrops, ["DJStart", "DJDrop", "DJSegment", "TrackDrop"]),
+        (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostDrop", "PostRaceLoopStart", "PostRaceLoopEnd"]),
     ];
 
     private static readonly Dictionary<string, string> Descriptions = new()
@@ -134,12 +135,15 @@ public sealed partial class EditWindowViewModel : ObservableObject
         ["DJSegment"] = Str.MkDjSegment,
         ["TrackDrop"] = Str.MkTrackDrop,
         ["PostDrop"] = Str.MkPostDrop,
-        ["TrackBreakDown"] = Str.MkTrackBreakDown,
         ["TrackLoopStart"] = Str.MkTrackLoopStart,
         ["TrackLoopEnd"] = Str.MkTrackLoopEnd,
         ["PostRaceLoopStart"] = Str.MkPostRaceLoopStart,
         ["PostRaceLoopEnd"] = Str.MkPostRaceLoopEnd,
     };
+
+    private MarkerField? _postDrop;
+    private MarkerField? _postRaceLoopStart;
+    private bool _suppressFloor;
 
     public EditWindowViewModel(TrackItemViewModel track)
     {
@@ -192,6 +196,29 @@ public sealed partial class EditWindowViewModel : ObservableObject
 
             Groups.Add(grp);
         }
+
+        _postDrop = AllMarkers.FirstOrDefault(f => f.Name == "PostDrop");
+        _postRaceLoopStart = AllMarkers.FirstOrDefault(f => f.Name == "PostRaceLoopStart");
+
+        if (_postDrop is not null && _postRaceLoopStart is not null)
+        {
+            _postDrop.PropertyChanged += OnMarkerMoved;
+            _postRaceLoopStart.PropertyChanged += OnMarkerMoved;
+        }
+    }
+
+    private void OnMarkerMoved(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_suppressFloor || e.PropertyName != nameof(MarkerField.Position))
+        {
+            return;
+        }
+
+        if (_postDrop is { Position: >= 0 } pd && _postRaceLoopStart is { Position: >= 0 } prls
+            && pd.Position > prls.Position)
+        {
+            pd.Position = prls.Position;
+        }
     }
 
     public void ResetMarkersToDefaults()
@@ -203,10 +230,14 @@ public sealed partial class EditWindowViewModel : ObservableObject
 
         var def = RadioStationEditor.ComputeAutoMarkers(SampleLength, SampleRate);
 
+        _suppressFloor = true;
+
         foreach (var f in AllMarkers)
         {
             f.Position = def.TryGetValue(f.Name, out var p) ? p : -1;
         }
+
+        _suppressFloor = false;
     }
 
     public string GainText => $"{(GainDb > 0 ? "+" : "")}{GainDb:0.0} dB";
