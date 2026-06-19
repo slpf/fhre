@@ -34,12 +34,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp;
 
+    public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
+
     [ObservableProperty] private bool _hasUnsavedChanges;
     public void MarkDirty() => HasUnsavedChanges = true;
     partial void OnIsBuildingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsAddingTracksChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsBackingUpChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     public string? PendingErrorDialog { get; set; }
+    public string? PendingDialogTitle { get; set; }
 
     [ObservableProperty] private string _status = "Ready.";
 
@@ -623,6 +626,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Status = Str.StatusBuildNoRadioInfo;
             return;
         }
+
+        var lockedFiles = FileGuard.Locked(
+            new string?[] { bankPath, radioPath }
+                .Concat(Languages.Select(l => GameScanner.RadioInfoPathByFile(Settings.GamePath, l.FileName))));
+
+        if (lockedFiles.Count > 0)
+        {
+            Status = Str.StatusFilesInUse;
+            PendingDialogTitle = Str.DlgFilesInUseTitle;
+            PendingErrorDialog = Str.DlgFilesInUseBody + "\n\n"
+                + string.Join("\n", lockedFiles.Select(Path.GetFileName));
+            return;
+        }
         
         var items = Tracks.Select(t =>
         {
@@ -749,6 +765,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             Log.Line("BUILD ERROR: " + ex);
             Status = Str.StatusBuildTooLarge;
+            PendingDialogTitle = Str.DlgBankTooLargeTitle;
             PendingErrorDialog = ex.Message;
         }
         catch (Exception ex)

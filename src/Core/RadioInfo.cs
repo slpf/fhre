@@ -278,6 +278,14 @@ public sealed class RadioStationEditor(XElement station)
             }
         }
 
+        if ((string?) sample.Attribute("SoundName") is { } sn && sn.StartsWith(Naming.CustomPrefix)
+            && result.TryGetValue("End", out var endValue))
+        {
+            result["End"] = long.TryParse((string?) sample.Attribute("SampleLength"), out var len) && len > 1
+                ? Math.Min(endValue + 1, len - 1)
+                : Math.Max(0, endValue + 1);
+        }
+
         return result;
     }
 

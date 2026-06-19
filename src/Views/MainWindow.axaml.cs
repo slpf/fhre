@@ -60,6 +60,18 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Vm.HasUnbuiltTracks)
+        {
+            var proceed = await MessageDialog.ShowAsync(this, Str.DlgBackupUnbuiltTitle,
+                Str.DlgBackupUnbuiltBody,
+                okText: Str.DlgBackupUnbuiltOk, cancelText: Str.DlgBackupUnbuiltCancel);
+
+            if (!proceed)
+            {
+                return;
+            }
+        }
+
         var name = await InputDialog.ShowAsync(this, Str.BackupNameTitle, Str.BackupNameWatermark);
 
         if (name is null)
@@ -364,8 +376,10 @@ public partial class MainWindow : Window
         }
         
         Vm.PendingErrorDialog = null;
+        var title = Vm.PendingDialogTitle ?? Str.DlgBankTooLargeTitle;
+        Vm.PendingDialogTitle = null;
         
-        await MessageDialog.ShowAsync(this, Str.DlgBankTooLargeTitle, msg);
+        await MessageDialog.ShowAsync(this, title, msg);
     }
 
     private bool _forceClose;

@@ -112,6 +112,8 @@ public static class Str
         "(a .bak backup exists to restore from). Quit anyway?";
     public const string DlgBuildProgressOk = "Quit";
     public const string DlgBuildProgressCancel = "Keep building";
+
+
     
     public const string GrpCore = "Core";
     public const string GrpDjDrops = "DJ / Drops";
@@ -119,6 +121,9 @@ public static class Str
     public const string GrpExtraLoops = "Extra loops";
     public const string GrpSections = "Sections";
     public const string GrpOther = "Other";
+    public const string StatusFilesInUse = "Files are in use — is the game running?";
+    public const string DlgFilesInUseTitle = "Files in use";
+    public const string DlgFilesInUseBody = "Some game files are locked and cannot be written. Forza Horizon is most likely running — close the game and run the build again.";
     public const string MkTrackStart = "TrackStart — description TBD.";
     public const string MkEnd = "End — description TBD.";
     public const string MkDjStart = "DJStart — description TBD.";
@@ -142,7 +147,7 @@ public static class Str
     public const string FilterAudioFiles = "Audio files";
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
-    public const string TipWaveHotkeys = "Click or drag — move playhead\nShift + hover a label — focus that marker\nShift + wheel — raise / lower its label row\nShift + drag — move the focused marker\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap region edge to it";
+    public const string TipWaveHotkeys = "Click or drag — move playhead\nDrag a marker — move it\nShift + hover a label — focus that marker\nShift + wheel — raise / lower its label row\nShift + drag — move the focused marker\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap region edge to it";
     public const string TipResetMarkers = "Replace markers to custom-track defaults";
     public const string TitleMarkerDefaults = "Custom-track marker values";
     public const string HintMarkerDefaults = "Default positions for custom-track markers.";
@@ -161,6 +166,10 @@ public static class Str
     public const string BackupDeleteTitle = "Delete backup";
     public const string BackupDeleteBodyFmt = "Delete backup \"{0}\"?";
     public const string StatusBackupNoStation = "Select a station first.";
+    public const string DlgBackupUnbuiltTitle = "Unbuilt changes";
+    public const string DlgBackupUnbuiltBody = "You have added or replaced tracks that haven’t been built into the game yet. A backup only captures the current game files, so these pending tracks won’t be included — they will show as 0 custom. Build first if you want them in the backup.\n\nCreate the backup anyway?";
+    public const string DlgBackupUnbuiltOk = "Back up anyway";
+    public const string DlgBackupUnbuiltCancel = "Cancel";
     public const string StatusBackupSavedFmt = "Backup saved: {0}";
     public const string StatusBackupFailedFmt = "Backup failed: {0}";
     public const string StatusBackupSaving = "Saving backup…";
