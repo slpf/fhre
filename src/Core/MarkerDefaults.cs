@@ -48,6 +48,16 @@ public static class MarkerDefaults
         }
     }
 
+    public static void Reset()
+    {
+        Current.Clear();
+
+        foreach (var (name, spec) in BaseDefaults)
+        {
+            Current[name] = spec;
+        }
+    }
+
     public static Dictionary<string, string> Snapshot() => new(Current);
 
     public static bool TryParse(string? spec, out bool percent, out double value)

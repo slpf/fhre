@@ -15,6 +15,8 @@ public sealed class AppSettings
 
     public int EncodeParallelism { get; set; } = 0;
 
+    public int SettingsVersion { get; set; }
+
     public Dictionary<string, string> MarkerDefaults { get; set; } = new();
 
     public Dictionary<string, int> WaveformLabelRows { get; set; } = new();
@@ -29,16 +31,29 @@ public static class SettingsService
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
+    public const int CurrentSettingsVersion = 1;
+
     public static AppSettings Load()
     {
+        AppSettings s;
+
         try
         {
-            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings();
+            s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings();
         }
         catch
         {
-            return new AppSettings();
+            s = new AppSettings();
         }
+
+        if (s.SettingsVersion < CurrentSettingsVersion)
+        {
+            s.MarkerDefaults = new();
+            s.SettingsVersion = CurrentSettingsVersion;
+            Save(s);
+        }
+
+        return s;
     }
 
     public static void Save(AppSettings settings)

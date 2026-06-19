@@ -124,18 +124,18 @@ public static class Str
     public const string StatusFilesInUse = "Files are in use — is the game running?";
     public const string DlgFilesInUseTitle = "Files in use";
     public const string DlgFilesInUseBody = "Some game files are locked and cannot be written. Forza Horizon is most likely running — close the game and run the build again.";
-    public const string MkTrackStart = "TrackStart — description TBD.";
-    public const string MkEnd = "End — description TBD.";
-    public const string MkDjStart = "DJStart — description TBD.";
-    public const string MkDjDrop = "DJDrop — description TBD.";
-    public const string MkDjSegment = "DJSegment — description TBD.";
-    public const string MkTrackDrop = "TrackDrop — description TBD.";
-    public const string MkPostDrop = "PostDrop — description TBD.";
-    public const string MkTrackBreakDown = "TrackBreakDown — description TBD.";
-    public const string MkTrackLoopStart = "TrackLoopStart — description TBD.";
-    public const string MkTrackLoopEnd = "TrackLoopEnd — description TBD.";
-    public const string MkPostRaceLoopStart = "PostRaceLoopStart — description TBD.";
-    public const string MkPostRaceLoopEnd = "PostRaceLoopEnd — description TBD.";
+    public const string MkTrackStart = "Free-roam: where the track starts playing.";
+    public const string MkEnd = "Free-roam: where the track stops playing.";
+    public const string MkDjStart = "Free-roam: from here the DJ starts talking over the track, leading into the next one.";
+    public const string MkDjDrop = "Free-roam: the DJ keeps talking over the start of the track up to this point (carried over from the previous track).";
+    public const string MkDjSegment = "Free-roam: point where a DJ line plays over the middle of the track.";
+    public const string MkTrackDrop = "Events: where the track starts when an event begins, right after the countdown.";
+    public const string MkPostDrop = "Events: the point reached when you cross the finish line.";
+    public const string MkTrackBreakDown = "Purpose not confirmed yet.";
+    public const string MkTrackLoopStart = "Events: where the track loops back to while the event is still going.";
+    public const string MkTrackLoopEnd = "Events: how far the track plays during an event.";
+    public const string MkPostRaceLoopStart = "Events: start of the loop played on the results screen.";
+    public const string MkPostRaceLoopEnd = "Events: end of the loop played on the results screen.";
     
     public const string LangAll = "All languages";
     
@@ -166,6 +166,12 @@ public static class Str
     public const string BackupDeleteTitle = "Delete backup";
     public const string BackupDeleteBodyFmt = "Delete backup \"{0}\"?";
     public const string StatusBackupNoStation = "Select a station first.";
+    public const string BtnResetSettings = "Reset";
+    public const string TipResetSettings = "Reset all settings to defaults (keeps the game folder)";
+    public const string DlgResetSettingsTitle = "Reset settings";
+    public const string DlgResetSettingsBody = "Reset all settings to their defaults? This also restores the default marker positions. Your game folder is kept, and tracks you have added are not affected.";
+    public const string DlgResetSettingsOk = "Reset";
+    public const string DlgResetSettingsCancel = "Cancel";
     public const string DlgBackupUnbuiltTitle = "Unbuilt changes";
     public const string DlgBackupUnbuiltBody = "You have added or replaced tracks that haven’t been built into the game yet. A backup only captures the current game files, so these pending tracks won’t be included — they will show as 0 custom. Build first if you want them in the backup.\n\nCreate the backup anyway?";
     public const string DlgBackupUnbuiltOk = "Back up anyway";

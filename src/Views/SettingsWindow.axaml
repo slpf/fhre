@@ -92,8 +92,13 @@
         <Border Grid.Row="1" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
             <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Text="{Binding AppVersion}" VerticalAlignment="Center"
-                           Foreground="{DynamicResource TxtFaint}" FontSize="12" Margin="12 0 0 0"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Spacing="12">
+                    <Button Classes="big" Click="OnResetSettings"
+                            Content="{x:Static assets:Str.BtnResetSettings}"
+                            ToolTip.Tip="{x:Static assets:Str.TipResetSettings}"/>
+                    <TextBlock Text="{Binding AppVersion}" VerticalAlignment="Center"
+                               Foreground="{DynamicResource TxtFaint}" FontSize="12"/>
+                </StackPanel>
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                     <Button Classes="big" Click="OnClose" Content="{x:Static assets:Str.BtnClose}"/>
                     <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}" IsEnabled="{Binding IsValid}"/>

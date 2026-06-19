@@ -1,6 +1,7 @@
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FH6RB.Assets;
+using FH6RB.Core;
 using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
@@ -169,6 +170,31 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             : string.Format(Str.EditRestoredFailedFmt, restored, failed);
         CanRestore = false;
         Restored = true;
+    }
+
+    public void ResetSettings()
+    {
+        var keepPath = _settings.GamePath;
+        var d = new AppSettings();
+
+        _settings.LastLanguage = d.LastLanguage;
+        _settings.LastStationBank = d.LastStationBank;
+        _settings.TargetLufs = d.TargetLufs;
+        _settings.TargetTruePeak = d.TargetTruePeak;
+        _settings.VorbisQuality = d.VorbisQuality;
+        _settings.EncodeParallelism = d.EncodeParallelism;
+        _settings.MarkerDefaults = new();
+        _settings.WaveformLabelRows = new();
+        _settings.SettingsVersion = SettingsService.CurrentSettingsVersion;
+        _settings.GamePath = keepPath;
+
+        SettingsService.Save(_settings);
+        MarkerDefaults.Reset();
+
+        TargetLufs = _settings.TargetLufs;
+        EncodeParallelism = AppSettings.RecommendedParallelism;
+
+        Saved = true;
     }
 
     public void Commit()

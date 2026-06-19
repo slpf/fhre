@@ -35,4 +35,15 @@ public partial class SettingsWindow : Window
     private void OnClose(object? sender, RoutedEventArgs e) => Close();
 
     private void OnRestore(object? sender, RoutedEventArgs e) => Vm.RestoreBackups();
+
+    private async void OnResetSettings(object? sender, RoutedEventArgs e)
+    {
+        var ok = await MessageDialog.ShowAsync(this, Str.DlgResetSettingsTitle, Str.DlgResetSettingsBody,
+            okText: Str.DlgResetSettingsOk, cancelText: Str.DlgResetSettingsCancel);
+
+        if (ok)
+        {
+            Vm.ResetSettings();
+        }
+    }
 }
