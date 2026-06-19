@@ -238,16 +238,24 @@ public sealed class RadioStationEditor(XElement station)
     public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength, int sampleRate) =>
         MarkerDefaults.Compute(sampleLength, sampleRate);
 
-    public static void ApplyXmlMarkerRules(IDictionary<string, long> markers)
+    public static void ApplyXmlMarkerRules(IDictionary<string, long> markers, long sampleLength)
     {
-        if (markers.TryGetValue("End", out var end))
-        {
-            markers["End"] = Math.Max(0, end - 1);
-        }
-
         if (markers.TryGetValue("DJStart", out var dj))
         {
             markers["StingerStart"] = Math.Max(0, dj - 1000);
+        }
+
+        if (sampleLength > 0)
+        {
+            var last = sampleLength - 1;
+
+            foreach (var key in markers.Keys.ToList())
+            {
+                if (markers[key] > last)
+                {
+                    markers[key] = last;
+                }
+            }
         }
     }
 
@@ -278,14 +286,6 @@ public sealed class RadioStationEditor(XElement station)
             }
         }
 
-        if ((string?) sample.Attribute("SoundName") is { } sn && sn.StartsWith(Naming.CustomPrefix)
-            && result.TryGetValue("End", out var endValue))
-        {
-            result["End"] = long.TryParse((string?) sample.Attribute("SampleLength"), out var len) && len > 1
-                ? Math.Min(endValue + 1, len - 1)
-                : Math.Max(0, endValue + 1);
-        }
-
         return result;
     }
 
@@ -295,7 +295,7 @@ public sealed class RadioStationEditor(XElement station)
         if (s is null) return false;
 
         var m = new Dictionary<string, long>(markers);
-        ApplyXmlMarkerRules(m);
+        ApplyXmlMarkerRules(m, long.TryParse((string?) s.Attribute("SampleLength"), out var len) ? len : 0);
 
         var elems = s.Elements("Marker").ToList();
         if (elems.Count > 0)
@@ -371,7 +371,7 @@ public sealed class RadioStationEditor(XElement station)
     private static void ApplyCustomMarkers(XElement sample, long sampleLength)
     {
         var pos = ComputeAutoMarkers(sampleLength);
-        ApplyXmlMarkerRules(pos);
+        ApplyXmlMarkerRules(pos, sampleLength);
         var markerElems = sample.Elements("Marker").ToList();
         
         if (markerElems.Count > 0)

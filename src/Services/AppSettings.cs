@@ -31,7 +31,7 @@ public static class SettingsService
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
-    public const int CurrentSettingsVersion = 1;
+    public const int CurrentSettingsVersion = 2;
 
     public static AppSettings Load()
     {

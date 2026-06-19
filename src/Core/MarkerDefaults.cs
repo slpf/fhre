@@ -9,18 +9,34 @@ public static class MarkerDefaults
     private static readonly (string Name, string Spec)[] BaseDefaults =
     [
         ("TrackStart", "0%"),
-        ("DJDrop", "5%"),
-        ("TrackDrop", "15%"),
-        ("TrackLoopStart", "15%"),
-        ("PostRaceLoopStart", "75%"),
-        ("DJSegment", "70%"),
-        ("DJStart", "95%"),
-        ("TrackLoopEnd", "90%"),
-        ("PostDrop", "75%"),
-        ("TrackBreakDown", "95%"),
+        ("DJDrop", "0%"),
+        ("TrackDrop", "0%"),
+        ("TrackLoopStart", "0%"),
+        ("PostRaceLoopStart", "70%"),
+        ("DJSegment", "60%"),
+        ("DJStart", "100%"),
+        ("TrackLoopEnd", "100%"),
+        ("PostDrop", "100%"),
+        ("TrackBreakDown", "70%"),
         ("PostRaceLoopEnd", "90%"),
         ("End", "100%"),
     ];
+    
+    public static readonly IReadOnlyDictionary<string, int> DefaultLabelRows = new Dictionary<string, int>
+    {
+        ["TrackStart"] = 0,
+        ["End"] = 0,
+        ["DJDrop"] = 4,
+        ["DJStart"] = 4,
+        ["DJSegment"] = 4,
+        ["TrackDrop"] = 8,
+        ["PostDrop"] = 8,
+        ["PostRaceLoopStart"] = 24,
+        ["PostRaceLoopEnd"] = 24,
+        ["TrackLoopStart"] = 28,
+        ["TrackLoopEnd"] = 28,
+        ["TrackBreakDown"] = 20,
+    };
 
     private static readonly Dictionary<string, string> Current =
         BaseDefaults.ToDictionary(d => d.Name, d => d.Spec);

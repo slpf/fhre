@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using FH6RB.Core;
 using FH6RB.ViewModels;
 
 namespace FH6RB.Controls;
@@ -447,7 +448,9 @@ public sealed class WaveformView : Control
                     lx = 1;
                 }
                 
-                var row = LabelRows is not null && LabelRows.TryGetValue(m.Name, out var lr) ? lr : idx % 6 * 2;
+                var row = LabelRows is not null && LabelRows.TryGetValue(m.Name, out var lr)
+                    ? lr
+                    : Math.Clamp(MarkerDefaults.DefaultLabelRows.GetValueOrDefault(m.Name, idx % 6 * 2), 0, 28);
                 _renderedRows[m.Name] = row;
                 var ly = 2 + row * 5.5;
                 var rect = new Rect(lx - 1, ly - 1, label.Width + 2, label.Height + 1);
