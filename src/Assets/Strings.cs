@@ -155,11 +155,11 @@ public static class Str
     public const string BtnRestoreDefaults = "Restore defaults";
 
     public const string TipSaveBackup = "Save station backup";
-    public const string TipBackups = "Backups";
-    public const string TitleBackups = "Backups";
-    public const string BackupNameTitle = "Backup";
+    public const string TipBackups = "Station backups";
+    public const string TitleBackups = "Station backups";
+    public const string BackupNameTitle = "Station backup";
     public const string BackupNameWatermark = "Enter a name for this backup";
-    public const string BackupEmpty = "No backups yet.";
+    public const string BackupEmpty = "No station backups yet.";
     public const string BackupInfoFmt = "{0} · R{1} {2}";
     public const string BackupMetaFmt = "{0} tracks · {1} custom · {2}";
     public const string BackupRestoreTitle = "Restore backup";
