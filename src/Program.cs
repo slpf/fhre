@@ -7,9 +7,9 @@ using Avalonia;
 [assembly: AssemblyTitle("Forza Horizon Radio Extender")]
 [assembly: AssemblyDescription("Forza Horizon Radio Extender")]
 [assembly: AssemblyCopyright("Chisou")]
-[assembly: AssemblyVersion("0.3.3")]
-[assembly: AssemblyFileVersion("0.3.3")]
-[assembly: AssemblyInformationalVersion("0.3.3")]
+[assembly: AssemblyVersion("0.3.4")]
+[assembly: AssemblyFileVersion("0.3.4")]
+[assembly: AssemblyInformationalVersion("0.3.4")]
 
 namespace FH6RB;
 
