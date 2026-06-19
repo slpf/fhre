@@ -33,6 +33,7 @@ public static class Str
     public const string BtnRestore = "Restore";
     
     public const string BadgeNew = "NEW";
+    public const string BadgeReplaced = "REP";
     public const string BtnAddLabel = "ADD";
     public const string BtnBuildLabel = "BUILD";
     

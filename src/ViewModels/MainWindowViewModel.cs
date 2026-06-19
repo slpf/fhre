@@ -583,6 +583,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (ReferenceEquals(track, _nowPlaying))
+        {
+            StopPlayback();
+        }
+
         Tracks.Remove(track);
         Status = string.Format(Str.StatusDeletedFmt, track.SoundName);
         HasUnsavedChanges = true;

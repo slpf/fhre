@@ -65,6 +65,8 @@ public sealed class WaveformView : Control
     private bool _seeking;
     private int _regionDrag;
     private MarkerField? _labelLock;
+    private IBrush _hlBrush = new SolidColorBrush(Color.Parse("#f5356c"));
+    private IPen _hlPen = new Pen(new SolidColorBrush(Color.Parse("#f5356c")), 2.5);
     private Point _lastPointer;
     private bool _pointerInside;
     private TopLevel? _topLevel;
@@ -88,6 +90,12 @@ public sealed class WaveformView : Control
         
         _topLevel.AddHandler(KeyDownEvent, OnTopKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
         _topLevel.AddHandler(KeyUpEvent, OnTopKeyUp, RoutingStrategies.Tunnel, handledEventsToo: true);
+
+        if (this.TryFindResource("Accent", out var accent) && accent is IBrush ab)
+        {
+            _hlBrush = ab;
+            _hlPen = new Pen(ab, 2.5);
+        }
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
@@ -101,7 +109,7 @@ public sealed class WaveformView : Control
             _topLevel = null;
         }
 
-        _labelLock = null;
+        SetFocus(null);
     }
 
     private void OnTopKeyDown(object? sender, KeyEventArgs e)
@@ -111,20 +119,14 @@ public sealed class WaveformView : Control
             return;
         }
 
-        _labelLock = HitLabel(_lastPointer);
-
-        if (_labelLock is not null)
-        {
-            InvalidateVisual();
-        }
+        SetFocus(HitLabel(_lastPointer));
     }
 
     private void OnTopKeyUp(object? sender, KeyEventArgs e)
     {
         if (_labelLock is not null && e.Key is (Key.LeftShift or Key.RightShift))
         {
-            _labelLock = null;
-            InvalidateVisual();
+            SetFocus(null);
         }
     }
 
@@ -309,12 +311,14 @@ public sealed class WaveformView : Control
             return;
         }
 
-        var m = _labelLock ??= HitLabel(e.GetPosition(this));
+        var m = _labelLock ?? HitLabel(e.GetPosition(this));
 
         if (m is null)
         {
             return;
         }
+
+        SetFocus(m);
 
         var cur = LabelRows.TryGetValue(m.Name, out var r)
             ? r
@@ -342,9 +346,27 @@ public sealed class WaveformView : Control
         RegionEnd = Math.Clamp(Math.Max(frame, start), 0, SampleLength - 1);
     }
 
-    public void FocusMarker(MarkerField? marker)
+    public void FocusMarker(MarkerField? marker) => SetFocus(marker);
+
+    private void SetFocus(MarkerField? marker)
     {
+        if (ReferenceEquals(_labelLock, marker))
+        {
+            return;
+        }
+
+        if (_labelLock is not null)
+        {
+            _labelLock.Highlighted = false;
+        }
+
         _labelLock = marker;
+
+        if (_labelLock is not null)
+        {
+            _labelLock.Highlighted = true;
+        }
+
         InvalidateVisual();
     }
 
@@ -424,6 +446,9 @@ public sealed class WaveformView : Control
         if (Markers is not null && SampleLength > 0)
         {
             var idx = 0;
+            double lockX = 0, lockLx = 0, lockLy = 0;
+            FormattedText? lockLabel = null;
+            Rect lockRect = default;
             
             foreach (var o in Markers)
             {
@@ -434,9 +459,12 @@ public sealed class WaveformView : Control
 
                 var x = XOf(m.Position);
                 
-                ctx.DrawLine(MarkerPen, new Point(x, 0), new Point(x, h));
-
                 var locked = ReferenceEquals(m, _labelLock);
+
+                if (!locked)
+                {
+                    ctx.DrawLine(MarkerPen, new Point(x, 0), new Point(x, h));
+                }
 
                 var label = new FormattedText(m.Name, CultureInfo.InvariantCulture,
                     FlowDirection.LeftToRight, LabelFace, 9, locked ? LabelLockText : LabelBrush);
@@ -455,10 +483,29 @@ public sealed class WaveformView : Control
                 var ly = 2 + row * 5.5;
                 var rect = new Rect(lx - 1, ly - 1, label.Width + 2, label.Height + 1);
 
-                ctx.FillRectangle(locked ? LabelLockBg : LabelBg, rect);
-                ctx.DrawText(label, new Point(lx, ly));
+                if (locked)
+                {
+                    lockX = x;
+                    lockLx = lx;
+                    lockLy = ly;
+                    lockLabel = label;
+                    lockRect = rect;
+                }
+                else
+                {
+                    ctx.FillRectangle(LabelBg, rect);
+                    ctx.DrawText(label, new Point(lx, ly));
+                }
+
                 _labels.Add((m, rect));
                 idx++;
+            }
+
+            if (lockLabel is not null)
+            {
+                ctx.DrawLine(_hlPen, new Point(lockX, 0), new Point(lockX, h));
+                ctx.FillRectangle(_hlBrush, lockRect);
+                ctx.DrawText(lockLabel, new Point(lockLx, lockLy));
             }
         }
     }

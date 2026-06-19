@@ -15,6 +15,7 @@ public sealed partial class MarkerField : ObservableObject
     public long SampleLength { get; init; }
 
     [ObservableProperty] private long _position;
+    [ObservableProperty] private bool _highlighted;
 
     public bool IsOff => Position < 0;
     
@@ -144,7 +145,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
     {
         SoundName = track.SoundName;
         FullName = track.Title + " - " + track.Artist + " (" + track.SoundName + ")";
-        ShowVolume = track.IsUnbuilt;
+        ShowVolume = track.UsesFileSource;
         _title = track.Title;
         _artist = track.Artist;
         _gainDb = track.GainDb ?? 0;
@@ -217,7 +218,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
         track.Title = Title;
         track.Artist = Artist;
 
-        if (track.IsCustom)
+        if (track.UsesFileSource)
         {
             track.GainDb = Math.Abs(GainDb) < 0.05 ? null : GainDb;
         }

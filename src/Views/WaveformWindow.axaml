@@ -13,6 +13,15 @@
         Background="{DynamicResource Bg1}"
         Title="{x:Static assets:Str.TitleMarkers}">
 
+    <Window.Styles>
+        <Style Selector="TextBlock.mk">
+            <Setter Property="Foreground" Value="{DynamicResource TxtMute}"/>
+        </Style>
+        <Style Selector="TextBlock.mk.hl">
+            <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+        </Style>
+    </Window.Styles>
+
     <Grid RowDefinitions="Auto,*,Auto">
         <StackPanel Margin="16,12,16,12">
             <Grid ColumnDefinitions="*, Auto" Margin="0,0,0,8" ClipToBounds="True">
@@ -77,10 +86,11 @@
                                                   PointerEntered="OnFieldNameEntered"
                                                   PointerExited="OnFieldNameExited">
                                                 <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                                           Classes="mk" Classes.hl="{Binding Highlighted}"
                                                            Background="Transparent" Tag="{Binding}"
                                                            PointerPressed="OnFieldNamePressed"
                                                            ToolTip.Tip="{Binding Description}"
-                                                           Foreground="{DynamicResource TxtMute}" FontSize="12"/>
+                                                           FontSize="12"/>
                                                 <TextBox Grid.Column="1" Classes="field2" Tag="{Binding}"
                                                          Text="{Binding SecondsText, Mode=TwoWay}"
                                                          Watermark="{x:Static assets:Str.WatermarkOff}"
