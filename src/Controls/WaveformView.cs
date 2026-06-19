@@ -65,6 +65,7 @@ public sealed class WaveformView : Control
     private int _regionDrag;
     private MarkerField? _labelLock;
     private Point _lastPointer;
+    private bool _pointerInside;
     private TopLevel? _topLevel;
 
     static WaveformView()
@@ -104,7 +105,7 @@ public sealed class WaveformView : Control
 
     private void OnTopKeyDown(object? sender, KeyEventArgs e)
     {
-        if (_labelLock is not null || e.Key is not (Key.LeftShift or Key.RightShift))
+        if (_labelLock is not null || e.Key is not (Key.LeftShift or Key.RightShift) || !_pointerInside)
         {
             return;
         }
@@ -124,6 +125,18 @@ public sealed class WaveformView : Control
             _labelLock = null;
             InvalidateVisual();
         }
+    }
+
+    protected override void OnPointerEntered(PointerEventArgs e)
+    {
+        base.OnPointerEntered(e);
+        _pointerInside = true;
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _pointerInside = false;
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)

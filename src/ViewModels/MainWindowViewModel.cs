@@ -36,6 +36,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
 
+    public bool IsGameRunning()
+    {
+        if (!GameScanner.IsValid(Settings.GamePath))
+        {
+            return false;
+        }
+
+        var paths = GameScanner.RadioBankNames(Settings.GamePath)
+            .Select(n => GameScanner.BankPath(Settings.GamePath, n))
+            .Concat(GameScanner.LanguageFiles(Settings.GamePath)
+                .Select(f => GameScanner.RadioInfoPathByFile(Settings.GamePath, f)));
+
+        return FileGuard.Locked(paths).Count > 0;
+    }
+
     [ObservableProperty] private bool _hasUnsavedChanges;
     public void MarkDirty() => HasUnsavedChanges = true;
     partial void OnIsBuildingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
@@ -635,8 +650,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             Status = Str.StatusFilesInUse;
             PendingDialogTitle = Str.DlgFilesInUseTitle;
-            PendingErrorDialog = Str.DlgFilesInUseBody + "\n\n"
-                + string.Join("\n", lockedFiles.Select(Path.GetFileName));
+            PendingErrorDialog = Str.DlgFilesInUseBody;
             return;
         }
         

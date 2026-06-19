@@ -123,7 +123,8 @@ public static class Str
     public const string GrpOther = "Other";
     public const string StatusFilesInUse = "Files are in use — is the game running?";
     public const string DlgFilesInUseTitle = "Files in use";
-    public const string DlgFilesInUseBody = "Some game files are locked and cannot be written. Forza Horizon is most likely running — close the game and run the build again.";
+    public const string DlgFilesInUseBody = "Some game files are in use. Forza Horizon is most likely running. Close the game before building, otherwise saving and building will fail.";
+    public const string DlgGameRunningTitle = "Game is running";
     public const string MkTrackStart = "Free-roam: where the track starts playing.";
     public const string MkEnd = "Free-roam: where the track stops playing.";
     public const string MkDjStart = "Free-roam: from here the DJ starts talking over the track, leading into the next one.";

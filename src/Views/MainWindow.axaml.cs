@@ -15,6 +15,22 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         AddHandler(PointerPressedEvent, OnPreviewPressed, RoutingStrategies.Tunnel);
+        Opened += OnOpened;
+    }
+
+    private async void OnOpened(object? sender, EventArgs e)
+    {
+        if (!GameScanner.IsValid(Vm.Settings.GamePath))
+        {
+            return;
+        }
+
+        var running = await Task.Run(Vm.IsGameRunning);
+
+        if (running)
+        {
+            await MessageDialog.ShowAsync(this, Str.DlgGameRunningTitle, Str.DlgFilesInUseBody);
+        }
     }
 
     private MainWindowViewModel Vm => (MainWindowViewModel)DataContext!;

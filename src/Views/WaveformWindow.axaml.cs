@@ -14,6 +14,7 @@ public partial class WaveformWindow : Window
     private readonly List<(MarkerField Marker, long Position)> _snapshot = [];
     private double _cursorSec;
     private MarkerField? _hoverField;
+    private bool _shiftHeld;
 
     private const double SeekStep = 0.25;
 
@@ -40,6 +41,7 @@ public partial class WaveformWindow : Window
         _player.Ended += OnPlaybackEnded;
 
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
+        AddHandler(KeyUpEvent, OnPreviewKeyUp, RoutingStrategies.Tunnel, handledEventsToo: true);
         AddHandler(TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel, handledEventsToo: true);
 
         Wave.Focusable = true;
@@ -155,14 +157,25 @@ public partial class WaveformWindow : Window
 
             case Key.LeftShift:
             case Key.RightShift:
-                var target = _hoverField ?? FocusedField();
-
-                if (target is not null)
+                if (!_shiftHeld)
                 {
-                    Wave.FocusMarker(target);
+                    _shiftHeld = true;
+
+                    if (_hoverField is not null)
+                    {
+                        Wave.FocusMarker(_hoverField);
+                    }
                 }
 
                 break;
+        }
+    }
+
+    private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.LeftShift or Key.RightShift)
+        {
+            _shiftHeld = false;
         }
     }
 
@@ -343,9 +356,6 @@ public partial class WaveformWindow : Window
         e.Handled = true;
     }
 
-    private MarkerField? FocusedField() =>
-        (FocusManager?.GetFocusedElement() as Control)?.Tag as MarkerField;
-
     private void OnFieldNameEntered(object? sender, PointerEventArgs e)
     {
         if (sender is not Control { Tag: MarkerField field })
@@ -354,11 +364,6 @@ public partial class WaveformWindow : Window
         }
 
         _hoverField = field;
-
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
-        {
-            Wave.FocusMarker(field);
-        }
     }
 
     private void OnFieldNameExited(object? sender, PointerEventArgs e)

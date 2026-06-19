@@ -102,7 +102,6 @@ public static class StationBackupService
 
         var languages = new List<string>();
         int trackCount = 0, customCount = 0, enabledCount = 0;
-        var counted = false;
 
         foreach (var langFile in GameScanner.LanguageFiles(gamePath))
         {
@@ -136,13 +135,17 @@ public static class StationBackupService
             File.WriteAllText(Path.Combine(folder, "xml", lang + ".xml"), node.ToString());
             languages.Add(lang);
 
-            if (!counted && radio.StationByNumber(station.Number) is { } editor)
+            if (radio.StationByNumber(station.Number) is { } editor)
             {
                 var tracks = editor.ReadTracks();
-                trackCount = tracks.Count;
-                customCount = tracks.Count(t => t.Origin == TrackOrigin.Custom);
-                enabledCount = tracks.Count(t => t.Enabled);
-                counted = true;
+                var custom = tracks.Count(t => t.Origin == TrackOrigin.Custom);
+
+                if (custom > customCount || (custom == customCount && tracks.Count > trackCount))
+                {
+                    trackCount = tracks.Count;
+                    customCount = custom;
+                    enabledCount = tracks.Count(t => t.Enabled);
+                }
             }
         }
 
