@@ -8,12 +8,25 @@ public static class Loudnorm
 {
     public static string Filter(string source, AppSettings settings)
     {
+        var basef = BaseFilter(settings);
+        return BuildFilter(basef, Measure(source, basef));
+    }
+
+    public static async Task<string> FilterAsync(string source, AppSettings settings)
+    {
+        var basef = BaseFilter(settings);
+        return BuildFilter(basef, await MeasureAsync(source, basef).ConfigureAwait(false));
+    }
+
+    private static string BaseFilter(AppSettings settings)
+    {
         var i = settings.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = settings.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var basef = $"loudnorm=I={i}:TP={tp}:LRA=11";
+        return $"loudnorm=I={i}:TP={tp}:LRA=11";
+    }
 
-        var m = Measure(source, basef);
-
+    private static string BuildFilter(string basef, (string Mi, string Mtp, string Mlra, string Mthresh, string Off)? m)
+    {
         if (m is null)
         {
             return basef;
@@ -25,20 +38,20 @@ public static class Loudnorm
             $":measured_I={mi}:measured_TP={mtp}:measured_LRA={mlra}:measured_thresh={mthresh}:offset={off}:linear=true";
     }
 
+    private static ProcessStartInfo MakePsi(string source, string basef) =>
+        new(Tools.FfmpegPath, $"-hide_banner -i \"{source}\" -af {basef}:print_format=json -f null -")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
     private static (string Mi, string Mtp, string Mlra, string Mthresh, string Off)? Measure(string source, string basef)
     {
         try
         {
-            var psi = new ProcessStartInfo(Tools.FfmpegPath,
-                $"-hide_banner -i \"{source}\" -af {basef}:print_format=json -f null -")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-
-            using var p = Process.Start(psi);
+            using var p = Process.Start(MakePsi(source, basef));
 
             if (p is null)
             {
@@ -48,6 +61,32 @@ public static class Loudnorm
             var err = p.StandardError.ReadToEnd();
             p.StandardOutput.ReadToEnd();
             p.WaitForExit();
+
+            return p.ExitCode != 0 ? null : Parse(err);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<(string Mi, string Mtp, string Mlra, string Mthresh, string Off)?> MeasureAsync(string source, string basef)
+    {
+        try
+        {
+            using var p = Process.Start(MakePsi(source, basef));
+
+            if (p is null)
+            {
+                return null;
+            }
+
+            var errTask = p.StandardError.ReadToEndAsync();
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            await p.WaitForExitAsync().ConfigureAwait(false);
+
+            var err = await errTask.ConfigureAwait(false);
+            await outTask.ConfigureAwait(false);
 
             return p.ExitCode != 0 ? null : Parse(err);
         }

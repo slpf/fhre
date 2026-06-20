@@ -430,7 +430,7 @@ public static class BankBuildService
             return;
         }
 
-        var filter = Loudnorm.Filter(item.SourcePath, settings);
+        var filter = await Loudnorm.FilterAsync(item.SourcePath, settings).ConfigureAwait(false);
 
         if (item.GainDb is { } g && Math.Abs(g) > 0.01)
         {
