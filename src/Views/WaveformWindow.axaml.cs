@@ -285,18 +285,6 @@ public partial class WaveformWindow : Window
     private static string Fmt(TimeSpan t) =>
         FormattableString.Invariant($"{(int) t.TotalMinutes}:{t.Seconds:00} ({t.TotalSeconds:0.000})");
 
-    private async void OnEditDefaults(object? sender, RoutedEventArgs e)
-    {
-        if (Vm.Settings is null)
-        {
-            return;
-        }
-
-        var vm = new MarkerDefaultsViewModel(Vm.Settings);
-        var w = new MarkerDefaultsWindow { DataContext = vm };
-        await w.ShowDialog(this);
-    }
-
     private void OnResetDefaults(object? sender, RoutedEventArgs e) => Vm.ResetMarkersToDefaults();
 
     private void OnLabelRowsChanged()

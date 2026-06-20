@@ -44,6 +44,7 @@ public static class BankReader
 
         var meta = new Dictionary<ulong, (string Sn, string? Dn, string? Ar)>();
         var markersById = new Dictionary<ulong, Dictionary<string, long>>();
+        var replaced = new HashSet<ulong>();
         var enabled = new HashSet<ulong>();
 
         if (radio is not null)
@@ -54,6 +55,8 @@ public static class BankReader
                 
                 var id = Lookup.SoundNameToId(sn);
                 meta.TryAdd(id, (sn, (string?) s.Attribute("DisplayName"), (string?) s.Attribute("Artist")));
+
+                if ((string?) s.Attribute("Replaced") == "true") replaced.Add(id);
 
                 if (markersById.ContainsKey(id)) continue;
                 
@@ -112,6 +115,7 @@ public static class BankReader
                 SampleLength = t.Frames,
                 SampleRate = t.SampleRate,
                 SubIndex = hasAudio ? t.Index : -1,
+                Replaced = replaced.Contains(t.Id),
                 Markers = markersById.TryGetValue(t.Id, out var mk) ? mk : null,
             });
         }

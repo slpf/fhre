@@ -43,7 +43,9 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     [ObservableProperty] private bool _markersLoading;
 
+    public bool Replaced { get; set; }
     public bool IsReplacing => ReplacementPath is not null;
+    public bool ShowRepBadge => IsReplacing || Replaced;
     public bool CanReplace => !IsCustom;
     public bool UsesFileSource => IsUnbuilt || IsReplacing;
     public string? FileSource => IsUnbuilt ? SourcePath : ReplacementPath;
@@ -51,6 +53,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     partial void OnReplacementPathChanged(string? value)
     {
         OnPropertyChanged(nameof(IsReplacing));
+        OnPropertyChanged(nameof(ShowRepBadge));
         OnPropertyChanged(nameof(UsesFileSource));
         OnPropertyChanged(nameof(FileSource));
         OnPropertyChanged(nameof(CanPlay));
@@ -72,6 +75,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
         SampleLength = track.SampleLength;
         SampleRate = track.SampleRate;
         SubIndex = track.SubIndex;
+        Replaced = track.Replaced;
         Markers = track.Markers is { } m ? new Dictionary<string, long>(m) : null;
 
         _title = track.DisplayName ?? track.SoundName;

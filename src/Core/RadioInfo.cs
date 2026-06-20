@@ -14,6 +14,7 @@ public sealed class RadioTrack
     public long SampleLength { get; set; }
     public int SampleRate { get; set; }
     public int SubIndex { get; set; } = -1;
+    public bool Replaced { get; set; }
     public IReadOnlyDictionary<string, long>? Markers { get; set; }
 
 }
@@ -343,6 +344,7 @@ public sealed class RadioStationEditor(XElement station)
 
         s.SetAttributeValue("SampleLength", sampleLength);
         s.SetAttributeValue("SampleRate", sampleRate);
+        s.SetAttributeValue("Replaced", "true");
         ApplyCustomMarkers(s, sampleLength);
         return true;
     }

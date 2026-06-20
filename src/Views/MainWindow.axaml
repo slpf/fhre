@@ -1,6 +1,5 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:svc="using:FH6RB.Services"
         xmlns:cv="using:FH6RB.Converters"
@@ -15,8 +14,8 @@
     <Grid RowDefinitions="Auto,*,Auto,Auto">
         <Border Grid.Row="0" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,0,0,1" Padding="10, 12, 14, 12">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto">
-                <StackPanel Grid.Column="0" Margin="0,0,10,0">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+                <StackPanel Grid.Column="0" Margin="0,0,6,0">
                     <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecLocalization}"/>
                     <ComboBox Width="165" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}">
                         <ComboBox.ItemTemplate>
@@ -27,7 +26,7 @@
                     </ComboBox>
                 </StackPanel>
 
-                <StackPanel Grid.Column="1" Margin="0,0,10,0">
+                <StackPanel Grid.Column="1" Margin="0,0,6,0">
                     <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecStation}"/>
                     <ComboBox Width="220" ItemsSource="{Binding Stations}" SelectedItem="{Binding SelectedStation}">
                         <ComboBox.ItemTemplate>
@@ -38,28 +37,38 @@
                     </ComboBox>
                 </StackPanel>
 
-                <StackPanel Grid.Column="2">
+                <StackPanel Grid.Column="2" Margin="0,0,6,0">
                     <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecBank}"/>
                     <ComboBox Width="100" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}"/>
                 </StackPanel>
-
-                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Bottom">
-                    <Button Classes="act" Click="OnSaveBackup" ToolTip.Tip="{x:Static assets:Str.TipSaveBackup}"
+                
+                <Grid Grid.Column="3" ColumnDefinitions="Auto, Auto, *, Auto, Auto, Auto" VerticalAlignment="Bottom">
+                    <Button Grid.Column="0" Classes="act" Click="OnSaveBackup" ToolTip.Tip="{x:Static assets:Str.TipSaveBackup}"
                             Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_save.png" Width="14" Height="14"
+                        <Image Source="avares://FH6RB/Assets/icons/icon_save.png" Width="17" Height="17"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Button>
-                    <Button Classes="act" Click="OnBackups" ToolTip.Tip="{x:Static assets:Str.TipBackups}"
+                    <Button Grid.Column="1" Classes="act" Click="OnBackups" ToolTip.Tip="{x:Static assets:Str.TipBackups}"
                             Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_backups.png" Width="17" Height="17"
+                        <Image Source="avares://FH6RB/Assets/icons/icon_backups.png" Width="20" Height="20"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Button>
-                    <Button Classes="act" Click="OnSettings" ToolTip.Tip="{x:Static assets:Str.TipSettings}"
+                    <Button Grid.Column="3" Classes="act" Click="OnResetAllMarkers" ToolTip.Tip="{x:Static assets:Str.TipResetAllMarkers}"
+                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_pin_reset.png" Width="18" Height="18"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Grid.Column="4" Classes="act" Click="OnMarkerDefaults" ToolTip.Tip="{x:Static assets:Str.TipMarkerDefaults}"
+                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_pin_settings.png" Width="18" Height="18"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Grid.Column="5" Classes="act" Click="OnSettings" ToolTip.Tip="{x:Static assets:Str.TipSettings}"
                             Width="32" Height="32" Background="{DynamicResource BgInput}">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="24" Height="24"
+                        <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="28" Height="28"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Button>
-                </StackPanel>
+                </Grid>
             </Grid>
         </Border>
         
@@ -102,8 +111,8 @@
                                                             <TextBlock Text="{x:Static assets:Str.BadgeNew}" FontSize="8" FontWeight="Bold" Foreground="White"
                                                                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="3,0,3,0"/>
                                                         </Border>
-                                                        <Border IsVisible="{Binding IsReplacing}"
-                                                                Background="{DynamicResource Green}" CornerRadius="3"
+                                                        <Border IsVisible="{Binding ShowRepBadge}"
+                                                                Background="{DynamicResource AccentHi}" CornerRadius="3"
                                                                 Height="14" Margin="0,0,6,0" VerticalAlignment="Center">
                                                             <TextBlock Text="{x:Static assets:Str.BadgeReplaced}" FontSize="8" FontWeight="Bold" Foreground="White"
                                                                        HorizontalAlignment="Center" VerticalAlignment="Center" Margin="3,0,3,0"/>
@@ -142,7 +151,7 @@
                                             </Button>
                                             <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipMarkers}" Click="OnMarkers" Tag="{Binding}">
                                                 <Panel>
-                                                    <Image Source="avares://FH6RB/Assets/icons/icon_pulse.png" Width="22" Height="22"
+                                                    <Image Source="avares://FH6RB/Assets/icons/icon_pin.png" Width="21" Height="21"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
                                                            IsVisible="{Binding !MarkersLoading}"/>
                                                     <Image Source="avares://FH6RB/Assets/icons/icon_decoding.png" Width="24" Height="24"

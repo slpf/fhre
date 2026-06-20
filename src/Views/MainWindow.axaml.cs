@@ -68,6 +68,24 @@ public partial class MainWindow : Window
 
     private async void OnSettings(object? sender, RoutedEventArgs e) => await ShowSettingsAsync();
 
+    private async void OnResetAllMarkers(object? sender, RoutedEventArgs e)
+    {
+        var proceed = await MessageDialog.ShowAsync(this, Str.DlgResetMarkersTitle, Str.DlgResetMarkersBody,
+            okText: Str.DlgResetMarkersOk, cancelText: Str.DlgResetMarkersCancel);
+
+        if (proceed)
+        {
+            Vm.ResetAllCustomMarkers();
+        }
+    }
+
+    private async void OnMarkerDefaults(object? sender, RoutedEventArgs e)
+    {
+        var vm = new MarkerDefaultsViewModel(Vm.Settings);
+        var w = new MarkerDefaultsWindow { DataContext = vm };
+        await w.ShowDialog(this);
+    }
+
     private async void OnSaveBackup(object? sender, RoutedEventArgs e)
     {
         if (Vm.SelectedStation is not { } station)

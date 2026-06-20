@@ -137,6 +137,11 @@ public static class BankBuildService
     
     private static void Encode(BuildItem item, string wav, AppSettings settings, Action<string>? log)
     {
+        if (item.SourcePath is null)
+        {
+            return;
+        }
+
         var filter = Loudnorm.Filter(item.SourcePath, settings);
 
         if (item.GainDb is { } g && Math.Abs(g) > 0.01)
@@ -420,6 +425,11 @@ public static class BankBuildService
 
     private static async Task EncodeAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)
     {
+        if (item.SourcePath is null)
+        {
+            return;
+        }
+
         var filter = Loudnorm.Filter(item.SourcePath, settings);
 
         if (item.GainDb is { } g && Math.Abs(g) > 0.01)

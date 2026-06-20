@@ -59,13 +59,7 @@
                 <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Margin="0,0,0,0"
                         Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
                         Background="{DynamicResource BgInput}">
-                    <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="24" Height="24"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Button>
-                <Button Grid.Column="3" Classes="wave_act" Width="32" Height="32" Margin="8,0,0,0"
-                        Click="OnEditDefaults" ToolTip.Tip="{x:Static assets:Str.TipMarkerDefaults}"
-                        Background="{DynamicResource BgInput}">
-                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="24" Height="24"
+                    <Image Source="avares://FH6RB/Assets/icons/icon_pin_reset.png" Width="24" Height="24"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Button>
             </Grid>

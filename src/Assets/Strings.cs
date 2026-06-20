@@ -98,6 +98,11 @@ public static class Str
     public const string EditRestoredFmt = "Restored {0} file(s)";
     public const string EditRestoredFailedFmt = "Restored {0}, {1} failed";
 
+    public const string DlgResetMarkersTitle = "Reset custom markers";
+    public const string DlgResetMarkersBody = "Reset markers to the current defaults for all custom and replaced tracks? Any manual marker edits on those tracks will be lost.";
+    public const string DlgResetMarkersOk = "Reset";
+    public const string DlgResetMarkersCancel = "Cancel";
+    public const string StatusMarkersResetFmt = "Reset markers for {0} track(s)";
     public const string DlgBankTooLargeTitle = "Bank too large";
 
     public const string DlgUnsavedTitle = "Unsaved changes";
@@ -150,6 +155,7 @@ public static class Str
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
     public const string TipWaveHotkeys = "Click or drag — move playhead\nDrag a marker — move it\nShift + hover a label — focus that marker\nShift + wheel — raise / lower its label row\nShift + drag — move the focused marker\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap region edge to it";
     public const string TipResetMarkers = "Replace markers to custom-track defaults";
+    public const string TipResetAllMarkers = "Reset markers for all custom and replaced tracks";
     public const string TitleMarkerDefaults = "Custom-track marker values";
     public const string HintMarkerDefaults = "Default positions for custom-track markers.";
     public const string BtnRestoreDefaults = "Restore defaults";

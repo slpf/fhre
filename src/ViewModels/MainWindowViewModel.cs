@@ -378,6 +378,44 @@ public sealed partial class MainWindowViewModel : ObservableObject
         CountText = $"{total} tracks · {custom} custom · {on} in playlist";
     }
 
+    public void ResetAllCustomMarkers()
+    {
+        var count = 0;
+
+        foreach (var t in Tracks)
+        {
+            if (!IsResetEligible(t))
+            {
+                continue;
+            }
+
+            t.Markers = t.SampleLength > 0
+                ? RadioStationEditor.ComputeAutoMarkers(t.SampleLength)
+                : null;
+            count++;
+        }
+
+        if (count > 0)
+        {
+            HasUnsavedChanges = true;
+        }
+
+        Status = string.Format(Str.StatusMarkersResetFmt, count);
+    }
+
+    private static bool IsResetEligible(TrackItemViewModel t)
+    {
+        if (t.IsCustom || t.IsReplacing || t.Replaced)
+        {
+            return true;
+        }
+
+        return t.Markers is { } m
+            && m.TryGetValue("DJStart", out var dj) && dj >= 0
+            && m.TryGetValue("StingerStart", out var ss) && ss >= 0
+            && Math.Abs(dj - ss - 1000) > 5000;
+    }
+
     public async Task<(float[]? Peaks, string? Wav)> LoadPeaksAsync(TrackItemViewModel track)
     {
         var bankPath = _loadedBankPath;
