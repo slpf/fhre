@@ -40,7 +40,7 @@ public static class AudioDecoder
         
         Run(Tools.FfmpegPath,
             $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
-            $"-af loudnorm=I={i}:TP={tp}:LRA=11 \"{outWav}\"");
+            $"-af {Loudnorm.Filter(source, s)} \"{outWav}\"");
         
         return outWav;
     }

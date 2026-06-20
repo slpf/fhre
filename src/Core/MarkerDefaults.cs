@@ -10,7 +10,7 @@ public static class MarkerDefaults
     [
         ("TrackStart", "0%"),
         ("End", "100%"),
-        ("DJStart", "100%"),
+        ("DJStart", "95%"),
         ("DJDrop", "0%"),
         ("DJSegment", "60%"),
         ("TrackDrop", "0%"),
@@ -19,7 +19,6 @@ public static class MarkerDefaults
         ("PostDrop", "70%"),
         ("PostRaceLoopStart", "70%"),
         ("PostRaceLoopEnd", "90%"),
-        
     ];
     
     public static readonly IReadOnlyDictionary<string, int> DefaultLabelRows = new Dictionary<string, int>

@@ -137,9 +137,7 @@ public static class BankBuildService
     
     private static void Encode(BuildItem item, string wav, AppSettings settings, Action<string>? log)
     {
-        var i  = settings.TargetLufs.ToString(CultureInfo.InvariantCulture);
-        var tp = settings.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var filter = $"loudnorm=I={i}:TP={tp}:LRA=11";
+        var filter = Loudnorm.Filter(item.SourcePath, settings);
 
         if (item.GainDb is { } g && Math.Abs(g) > 0.01)
         {
@@ -422,9 +420,7 @@ public static class BankBuildService
 
     private static async Task EncodeAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)
     {
-        var i  = settings.TargetLufs.ToString(CultureInfo.InvariantCulture);
-        var tp = settings.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var filter = $"loudnorm=I={i}:TP={tp}:LRA=11";
+        var filter = Loudnorm.Filter(item.SourcePath, settings);
 
         if (item.GainDb is { } g && Math.Abs(g) > 0.01)
         {
