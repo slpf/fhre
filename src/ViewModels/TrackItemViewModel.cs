@@ -45,7 +45,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     public bool Replaced { get; set; }
     public bool IsReplacing => ReplacementPath is not null;
-    public bool ShowRepBadge => IsReplacing || Replaced;
+    public bool ShowRepBadge => !IsCustom && (IsReplacing || Replaced);
     public bool CanReplace => !IsCustom;
     public bool UsesFileSource => IsUnbuilt || IsReplacing;
     public string? FileSource => IsUnbuilt ? SourcePath : ReplacementPath;

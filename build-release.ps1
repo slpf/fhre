@@ -41,7 +41,7 @@ Write-Host ''
 Write-Host '[1/5] Building single-file exe ...'
 dotnet publish $Proj -c Release -r win-x64 --self-contained true `
     -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:EnableCompressionInSingleFile=false -o $BuildOut
+    -p:EnableCompressionInSingleFile=true -o $BuildOut
 if ($LASTEXITCODE -ne 0)   { Fail 'dotnet publish failed.' }
 if (-not (Test-Path $BuildOut)) { Fail "build output not found: $BuildOut." }
 

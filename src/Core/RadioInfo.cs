@@ -208,6 +208,7 @@ public sealed class RadioStationEditor(XElement station)
             ns.SetAttributeValue("IsXCloudModeSafe", "true");
         }
 
+        ns.SetAttributeValue("Replaced", null);
         ApplyCustomMarkers(ns, sampleLength);
         ns.Elements("BPM").Remove();
 
