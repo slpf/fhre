@@ -89,7 +89,7 @@ public partial class WaveformWindow : Window
             ? Math.Clamp(frame, 0, Vm.SampleLength - 1)
             : Math.Max(0, frame);
     }
-
+    
     private void OnPlayPause(object? sender, RoutedEventArgs e)
     {
         var wav = Vm.WavPath;
@@ -286,6 +286,20 @@ public partial class WaveformWindow : Window
         FormattableString.Invariant($"{(int) t.TotalMinutes}:{t.Seconds:00} ({t.TotalSeconds:0.000})");
 
     private void OnResetDefaults(object? sender, RoutedEventArgs e) => Vm.ResetMarkersToDefaults();
+
+    private TextBox? _ctxField;
+
+    private void OnFieldContextRequested(object? sender, ContextRequestedEventArgs e) => _ctxField = sender as TextBox;
+
+    private void OnFieldCut(object? sender, RoutedEventArgs e) => _ctxField?.Cut();
+
+    private void OnFieldCopy(object? sender, RoutedEventArgs e) => _ctxField?.Copy();
+
+    private void OnFieldPaste(object? sender, RoutedEventArgs e) => _ctxField?.Paste();
+
+    private void OnFieldRevert(object? sender, RoutedEventArgs e) => (_ctxField?.DataContext as MarkerField)?.Revert();
+
+    private void OnFieldReset(object? sender, RoutedEventArgs e) => (_ctxField?.DataContext as MarkerField)?.Reset();
 
     private void OnLabelRowsChanged()
     {

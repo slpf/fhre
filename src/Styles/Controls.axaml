@@ -34,7 +34,7 @@
     <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
   </Style>
   
-  <Style Selector="Button.markers">
+  <Style Selector="Button.mbutton">
     <Setter Property="Width" Value="32"/>
     <Setter Property="Height" Value="32"/>
     <Setter Property="Padding" Value="0"/>
@@ -43,19 +43,11 @@
     <Setter Property="BorderThickness" Value="0"/>
   </Style>
   
-  <Style Selector="Button.markers:pointerover /template/ ContentPresenter">
+  <Style Selector="Button.mbutton:pointerover /template/ ContentPresenter">
     <Setter Property="Background" Value="{DynamicResource BgInput}"/>
   </Style>
   
-  <Style Selector="Button.markers Image.icon">
-    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow.png"/>
-  </Style>
-  
-  <Style Selector="Button.markers:pointerover Image.icon">
-    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow_hover.png"/>
-  </Style>
-  
-  <Style Selector="Button.markers Path">
+  <Style Selector="Button.mbutton Path">
     <Setter Property="Stroke" Value="{DynamicResource Inter}"/>
     <Setter Property="StrokeThickness" Value="2"/>
     <Setter Property="StrokeJoin" Value="Round"/>
@@ -64,6 +56,22 @@
     <Setter Property="Stretch" Value="Uniform"/>
     <Setter Property="HorizontalAlignment" Value="Center"/>
     <Setter Property="VerticalAlignment" Value="Center"/>
+  </Style>
+  
+  <Style Selector="Button.mbutton Image.set">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow.png"/>
+  </Style>
+  
+  <Style Selector="Button.mbutton:pointerover Image.set">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow_hover.png"/>
+  </Style>
+  
+  <Style Selector="Button.mbutton Image.revert">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow.png"/>
+  </Style>
+  
+  <Style Selector="Button.mbutton:pointerover Image.revert">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow_hover.png"/>
   </Style>
   
   <Style Selector="Button.act">
@@ -191,27 +199,27 @@
     <Setter Property="Background" Value="Transparent"/>
   </Style>
   
-  <Style Selector="ScrollBar:vertical[IsExpanded=true] /template/ Thumb">
-    <Setter Property="RenderTransform"
-            Value="{DynamicResource VerticalSmallScrollThumbScaleTransform}"/>
-    <Setter Property="Background"
-            Value="{DynamicResource ScrollBarPanningThumbBackground}"/>
-  </Style>
-  <Style Selector="ScrollBar:horizontal[IsExpanded=true] /template/ Thumb">
-    <Setter Property="RenderTransform"
-            Value="{DynamicResource HorizontalSmallScrollThumbScaleTransform}"/>
-    <Setter Property="Background"
-            Value="{DynamicResource ScrollBarPanningThumbBackground}"/>
-  </Style>
-  <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect">
-    <Setter Property="Opacity" Value="0"/>
-  </Style>
-  <Style Selector="ScrollBar[IsExpanded=true] /template/ RepeatButton">
-    <Setter Property="Opacity" Value="0"/>
-  </Style>
-  <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root">
-    <Setter Property="Background" Value="Transparent"/>
-  </Style>
+  <!-- <Style Selector="ScrollBar:vertical[IsExpanded=true] /template/ Thumb"> -->
+  <!--   <Setter Property="RenderTransform" -->
+  <!--           Value="{DynamicResource VerticalSmallScrollThumbScaleTransform}"/> -->
+  <!--   <Setter Property="Background" -->
+  <!--           Value="{DynamicResource ScrollBarPanningThumbBackground}"/> -->
+  <!-- </Style> -->
+  <!-- <Style Selector="ScrollBar:horizontal[IsExpanded=true] /template/ Thumb"> -->
+  <!--   <Setter Property="RenderTransform" -->
+  <!--           Value="{DynamicResource HorizontalSmallScrollThumbScaleTransform}"/> -->
+  <!--   <Setter Property="Background" -->
+  <!--           Value="{DynamicResource ScrollBarPanningThumbBackground}"/> -->
+  <!-- </Style> -->
+  <!-- <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect"> -->
+  <!--   <Setter Property="Opacity" Value="0"/> -->
+  <!-- </Style> -->
+  <!-- <Style Selector="ScrollBar[IsExpanded=true] /template/ RepeatButton"> -->
+  <!--   <Setter Property="Opacity" Value="0"/> -->
+  <!-- </Style> -->
+  <!-- <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root"> -->
+  <!--   <Setter Property="Background" Value="Transparent"/> -->
+  <!-- </Style> -->
   
   <Style Selector=":is(Control).spin">
     <Setter Property="RenderTransformOrigin" Value="50%,50%"/>

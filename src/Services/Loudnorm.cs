@@ -18,6 +18,12 @@ public static class Loudnorm
         return BuildFilter(basef, await MeasureAsync(source, basef).ConfigureAwait(false));
     }
 
+    public static async Task<string?> MeasureIntegratedAsync(string source)
+    {
+        var m = await MeasureAsync(source, "loudnorm=I=-23:TP=-1:LRA=11").ConfigureAwait(false);
+        return m?.Mi;
+    }
+
     private static string BaseFilter(AppSettings settings)
     {
         var i = settings.TargetLufs.ToString(CultureInfo.InvariantCulture);

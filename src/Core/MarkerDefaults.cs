@@ -10,7 +10,7 @@ public static class MarkerDefaults
     [
         ("TrackStart", "0%"),
         ("End", "100%"),
-        ("DJStart", "95%"),
+        ("DJStart", "-5"),
         ("DJDrop", "0%"),
         ("DJSegment", "60%"),
         ("TrackDrop", "0%"),
@@ -92,7 +92,7 @@ public static class MarkerDefaults
             t = t[..^1].Trim();
         }
 
-        return double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= 0;
+        return double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
     public static long Resolve(string? spec, long length, int sampleRate)
@@ -102,9 +102,11 @@ public static class MarkerDefaults
             return -1;
         }
 
-        var frame = percent
+        var off = percent
             ? (long) Math.Round(value / 100.0 * length)
             : (long) Math.Round(value * sampleRate);
+
+        var frame = value < 0 ? length + off : off;
 
         return Math.Clamp(frame, 0, length - 1);
     }

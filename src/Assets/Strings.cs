@@ -51,6 +51,7 @@ public static class Str
     public const string TipAddTrack = "Add track";
     public const string TipBuildBank = "Build current bank";
     public const string TipSetPlayhead = "Set to current playback time";
+    public const string TipRevertToSaved = "Restore the last saved value";
     public const string TipBackupRestore = "Reverts files to their pre-build state.";
     
     public const string Loading = "Loading…";
@@ -131,17 +132,17 @@ public static class Str
     public const string DlgFilesInUseTitle = "Files in use";
     public const string DlgFilesInUseBody = "Some game files are in use. Forza Horizon is most likely running. Close the game before building, otherwise saving and building will fail.";
     public const string DlgGameRunningTitle = "Game is running";
-    public const string MkTrackStart = "Free-roam: where the track starts playing.";
-    public const string MkEnd = "Free-roam: where the track stops playing.";
-    public const string MkDjStart = "Free-roam: from here the DJ starts talking over the track, leading into the next one.";
-    public const string MkDjDrop = "Free-roam: the DJ keeps talking over the start of the track up to this point (carried over from the previous track).";
-    public const string MkDjSegment = "Free-roam: point where a DJ line plays over the middle of the track.";
-    public const string MkTrackDrop = "Events: where the track starts when an event begins, right after the countdown.";
-    public const string MkPostDrop = "Events: the point reached when you cross the finish line.";
-    public const string MkTrackLoopStart = "Events: where the track loops back to while the event is still going.";
-    public const string MkTrackLoopEnd = "Events: how far the track plays during an event.";
-    public const string MkPostRaceLoopStart = "Events: start of the loop played on the results screen.";
-    public const string MkPostRaceLoopEnd = "Events: end of the loop played on the results screen.";
+    public const string MkTrackStart = "Start of the track.";
+    public const string MkEnd = "End of the track.";
+    public const string MkDjStart = "Free-roam: where the DJ comes in at the end and the music fades out. Best at the very end on the fade, 3-5 sec before the end.";
+    public const string MkDjDrop = "Free-roam: where the DJ stops talking over the intro and the music comes to the front. Best after the intro or on an early drop, no later than 30 sec.";
+    public const string MkDjSegment = "Free-roam: a DJ line over the middle of the track, layered on top of the music. Best on a calmer mid-track section.";
+    public const string MkTrackDrop = "Events: where the track starts when an event begins, right after the countdown. Best on a drop, no later than 30% in.";
+    public const string MkPostDrop = "Events: the point reached after crossing the finish line. Best on a final drop. Must not exceed PostRaceLoopStart (ideally equal or nearly equal).";
+    public const string MkTrackLoopStart = "Events: where the track loops back to during an event. Pick a section that loops cleanly with TrackLoopEnd.";
+    public const string MkTrackLoopEnd = "Events: where the track stops during an event; after it, playback loops between TrackLoopStart and TrackLoopEnd.";
+    public const string MkPostRaceLoopStart = "Events: start of the section that loops while results are tallied. Best on an outro.";
+    public const string MkPostRaceLoopEnd = "Events: end of the section that loops while results are tallied.";
     
     public const string LangAll = "All languages";
     
@@ -154,6 +155,11 @@ public static class Str
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
     public const string TipWaveHotkeys = "Click or drag — move playhead\nDrag a marker — move it\nShift + hover a label — focus that marker\nShift + wheel — raise / lower its label row\nShift + drag — move the focused marker\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap region edge to it";
+    public const string MenuCut = "Cut";
+    public const string MenuCopy = "Copy";
+    public const string MenuPaste = "Paste";
+    public const string MenuRevert = "Revert";
+    public const string MenuReset = "Reset";
     public const string TipResetMarkers = "Replace markers to custom-track defaults";
     public const string TipResetAllMarkers = "Reset markers for all custom and replaced tracks";
     public const string TitleMarkerDefaults = "Custom-track marker values";

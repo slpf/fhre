@@ -59,7 +59,7 @@
                 <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Margin="0,0,0,0"
                         Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
                         Background="{DynamicResource BgInput}">
-                    <Image Source="avares://FH6RB/Assets/icons/icon_pin_reset.png" Width="24" Height="24"
+                    <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="26" Height="26"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Button>
             </Grid>
@@ -75,7 +75,7 @@
                                 <ItemsControl ItemsSource="{Binding Fields}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid ColumnDefinitions="*,120,Auto" Margin="4 1 6 1"
+                                            <Grid ColumnDefinitions="*,120,Auto" Margin="4 1 0 1"
                                                   Background="Transparent" Tag="{Binding}"
                                                   PointerEntered="OnFieldNameEntered"
                                                   PointerExited="OnFieldNameExited">
@@ -88,11 +88,23 @@
                                                 <TextBox Grid.Column="1" Classes="field2" Tag="{Binding}"
                                                          Text="{Binding SecondsText, Mode=TwoWay}"
                                                          Watermark="{x:Static assets:Str.WatermarkOff}"
-                                                         FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
-                                                <Button Grid.Column="2" Classes="markers" Width="32" Height="32" Margin="6,0,0,0"
+                                                         ContextRequested="OnFieldContextRequested"
+                                                         FontFamily="{DynamicResource MonoFont}" FontSize="12">
+                                                    <TextBox.ContextFlyout>
+                                                        <MenuFlyout>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuCut}" Click="OnFieldCut"/>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuCopy}" Click="OnFieldCopy"/>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuPaste}" Click="OnFieldPaste"/>
+                                                            <Separator/>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuRevert}" Click="OnFieldRevert"/>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuReset}" Click="OnFieldReset"/>
+                                                        </MenuFlyout>
+                                                    </TextBox.ContextFlyout>
+                                                </TextBox>
+                                                <Button Grid.Column="2" Classes="mbutton" Width="32" Height="32" Margin="6,0,0,0"
                                                         Click="OnSetFromPlayhead" Tag="{Binding}"
                                                         ToolTip.Tip="{x:Static assets:Str.TipSetPlayhead}">
-                                                    <Image Classes="icon" Width="14" Height="14"
+                                                    <Image Classes="set" Width="14" Height="14"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Button>
                                             </Grid>

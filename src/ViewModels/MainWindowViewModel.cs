@@ -837,6 +837,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _radioForFile = null;
             WorkDirs.Clean();
             await LoadAsync();
+#if DEBUG
+            await LufsCheck.RunAsync(bankPath, Tracks.Select(t => (t.SoundName, t.SubIndex)).ToList());
+#endif
             
             System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);

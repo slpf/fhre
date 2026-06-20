@@ -13,11 +13,15 @@ public sealed partial class MarkerField : ObservableObject
     public string Description { get; init; } = "";
     public int SampleRate { get; init; }
     public long SampleLength { get; init; }
+    public long InitialPosition { get; init; }
 
     [ObservableProperty] private long _position;
     [ObservableProperty] private bool _highlighted;
 
     public bool IsOff => Position < 0;
+
+    public void Revert() => Position = InitialPosition;
+    public void Reset() => Position = MarkerDefaults.Resolve(MarkerDefaults.Get(Name), SampleLength, SampleRate);
     
     public string SecondsText
     {
@@ -39,17 +43,20 @@ public sealed partial class MarkerField : ObservableObject
             {
                 var p = t[..^1].Trim().Replace(',', '.');
 
-                if (SampleLength > 0 && double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var pct) && pct >= 0)
+                if (SampleLength > 0 && double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var pct))
                 {
-                    Position = Math.Clamp((long) Math.Round(pct / 100.0 * SampleLength), 0, SampleLength - 1);
+                    var off = (long) Math.Round(pct / 100.0 * SampleLength);
+                    Position = Math.Clamp(pct < 0 ? SampleLength + off : off, 0, SampleLength - 1);
                 }
 
                 return;
             }
 
-            if (SampleRate > 0 && double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var sec) && sec >= 0)
+            if (SampleRate > 0 && double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var sec))
             {
-                Position = (long) Math.Round(sec * SampleRate);
+                Position = sec < 0
+                    ? Math.Clamp(SampleLength + (long) Math.Round(sec * SampleRate), 0, SampleLength - 1)
+                    : (long) Math.Round(sec * SampleRate);
             }
         }
     }
@@ -186,7 +193,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
                     };
                 }
 
-                grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position });
+                grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position });
             }
 
             Groups.Add(grp);

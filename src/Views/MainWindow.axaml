@@ -151,7 +151,7 @@
                                             </Button>
                                             <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipMarkers}" Click="OnMarkers" Tag="{Binding}">
                                                 <Panel>
-                                                    <Image Source="avares://FH6RB/Assets/icons/icon_pin.png" Width="21" Height="21"
+                                                    <Image Source="avares://FH6RB/Assets/icons/icon_pin.png" Width="18" Height="18"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
                                                            IsVisible="{Binding !MarkersLoading}"/>
                                                     <Image Source="avares://FH6RB/Assets/icons/icon_decoding.png" Width="24" Height="24"
