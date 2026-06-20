@@ -734,76 +734,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 () => BuildAndWriteBankAsync(bankPath, items, settings, Progress));
             Log.Line($"wrote {written:N0} bytes -> {bankPath}");
             
-            var refFile = ViewLanguageFile()
-                ?? throw new InvalidOperationException("no reference RadioInfo language");
-            var otherFiles = SelectedLanguage.FileName == AllLanguagesFile
-                ? Languages.Where(l => l.FileName != AllLanguagesFile && l.FileName != refFile)
-                    .Select(l => l.FileName).ToList()
-                : new List<string>();
-
-            var savedXml = 0;
-            var dead = 0;
-            
-            var refPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, refFile)
-                ?? throw new InvalidOperationException($"reference RadioInfo not found: {refFile}");
-            var refRadio = RadioInfo.Load(refPath);
-            ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
-
-            var (union, suspicious) = await ReadStationBankIdsAsync(station, refRadio);
-            if (!suspicious && union.Count > 0)
-            {
-                dead += refRadio.StationByNumber(station.Number)
-                    ?.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line) ?? 0;
-            }
-
-            SaveXmlWithBackup(refRadio, refPath);
-            savedXml++;
-            Log.Line($"RadioInfo saved (reference): {refFile}");
-
-            var refStation = refRadio.StationByNumber(station.Number);
-            
-            foreach (var lf in otherFiles)
-            {
-                if (refStation is null) break;
-
-                var xmlPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, lf);
-                if (xmlPath is null) continue;
-
-                RadioInfo localized;
-                try
-                {
-                    localized = RadioInfo.Load(xmlPath);
-                }
-                catch (Exception ex)
-                {
-                    Log.Line($"RadioInfo load failed ({lf}): {ex.Message} — skipped");
-                    continue;
-                }
-
-                var ed = localized.StationByNumber(station.Number);
-                if (ed is null)
-                {
-                    Log.Line($"station #{station.Number} not in {lf} — skipped");
-                    continue;
-                }
-
-                ed.RegisterBank(bankName);
-                ed.SyncCustomsFrom(refStation);
-
-                foreach (var a in addedSamples.Where(a => a.IsReplacement))
-                {
-                    ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
-                }
-
-                if (!suspicious && union.Count > 0)
-                {
-                    dead += ed.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line);
-                }
-
-                SaveXmlWithBackup(localized, xmlPath);
-                savedXml++;
-                Log.Line($"RadioInfo saved: {lf}");
-            }
+            var (savedXml, dead) = await WriteRadioInfosAsync(station, bankName, addedSamples, items);
 
             if (dead > 0)
             {
@@ -836,9 +767,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
             StatusDetail = "";
             _radioForFile = null;
             WorkDirs.Clean();
-            await LoadAsync();
+
+            try
+            {
+                await LoadAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Line("reload after build failed: " + ex);
+            }
 #if DEBUG
-            await LufsCheck.RunAsync(bankPath, Tracks.Select(t => (t.SoundName, t.SubIndex)).ToList());
+            try
+            {
+                await LufsCheck.RunAsync(bankPath, Tracks.Select(t => (t.SoundName, t.SubIndex)).ToList());
+            }
+            catch (Exception ex)
+            {
+                Log.Line("LUFS check failed: " + ex);
+            }
 #endif
             
             System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
@@ -848,6 +794,99 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
     
+    private async Task<(int SavedXml, int Dead)> WriteRadioInfosAsync(
+        StationInfo station, string bankName, IReadOnlyList<AddedSample> addedSamples, List<BuildItem> items)
+    {
+        var refFile = ViewLanguageFile()
+            ?? throw new InvalidOperationException("no reference RadioInfo language");
+        var otherFiles = SelectedLanguage?.FileName == AllLanguagesFile
+            ? Languages.Where(l => l.FileName != AllLanguagesFile && l.FileName != refFile)
+                .Select(l => l.FileName).ToList()
+            : new List<string>();
+
+        var savedXml = 0;
+        var dead = 0;
+
+        var refPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, refFile)
+            ?? throw new InvalidOperationException($"reference RadioInfo not found: {refFile}");
+        var refRadio = RadioInfo.Load(refPath);
+        ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
+
+        var (union, suspicious) = await ReadStationBankIdsAsync(station, refRadio);
+        if (!suspicious && union.Count > 0)
+        {
+            dead += refRadio.StationByNumber(station.Number)
+                ?.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line) ?? 0;
+        }
+
+        SaveXmlWithBackup(refRadio, refPath);
+        savedXml++;
+        Log.Line($"RadioInfo saved (reference): {refFile}");
+
+        var refStation = refRadio.StationByNumber(station.Number);
+
+        foreach (var lf in otherFiles)
+        {
+            if (refStation is null)
+            {
+                break;
+            }
+
+            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious);
+            savedXml += saved;
+            dead += d;
+        }
+
+        return (savedXml, dead);
+    }
+
+    private (int Saved, int Dead) SaveLocalizedXml(
+        string lf, StationInfo station, string bankName, IReadOnlyList<AddedSample> addedSamples,
+        RadioStationEditor refStation, HashSet<ulong> union, bool suspicious)
+    {
+        var xmlPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, lf);
+        if (xmlPath is null)
+        {
+            return (0, 0);
+        }
+
+        RadioInfo localized;
+        try
+        {
+            localized = RadioInfo.Load(xmlPath);
+        }
+        catch (Exception ex)
+        {
+            Log.Line($"RadioInfo load failed ({lf}): {ex.Message} — skipped");
+            return (0, 0);
+        }
+
+        var ed = localized.StationByNumber(station.Number);
+        if (ed is null)
+        {
+            Log.Line($"station #{station.Number} not in {lf} — skipped");
+            return (0, 0);
+        }
+
+        ed.RegisterBank(bankName);
+        ed.SyncCustomsFrom(refStation);
+
+        foreach (var a in addedSamples.Where(a => a.IsReplacement))
+        {
+            ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
+        }
+
+        var dead = 0;
+        if (!suspicious && union.Count > 0)
+        {
+            dead = ed.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line);
+        }
+
+        SaveXmlWithBackup(localized, xmlPath);
+        Log.Line($"RadioInfo saved: {lf}");
+        return (1, dead);
+    }
+
     private static async Task<(IReadOnlyList<AddedSample> Added, long Written)> BuildAndWriteBankAsync(
         string bankPath, IReadOnlyList<BuildItem> items, AppSettings settings, Action<string> progress)
     {
