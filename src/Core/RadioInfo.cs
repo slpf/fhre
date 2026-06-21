@@ -347,6 +347,7 @@ public sealed class RadioStationEditor(XElement station)
         s.SetAttributeValue("SampleRate", sampleRate);
         s.SetAttributeValue("Replaced", "true");
         ApplyCustomMarkers(s, sampleLength);
+        s.Elements("BPM").Remove();
         return true;
     }
     

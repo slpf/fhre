@@ -37,9 +37,22 @@ public static partial class GameScanner
             .Select(Path.GetFileName)
             .Where(n => n is not null)
             .Select(n => n!)
+            .Where(IsLanguageFile)
             .Distinct()
-            .OrderBy(x => x)
+            .OrderBy(x => x, StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static bool IsLanguageFile(string name)
+    {
+        if (!name.StartsWith("RadioInfo_", StringComparison.OrdinalIgnoreCase)
+            || !name.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var code = name[10..^4];
+        return code.Length is > 0 and <= 8 && code.All(c => char.IsAsciiLetter(c) || c == '-');
     }
 
     public static string? RadioInfoPathByFile(string gamePath, string fileName)
@@ -57,7 +70,7 @@ public static partial class GameScanner
             .Where(n => VariantBankRegex().IsMatch(n)));
 
         const string bank = ".bank";
-        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank")     // FH4: без _assets и без варианта
+        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank") 
             .Select(f => Path.GetFileName(f)[..^bank.Length])
             .Where(n => PlainBankRegex().IsMatch(n)));
 
