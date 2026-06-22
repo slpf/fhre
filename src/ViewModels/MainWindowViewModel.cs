@@ -38,17 +38,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool IsGameRunning()
     {
-        if (!GameScanner.IsValid(Settings.GamePath))
-        {
-            return false;
-        }
-
-        var paths = GameScanner.RadioBankNames(Settings.GamePath)
-            .Select(n => GameScanner.BankPath(Settings.GamePath, n))
-            .Concat(GameScanner.LanguageFiles(Settings.GamePath)
-                .Select(f => GameScanner.RadioInfoPathByFile(Settings.GamePath, f)));
-
-        return FileGuard.Locked(paths).Count > 0;
+        return GameScanner.IsValid(Settings.GamePath)
+            && GameScanner.IsGameProcessRunning(Settings.GamePath);
     }
 
     [ObservableProperty] private bool _hasUnsavedChanges;

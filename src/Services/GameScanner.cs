@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace FH6RB.Services;
@@ -28,6 +29,38 @@ public static partial class GameScanner
         catch
         {
             return null;
+        }
+    }
+
+    public static bool IsGameProcessRunning(string gamePath)
+    {
+        var exe = FindExe(gamePath);
+        if (exe is null)
+        {
+            return false;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(exe);
+        Process[] procs;
+        try
+        {
+            procs = Process.GetProcessesByName(name);
+        }
+        catch
+        {
+            return false;
+        }
+
+        try
+        {
+            return procs.Length > 0;
+        }
+        finally
+        {
+            foreach (var p in procs)
+            {
+                p.Dispose();
+            }
         }
     }
     
@@ -70,7 +103,7 @@ public static partial class GameScanner
             .Where(n => VariantBankRegex().IsMatch(n)));
 
         const string bank = ".bank";
-        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank") 
+        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank")     // FH4: без _assets и без варианта
             .Select(f => Path.GetFileName(f)[..^bank.Length])
             .Where(n => PlainBankRegex().IsMatch(n)));
 

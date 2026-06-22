@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
 namespace FH6RB.Core;
@@ -26,7 +27,12 @@ public sealed class RadioInfo
 
     private RadioInfo(XDocument doc) => _doc = doc;
 
-    public static RadioInfo Load(string path) => new(XDocument.Load(path));
+    public static RadioInfo Load(string path) => new(Parse(File.ReadAllText(path)));
+
+    private static readonly Regex RawAmpersand =
+        new(@"&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9A-Fa-f]+;)", RegexOptions.Compiled);
+
+    private static XDocument Parse(string xml) => XDocument.Parse(RawAmpersand.Replace(xml, "&amp;"));
 
     public const string XmlMarker = "FH6RB";
 
