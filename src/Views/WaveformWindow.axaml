@@ -40,24 +40,39 @@
                                   Markers="{Binding AllMarkers}" SampleLength="{Binding SampleLength}"/>
             </Border>
 
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="0,12,0,0">
-                <Button Grid.Column="0" x:Name="PlayBtn" Classes="wave_act" Width="32" Height="32"
-                        Click="OnPlayPause" Focusable="False" Background="{DynamicResource BgInput}">
-                    <Panel>
-                        <Image x:Name="PlayIcon" Source="avares://FH6RB/Assets/icons/icon_play.png"
-                               Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"
-                               ToolTip.Tip="{x:Static assets:Str.TipPlay}"/>
-                        <Image x:Name="PauseIcon" Source="avares://FH6RB/Assets/icons/icon_pause.png"
-                               Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"
-                               IsVisible="False" ToolTip.Tip="{x:Static assets:Str.TipPause}"/>
-                    </Panel>
-                </Button>
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,12,0,0">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
+                    <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
+                            Click="OnPlay" ToolTip.Tip="{x:Static assets:Str.TipPlay}"
+                            Background="{DynamicResource BgInput}">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_play.png" Width="24" Height="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
+                            Click="OnPause" ToolTip.Tip="{x:Static assets:Str.TipPause}"
+                            Background="{DynamicResource BgInput}">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_pause.png" Width="24" Height="24"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
+                            Click="OnStop" ToolTip.Tip="{x:Static assets:Str.TipStop}"
+                            Background="{DynamicResource BgInput}">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_stop.png" Width="22" Height="22"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                    <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
+                            Click="OnPlayLoop" ToolTip.Tip="{x:Static assets:Str.TipPlayLoop}"
+                            Background="{DynamicResource BgInput}">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_loop.png" Width="20" Height="20"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
+                </StackPanel>
                 <TextBlock Grid.Column="1" x:Name="TimeText" Text="{x:Static assets:Str.TimeZero}"
                            FontFamily="{DynamicResource MonoFont}" FontSize="11"
-                           Foreground="{DynamicResource TxtMute}" TextAlignment="Center"
-                           VerticalAlignment="Center" Margin="8,0,0,0"/>
-                <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Margin="0,0,0,0"
-                        Click="OnResetDefaults" Focusable="False" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
+                           Foreground="{DynamicResource TxtMute}" TextAlignment="Right"
+                           VerticalAlignment="Center" Margin="8,0,8,0"/>
+                <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Focusable="False"
+                        Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
                         Background="{DynamicResource BgInput}">
                     <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="26" Height="26"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -67,7 +82,7 @@
         
         <Border Grid.Row="1" Margin="16,0,16,16" Background="{DynamicResource BgInput}"
                             BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
-            <ScrollViewer  Margin="16,16,8,16" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer Margin="16,16,16,16" HorizontalScrollBarVisibility="Disabled">
                 <ItemsControl ItemsSource="{Binding Groups}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
@@ -75,17 +90,29 @@
                                 <ItemsControl ItemsSource="{Binding Fields}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid ColumnDefinitions="*,120,Auto" Margin="4 1 0 1"
+                                            <Grid ColumnDefinitions="*,Auto,120,Auto" Margin="0,1"
                                                   Background="Transparent" Tag="{Binding}"
                                                   PointerEntered="OnFieldNameEntered"
                                                   PointerExited="OnFieldNameExited">
-                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
-                                                           Classes="mk" Classes.hl="{Binding Highlighted}"
-                                                           Background="Transparent" Tag="{Binding}"
-                                                           PointerPressed="OnFieldNamePressed"
-                                                           ToolTip.Tip="{Binding Description}"
-                                                           FontSize="12"/>
-                                                <TextBox Grid.Column="1" Classes="field2" Tag="{Binding}"
+                                                <DockPanel>
+                                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" VerticalAlignment="Center"
+                                                               Classes="mk" Classes.hl="{Binding Highlighted}"
+                                                               Background="Transparent" Tag="{Binding}"
+                                                               PointerPressed="OnFieldNamePressed"
+                                                               ToolTip.Tip="{Binding Description}"
+                                                               FontSize="12"/>
+                                                    <Border VerticalAlignment="Center" Height="1" Margin="10,0"
+                                                            IsHitTestVisible="False"
+                                                            Background="{DynamicResource Line}"/>
+                                                </DockPanel>
+                                                <Button Grid.Column="1" Classes="mbutton" Width="18" Height="18" Margin="0,0,10,0"
+                                                        Click="OnPlayMarkerLoop" Tag="{Binding}"
+                                                        IsVisible="{Binding CanLoop}"
+                                                        ToolTip.Tip="{x:Static assets:Str.TipPlayMarkerLoop}">
+                                                    <Image Classes="loop" Width="18" Height="18"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Button>
+                                                <TextBox Grid.Column="2" Classes="field2" Tag="{Binding}"
                                                          Text="{Binding SecondsText, Mode=TwoWay}"
                                                          Watermark="{x:Static assets:Str.WatermarkOff}"
                                                          ContextRequested="OnFieldContextRequested"
@@ -101,8 +128,8 @@
                                                         </MenuFlyout>
                                                     </TextBox.ContextFlyout>
                                                 </TextBox>
-                                                <Button Grid.Column="2" Classes="mbutton" Width="32" Height="32" Margin="6,0,0,0"
-                                                        Click="OnSetFromPlayhead" Focusable="False" Tag="{Binding}"
+                                                <Button Grid.Column="3" Classes="mbutton" Width="14" Height="14" Margin="10,0,0,0"
+                                                        Click="OnSetFromPlayhead" Tag="{Binding}"
                                                         ToolTip.Tip="{x:Static assets:Str.TipSetPlayhead}">
                                                     <Image Classes="set" Width="14" Height="14"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>

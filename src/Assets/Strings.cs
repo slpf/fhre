@@ -41,6 +41,9 @@ public static class Str
     public const string TipPlayPause = "Play / Pause";
     public const string TipPlay = "Play";
     public const string TipPause = "Pause";
+    public const string TipStop = "Stop";
+    public const string TipPlayLoop = "Play current region as loop";
+    public const string TipPlayMarkerLoop = "Play current marker as loop";
     public const string TipDelete = "Delete track";
     public const string TipReplaceAudio = "Replace track";
     public const string TipMarkers = "Markers";
@@ -50,7 +53,7 @@ public static class Str
     public const string TipEnable = "Enable";
     public const string TipAddTrack = "Add track";
     public const string TipBuildBank = "Build current bank";
-    public const string TipSetPlayhead = "Set this marker to the start position";
+    public const string TipSetPlayhead = "Set this marker to start";
     public const string TipRevertToSaved = "Restore the last saved value";
     public const string TipBackupRestore = "Reverts files to their pre-build state.";
     
@@ -154,7 +157,7 @@ public static class Str
     public const string FilterAudioFiles = "Audio files";
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
-    public const string TipWaveHotkeys = "Space — play / stop\nP — pause / resume\nLeft / Right — move the playback head\nClick or drag — set the start position\nCtrl + wheel — zoom at the cursor\nMiddle-drag — pan the waveform\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap a region edge to it\nShift + hover a label — focus that marker\nShift + drag — move the focused marker\nShift + wheel — raise / lower its label row";
+    public const string TipWaveHotkeys = "Space: play / stop\nP: pause / resume\nLeft / Right: move the playback head\nClick or drag: set the start position\nClick a label: set the start to that marker\nCtrl + wheel: zoom at the cursor\nMiddle-drag: pan the waveform\nCtrl + Left-click: set play region start\nCtrl + Right-click: set play region end\nCtrl + click a label: snap a region edge to it\nShift + hover a label: focus that marker\nShift + drag: move the focused marker\nShift + wheel: raise / lower its label row";
     public const string MenuCut = "Cut";
     public const string MenuCopy = "Copy";
     public const string MenuPaste = "Paste";

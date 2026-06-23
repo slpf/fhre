@@ -20,7 +20,15 @@ public sealed class AppSettings
     public Dictionary<string, string> MarkerDefaults { get; set; } = new();
 
     public Dictionary<string, int> WaveformLabelRows { get; set; } = new();
+
+    public Dictionary<string, WinSize> WindowSizes { get; set; } = new();
     public static int RecommendedParallelism => Math.Max(1, Environment.ProcessorCount * 3 / 4);
+}
+
+public sealed class WinSize
+{
+    public double W { get; set; }
+    public double H { get; set; }
 }
 
 public static class SettingsService

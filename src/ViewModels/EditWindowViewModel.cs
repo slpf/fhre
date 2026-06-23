@@ -14,6 +14,8 @@ public sealed partial class MarkerField : ObservableObject
     public int SampleRate { get; init; }
     public long SampleLength { get; init; }
     public long InitialPosition { get; init; }
+    public string? LoopEndName { get; init; }
+    public bool CanLoop => LoopEndName is not null;
 
     [ObservableProperty] private long _position;
     [ObservableProperty] private bool _highlighted;
@@ -206,7 +208,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
                     };
                 }
 
-                grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position });
+                grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position,
+                    LoopEndName = name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", _ => null } });
             }
 
             Groups.Add(grp);

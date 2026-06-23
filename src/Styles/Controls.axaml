@@ -66,12 +66,12 @@
     <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow_hover.png"/>
   </Style>
   
-  <Style Selector="Button.mbutton Image.revert">
-    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow.png"/>
+  <Style Selector="Button.mbutton Image.loop">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_mloop.png"/>
   </Style>
   
-  <Style Selector="Button.mbutton:pointerover Image.revert">
-    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_arrow_hover.png"/>
+  <Style Selector="Button.mbutton:pointerover Image.loop">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_mloop_hover.png"/>
   </Style>
   
   <Style Selector="Button.act">

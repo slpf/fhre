@@ -14,6 +14,10 @@ public partial class WaveformWindow : Window
     private readonly List<(MarkerField Marker, long Position)> _snapshot = [];
     private double _startSec;
     private double _headSec;
+    private bool _looping;
+    private double _loopStart;
+    private double _loopEnd;
+    private readonly HashSet<Key> _down = [];
     private MarkerField? _hoverField;
     private bool _shiftHeld;
 
@@ -49,6 +53,7 @@ public partial class WaveformWindow : Window
 
         Opened += (_, _) =>
         {
+            WindowMemory.Restore(this, Vm.Settings, "Waveform");
             Wave.LabelRows = Vm.Settings?.WaveformLabelRows;
 
             _snapshot.Clear();
@@ -64,6 +69,7 @@ public partial class WaveformWindow : Window
 
         Closed += (_, _) =>
         {
+            WindowMemory.Save(this, Vm.Settings, "Waveform");
             _timer.Stop();
             _player.Dispose();
 
@@ -109,7 +115,7 @@ public partial class WaveformWindow : Window
             : Math.Max(0, frame);
     }
 
-    private void StartPlaybackFromHead()
+    private void StartPlayback(double fromSec, bool loop)
     {
         var wav = Vm.WavPath;
         if (string.IsNullOrEmpty(wav) || !File.Exists(wav))
@@ -117,43 +123,25 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        if (_headSec < RegionStartSec - 0.001 || _headSec >= RegionEndSec)
-        {
-            _headSec = RegionStartSec;
-        }
-
+        _looping = loop;
         _player.Play(wav, 0);
-        _player.Position = TimeSpan.FromSeconds(_headSec);
+        _player.Position = TimeSpan.FromSeconds(Math.Max(0, fromSec));
+        _headSec = fromSec;
         _timer.Start();
+        UpdateUi();
     }
 
-    private void OnPlayPause(object? sender, RoutedEventArgs e)
+    private void StopPlayback()
     {
-        var wav = Vm.WavPath;
-        if (string.IsNullOrEmpty(wav) || !File.Exists(wav))
-        {
-            return;
-        }
+        _looping = false;
+        _player.Stop();
+        _headSec = _startSec;
+        UpdateUi();
+    }
 
-        if (_player.IsPlaying)
-        {
-            _player.TogglePause();
-        }
-        else if (_player.IsPaused)
-        {
-            var pos = _player.Position.TotalSeconds;
-
-            if (pos < RegionStartSec - 0.001 || pos >= RegionEndSec)
-            {
-                _player.Position = TimeSpan.FromSeconds(RegionStartSec);
-            }
-
-            _player.TogglePause();
-        }
-        else
-        {
-            StartPlaybackFromHead();
-        }
+    private void Resume()
+    {
+        _player.TogglePause();
 
         if (_player.IsPlaying)
         {
@@ -163,40 +151,11 @@ public partial class WaveformWindow : Window
         UpdateUi();
     }
 
-    private void PlayStop()
-    {
-        var wav = Vm.WavPath;
-        if (string.IsNullOrEmpty(wav) || !File.Exists(wav))
-        {
-            return;
-        }
-
-        if (_player.IsPlaying)
-        {
-            _player.Stop();
-            _headSec = _startSec;
-            UpdateUi();
-            return;
-        }
-
-        StartPlaybackFromHead();
-        UpdateUi();
-    }
-
     private void PauseToggle()
     {
         if (!_player.HasMedia)
         {
             return;
-        }
-
-        if (_player.IsPaused)
-        {
-            var pos = _player.Position.TotalSeconds;
-            if (pos < RegionStartSec - 0.001 || pos >= RegionEndSec)
-            {
-                _player.Position = TimeSpan.FromSeconds(RegionStartSec);
-            }
         }
 
         _player.TogglePause();
@@ -209,8 +168,108 @@ public partial class WaveformWindow : Window
         UpdateUi();
     }
 
+    private void PlayStop()
+    {
+        if (_player.IsPlaying || _player.IsPaused)
+        {
+            StopPlayback();
+        }
+        else
+        {
+            StartPlayback(_startSec, loop: false);
+        }
+    }
+
+    private void StartLoop(double startSec, double endSec)
+    {
+        if (endSec <= startSec)
+        {
+            return;
+        }
+
+        _loopStart = startSec;
+        _loopEnd = endSec;
+        StartPlayback(startSec, loop: true);
+    }
+
+    private void LoopToggle()
+    {
+        if (_looping && (_player.IsPlaying || _player.IsPaused))
+        {
+            StopPlayback();
+        }
+        else
+        {
+            StartLoop(RegionStartSec, EffectiveEndSec(Total()));
+        }
+    }
+
+    private void OnPlayMarkerLoop(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { Tag: MarkerField start } || start.LoopEndName is null || Vm.SampleRate <= 0)
+        {
+            return;
+        }
+
+        MarkerField? end = null;
+
+        foreach (var m in Vm.AllMarkers)
+        {
+            if (m.Name == start.LoopEndName)
+            {
+                end = m;
+                break;
+            }
+        }
+
+        if (end is null || start.Position < 0 || end.Position < 0)
+        {
+            return;
+        }
+
+        StartLoop((double) start.Position / Vm.SampleRate, (double) end.Position / Vm.SampleRate);
+    }
+
+    private void OnPlay(object? sender, RoutedEventArgs e)
+    {
+        if (_player.IsPaused)
+        {
+            Resume();
+        }
+        else
+        {
+            StartPlayback(_startSec, loop: false);
+        }
+    }
+
+    private void OnPause(object? sender, RoutedEventArgs e) => PauseToggle();
+
+    private void OnStop(object? sender, RoutedEventArgs e) => StopPlayback();
+
+    private void OnPlayLoop(object? sender, RoutedEventArgs e) => StartLoop(RegionStartSec, EffectiveEndSec(Total()));
+
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        if (FocusManager?.GetFocusedElement() is TextBox)
+        {
+            if (e.Key == Key.Escape)
+            {
+                Wave.Focus();
+                e.Handled = true;
+            }
+
+            return;
+        }
+
+        if (e.Key is Key.Space or Key.P or Key.L)
+        {
+            if (!_down.Add(e.Key))
+            {
+                e.Handled = true;
+                return;
+            }
+        }
+
         switch (e.Key)
         {
             case Key.Space:
@@ -223,6 +282,11 @@ public partial class WaveformWindow : Window
                 e.Handled = true;
                 break;
 
+            case Key.L:
+                LoopToggle();
+                e.Handled = true;
+                break;
+
             case Key.Left:
                 Nudge(-SeekStep);
                 e.Handled = true;
@@ -231,15 +295,6 @@ public partial class WaveformWindow : Window
             case Key.Right:
                 Nudge(SeekStep);
                 e.Handled = true;
-                break;
-
-            case Key.Escape:
-                if (FocusManager?.GetFocusedElement() is TextBox)
-                {
-                    Wave.Focus();
-                    e.Handled = true;
-                }
-
                 break;
 
             case Key.LeftShift:
@@ -260,6 +315,8 @@ public partial class WaveformWindow : Window
 
     private void OnPreviewKeyUp(object? sender, KeyEventArgs e)
     {
+        _down.Remove(e.Key);
+
         if (e.Key is Key.LeftShift or Key.RightShift)
         {
             _shiftHeld = false;
@@ -283,13 +340,40 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        var end = EffectiveEndSec(total);
+        var lo = RegionStartSec;
+        var hi = EffectiveEndSec(total);
         var baseSec = _player.HasMedia ? _player.Position.TotalSeconds : _headSec;
-        _headSec = Math.Clamp(baseSec + deltaSec, _startSec, end);
+
+        double target;
+
+        if (baseSec < lo)
+        {
+            if (deltaSec < 0)
+            {
+                return;
+            }
+
+            target = Math.Min(baseSec + deltaSec, hi);
+        }
+        else if (baseSec > hi)
+        {
+            if (deltaSec > 0)
+            {
+                return;
+            }
+
+            target = Math.Max(baseSec + deltaSec, lo);
+        }
+        else
+        {
+            target = Math.Clamp(baseSec + deltaSec, lo, hi);
+        }
+
+        _headSec = target;
 
         if (_player.HasMedia)
         {
-            _player.Position = TimeSpan.FromSeconds(_headSec);
+            _player.Position = TimeSpan.FromSeconds(target);
         }
 
         UpdateUi();
@@ -306,11 +390,10 @@ public partial class WaveformWindow : Window
 
         var end = EffectiveEndSec(total);
         _startSec = Math.Clamp(fraction * total, RegionStartSec, end);
-        _headSec = _startSec;
 
-        if (_player.HasMedia)
+        if (!_player.IsPlaying && !_player.IsPaused)
         {
-            _player.Position = TimeSpan.FromSeconds(_headSec);
+            _headSec = _startSec;
         }
 
         UpdateUi();
@@ -318,9 +401,19 @@ public partial class WaveformWindow : Window
 
     private void OnTick(object? sender, EventArgs e)
     {
-        if (_player.HasMedia && _player.IsPlaying && _player.Position.TotalSeconds >= RegionEndSec)
+        if (_player.HasMedia && _player.IsPlaying)
         {
-            ResetToStart();
+            if (_looping)
+            {
+                if (_player.Position.TotalSeconds >= _loopEnd)
+                {
+                    _player.Position = TimeSpan.FromSeconds(_loopStart);
+                }
+            }
+            else if (_player.Position.TotalSeconds >= RegionEndSec)
+            {
+                StopPlayback();
+            }
         }
 
         UpdateUi();
@@ -344,12 +437,6 @@ public partial class WaveformWindow : Window
             {
                 total = dur;
             }
-
-            SetPlaying(_player.IsPlaying);
-        }
-        else
-        {
-            SetPlaying(false);
         }
 
         Wave.PlayFraction = total > 0 ? Math.Clamp(_headSec / total, 0, 1) : -1;
@@ -359,12 +446,6 @@ public partial class WaveformWindow : Window
 
         TimeText.Text =
             $"{Fmt(TimeSpan.FromSeconds(_startSec))} / {Fmt(TimeSpan.FromSeconds(_headSec))} / {Fmt(TimeSpan.FromSeconds(end))}";
-    }
-
-    private void SetPlaying(bool playing)
-    {
-        PlayIcon.IsVisible = !playing;
-        PauseIcon.IsVisible = playing;
     }
 
     private static string Fmt(TimeSpan t) =>
@@ -396,29 +477,23 @@ public partial class WaveformWindow : Window
 
     private void OnRegionChanged()
     {
-        if (_player.HasMedia)
-        {
-            _player.Stop();
-        }
-
         var total = Total();
         var end = EffectiveEndSec(total);
         _startSec = Math.Clamp(_startSec, RegionStartSec, end > RegionStartSec ? end : RegionStartSec);
-        _headSec = Math.Clamp(_headSec, _startSec, end > _startSec ? end : _startSec);
         UpdateUi();
-    }
-
-    private void ResetToStart()
-    {
-        _headSec = _startSec;
-        _player.Stop();
     }
 
     private void OnPlaybackEnded() =>
         Dispatcher.UIThread.Post(() =>
         {
-            ResetToStart();
-            UpdateUi();
+            if (_looping)
+            {
+                StartPlayback(_loopStart, loop: true);
+            }
+            else
+            {
+                StopPlayback();
+            }
         });
 
     private void OnFieldNamePressed(object? sender, PointerPressedEventArgs e)

@@ -25,7 +25,10 @@ public partial class App : Application
             {
                 DataContext = new MainWindowViewModel(settings)
             };
-            
+
+            WindowMemory.Restore(window, settings, "Main");
+            window.Closing += (_, _) => WindowMemory.Save(window, settings, "Main");
+
             desktop.MainWindow = window;
             
             desktop.Exit += (_, _) =>

@@ -145,7 +145,9 @@ public partial class MainWindow : Window
         var gamePath = Vm.Settings.GamePath;
         var vm = new BackupsViewModel(gamePath, Vm.SelectedStation);
         var w = new BackupsWindow { DataContext = vm };
+        WindowMemory.Restore(w, Vm.Settings, "Backups");
         await w.ShowDialog(this);
+        WindowMemory.Save(w, Vm.Settings, "Backups");
 
         if (w.RestoreTarget is not { } target)
         {

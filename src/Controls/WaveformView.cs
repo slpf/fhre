@@ -314,7 +314,18 @@ public sealed class WaveformView : Control
 
         _seeking = true;
         e.Pointer.Capture(this);
-        RaiseSeek(pt.X);
+
+        var hit = HitLabel(pt);
+
+        if (hit is not null && hit.Position >= 0)
+        {
+            RaiseSeekFrame(hit.Position);
+        }
+        else
+        {
+            RaiseSeek(pt.X);
+        }
+
         e.Handled = true;
     }
 
@@ -465,6 +476,12 @@ public sealed class WaveformView : Control
     {
         var sample = SampleAt(x);
         var frac = SampleLength > 1 ? sample / (SampleLength - 1) : 0;
+        SeekRequested?.Invoke(Math.Clamp(frac, 0, 1));
+    }
+
+    private void RaiseSeekFrame(long frame)
+    {
+        var frac = SampleLength > 1 ? (double) frame / (SampleLength - 1) : 0;
         SeekRequested?.Invoke(Math.Clamp(frac, 0, 1));
     }
 
