@@ -180,6 +180,70 @@ public partial class MainWindow : Window
         });
     }
 
+    private async void OnRestoreStation(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedStation is not { } station)
+        {
+            Vm.Status = Str.StatusBackupNoStation;
+            return;
+        }
+
+        var gamePath = Vm.Settings.GamePath;
+
+        if (!GameScanner.IsValid(gamePath))
+        {
+            return;
+        }
+
+        if (!BackupService.Has(gamePath))
+        {
+            Vm.Status = Str.StatusRestoreNoOriginal;
+            return;
+        }
+
+        var running = await Task.Run(Vm.IsGameRunning);
+
+        if (running)
+        {
+            await MessageDialog.ShowAsync(this, Str.DlgGameRunningTitle, Str.DlgFilesInUseBody);
+            return;
+        }
+
+        var proceed = await MessageDialog.ShowAsync(this, Str.DlgRestoreStationTitle,
+            string.Format(Str.DlgRestoreStationBody, station.Name),
+            okText: Str.DlgRestoreStationOk, cancelText: Str.DlgRestoreStationCancel);
+
+        if (!proceed)
+        {
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Vm.IsBackingUp = true;
+            Vm.Status = Str.StatusBackupRestoring;
+        });
+
+        string status;
+
+        try
+        {
+            var (banks, langs) = await Task.Run(() => BackupService.RestoreStation(gamePath, station, Log.Line));
+            await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
+            status = string.Format(Str.StatusRestoreStationFmt, station.Name, banks, langs);
+        }
+        catch (Exception ex)
+        {
+            status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Vm.Status = status;
+            Vm.IsBackingUp = false;
+        });
+    }
+
     private void OnPreviewPressed(object? sender, PointerPressedEventArgs e) => _toggleMods = e.KeyModifiers;
 
     private void OnToggle(object? sender, RoutedEventArgs e)

@@ -171,6 +171,7 @@ public static class Str
 
     public const string TipSaveBackup = "Save station backup";
     public const string TipBackups = "Station backups";
+    public const string TipRestoreStation = "Restore this station to the game original";
     public const string TitleBackups = "Station backups";
     public const string BackupNameTitle = "Station backup";
     public const string BackupNameWatermark = "Enter a name for this backup";
@@ -196,5 +197,11 @@ public static class Str
     public const string StatusBackupFailedFmt = "Backup failed: {0}";
     public const string StatusBackupSaving = "Saving backup…";
     public const string StatusBackupRestoring = "Restoring backup…";
+    public const string StatusRestoreNoOriginal = "No original backup found. Build at least once first.";
+    public const string StatusRestoreStationFmt = "Restored {0}: {1} banks, {2} languages.";
+    public const string DlgRestoreStationTitle = "Restore station to original";
+    public const string DlgRestoreStationBody = "Replace \"{0}\" with the original game banks and metadata? Any custom tracks and edits on this station will be lost. Other stations are not affected.";
+    public const string DlgRestoreStationOk = "Restore";
+    public const string DlgRestoreStationCancel = "Cancel";
     public const string StatusBackupRestoredFmt = "Backup restored: {0}";
 }

@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using FH6RB.Core;
 
 namespace FH6RB.Services;
@@ -69,6 +70,94 @@ public static class BackupService
         }
 
         return false;
+    }
+
+    public static (int Banks, int Langs) RestoreStation(string gamePath, StationInfo station, Action<string>? log = null)
+    {
+        var banks = 0;
+        var langs = 0;
+
+        foreach (var variant in station.Variants)
+        {
+            var bankName = station.BankName(variant);
+            var dst = GameScanner.BankPath(gamePath, bankName);
+
+            if (dst is null)
+            {
+                log?.Invoke($"restore: bank not found {bankName}");
+                continue;
+            }
+
+            var bak = dst + ".bak";
+
+            if (!File.Exists(bak))
+            {
+                log?.Invoke($"restore: no original for {bankName}");
+                continue;
+            }
+
+            try
+            {
+                File.Copy(bak, dst, overwrite: true);
+                banks++;
+                log?.Invoke($"restored bank {bankName}");
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke($"restore bank FAILED {bankName}: {ex.Message}");
+            }
+        }
+
+        foreach (var langFile in GameScanner.LanguageFiles(gamePath))
+        {
+            var path = GameScanner.RadioInfoPathByFile(gamePath, langFile);
+
+            if (path is null)
+            {
+                continue;
+            }
+
+            var bak = path + ".bak";
+
+            if (!File.Exists(bak))
+            {
+                continue;
+            }
+
+            try
+            {
+                var original = RadioInfo.Load(bak);
+                var orig = original.Document.Descendants("RadioStation")
+                    .FirstOrDefault(s => (int?) s.Attribute("Number") == station.Number);
+
+                if (orig is null)
+                {
+                    log?.Invoke("restore xml: station not in original");
+                    continue;
+                }
+
+                var radio = RadioInfo.Load(path);
+                var live = radio.Document.Descendants("RadioStation")
+                    .FirstOrDefault(s => (int?) s.Attribute("Number") == station.Number);
+
+                if (live is null)
+                {
+                    log?.Invoke("restore xml: station not found");
+                    continue;
+                }
+
+                live.ReplaceWith(new XElement(orig));
+                radio.Save(path);
+                langs++;
+                log?.Invoke("restored xml");
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke($"restore xml FAILED: {ex.Message}");
+            }
+        }
+
+        return (banks, langs);
     }
 
     public static (int Restored, int Failed) Restore(string gamePath, Action<string>? log = null)

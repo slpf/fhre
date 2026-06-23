@@ -53,6 +53,12 @@
                         <Image Source="avares://FH6RB/Assets/icons/icon_backups.png" Width="20" Height="20"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Button>
+                    <Button Grid.Column="2" HorizontalAlignment="Left" Classes="act" Click="OnRestoreStation"
+                            ToolTip.Tip="{x:Static assets:Str.TipRestoreStation}"
+                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_revert.png" Width="28" Height="28"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Button>
                     <Button Grid.Column="3" Classes="act" Click="OnResetAllMarkers" ToolTip.Tip="{x:Static assets:Str.TipResetAllMarkers}"
                             Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
                         <Image Source="avares://FH6RB/Assets/icons/icon_pin_reset.png" Width="18" Height="18"
