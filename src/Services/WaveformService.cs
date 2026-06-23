@@ -66,6 +66,101 @@ public static class WaveformService
         return (rate, dataLen / (2 * channels));
     }
 
+    public static float[] Samples(string wavPath)
+    {
+        using var fs = File.OpenRead(wavPath);
+        using var br = new BinaryReader(fs);
+
+        if (fs.Length < 44 || new string(br.ReadChars(4)) != "RIFF")
+        {
+            return [];
+        }
+
+        br.ReadInt32();
+
+        if (new string(br.ReadChars(4)) != "WAVE")
+        {
+            return [];
+        }
+
+        int channels = 2, bits = 16;
+        long dataPos = -1, dataLen = 0;
+
+        while (fs.Position + 8 <= fs.Length)
+        {
+            var id = new string(br.ReadChars(4));
+            var sz = br.ReadInt32();
+
+            if (sz < 0)
+            {
+                break;
+            }
+
+            if (id == "fmt ")
+            {
+                br.ReadInt16();
+                channels = br.ReadInt16();
+                br.ReadInt32();
+                br.ReadInt32();
+                br.ReadInt16();
+                bits = br.ReadInt16();
+
+                if (sz > 16)
+                {
+                    fs.Position += sz - 16;
+                }
+            }
+            else if (id == "data")
+            {
+                dataPos = fs.Position;
+                dataLen = Math.Min(sz, fs.Length - fs.Position);
+                fs.Position += dataLen;
+            }
+            else
+            {
+                fs.Position += sz;
+            }
+
+            if ((sz & 1) == 1 && fs.Position < fs.Length)
+            {
+                fs.Position += 1;
+            }
+        }
+
+        if (dataPos < 0 || bits != 16 || channels < 1)
+        {
+            return [];
+        }
+
+        var frameBytes = 2 * channels;
+        fs.Position = dataPos;
+
+        var data = br.ReadBytes((int) Math.Min(dataLen, int.MaxValue));
+        var frames = data.Length / frameBytes;
+
+        if (frames <= 0)
+        {
+            return [];
+        }
+
+        var samples = new float[frames];
+
+        for (var f = 0; f < frames; f++)
+        {
+            var off = f * frameBytes;
+            var sum = 0;
+
+            for (var c = 0; c < channels; c++)
+            {
+                sum += (short) (data[off + c * 2] | (data[off + c * 2 + 1] << 8));
+            }
+
+            samples[f] = sum / (float) channels / 32768f;
+        }
+
+        return samples;
+    }
+
     public static float[] Peaks(string wavPath, int buckets)
     {
         if (buckets < 1)

@@ -74,9 +74,10 @@ public static class MarkerDefaults
 
     public static Dictionary<string, string> Snapshot() => new(Current);
 
-    public static bool TryParse(string? spec, out bool percent, out double value)
+    public static bool TryParse(string? spec, out bool percent, out bool samples, out double value)
     {
         percent = false;
+        samples = false;
         value = 0;
 
         var t = spec?.Trim();
@@ -91,20 +92,27 @@ public static class MarkerDefaults
             percent = true;
             t = t[..^1].Trim();
         }
+        else if (t.EndsWith('s') || t.EndsWith('S'))
+        {
+            samples = true;
+            t = t[..^1].Trim();
+        }
 
         return double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
     public static long Resolve(string? spec, long length, int sampleRate)
     {
-        if (length <= 0 || !TryParse(spec, out var percent, out var value))
+        if (length <= 0 || !TryParse(spec, out var percent, out var samples, out var value))
         {
             return -1;
         }
 
-        var off = percent
-            ? (long) Math.Round(value / 100.0 * length)
-            : (long) Math.Round(value * sampleRate);
+        var off = samples
+            ? (long) Math.Round(value)
+            : percent
+                ? (long) Math.Round(value / 100.0 * length)
+                : (long) Math.Round(value * sampleRate);
 
         var frame = value < 0 ? length + off : off;
 

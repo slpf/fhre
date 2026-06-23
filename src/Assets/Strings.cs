@@ -50,7 +50,7 @@ public static class Str
     public const string TipEnable = "Enable";
     public const string TipAddTrack = "Add track";
     public const string TipBuildBank = "Build current bank";
-    public const string TipSetPlayhead = "Set to current playback time";
+    public const string TipSetPlayhead = "Set this marker to the start position";
     public const string TipRevertToSaved = "Restore the last saved value";
     public const string TipBackupRestore = "Reverts files to their pre-build state.";
     
@@ -154,7 +154,7 @@ public static class Str
     public const string FilterAudioFiles = "Audio files";
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
-    public const string TipWaveHotkeys = "Click or drag — move playhead\nDrag a marker — move it\nShift + hover a label — focus that marker\nShift + wheel — raise / lower its label row\nShift + drag — move the focused marker\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap region edge to it";
+    public const string TipWaveHotkeys = "Space — play / stop\nP — pause / resume\nLeft / Right — move the playback head\nClick or drag — set the start position\nCtrl + wheel — zoom at the cursor\nMiddle-drag — pan the waveform\nCtrl + Left-click — set play region start\nCtrl + Right-click — set play region end\nCtrl + click a label — snap a region edge to it\nShift + hover a label — focus that marker\nShift + drag — move the focused marker\nShift + wheel — raise / lower its label row";
     public const string MenuCut = "Cut";
     public const string MenuCopy = "Copy";
     public const string MenuPaste = "Paste";

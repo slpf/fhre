@@ -31,7 +31,7 @@ public sealed class PlaybackService : IDisposable
             Volume = Lin(volumeDb)
         };
         
-        _out = new WaveOutEvent();
+        _out = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 4 };
         _out.PlaybackStopped += OnStopped;
         _out.Init(_reader);
         _out.Play();

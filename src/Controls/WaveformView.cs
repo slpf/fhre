@@ -25,6 +25,9 @@ public sealed class WaveformView : Control
     public static readonly StyledProperty<double> PlayFractionProperty =
         AvaloniaProperty.Register<WaveformView, double>(nameof(PlayFraction), -1);
 
+    public static readonly StyledProperty<double> StartFractionProperty =
+        AvaloniaProperty.Register<WaveformView, double>(nameof(StartFraction), -1);
+
     public static readonly StyledProperty<long> RegionStartProperty =
         AvaloniaProperty.Register<WaveformView, long>(nameof(RegionStart), -1);
 
@@ -35,6 +38,7 @@ public sealed class WaveformView : Control
     public IEnumerable? Markers { get => GetValue(MarkersProperty); set => SetValue(MarkersProperty, value); }
     public long SampleLength { get => GetValue(SampleLengthProperty); set => SetValue(SampleLengthProperty, value); }
     public double PlayFraction { get => GetValue(PlayFractionProperty); set => SetValue(PlayFractionProperty, value); }
+    public double StartFraction { get => GetValue(StartFractionProperty); set => SetValue(StartFractionProperty, value); }
     public long RegionStart { get => GetValue(RegionStartProperty); set => SetValue(RegionStartProperty, value); }
     public long RegionEnd { get => GetValue(RegionEndProperty); set => SetValue(RegionEndProperty, value); }
 
@@ -51,6 +55,7 @@ public sealed class WaveformView : Control
     private static readonly IPen MidPen = new Pen(new SolidColorBrush(Color.Parse("#2a2f37")), 1);
     private static readonly IPen MarkerPen = new Pen(new SolidColorBrush(Color.Parse("#e0b341")), 1.5);
     private static readonly IPen CursorPen = new Pen(new SolidColorBrush(Color.Parse("#23a55a")), 1.5);
+    private static readonly IPen StartPen = new Pen(new SolidColorBrush(Color.Parse("#c8d2e0")), 1.5) { DashStyle = DashStyle.Dash };
     private static readonly IBrush LabelBrush = new SolidColorBrush(Color.Parse("#e0b341"));
     private static readonly IBrush CutBrush = new SolidColorBrush(Color.Parse("#aa181b21"));
     private static readonly IPen RegionPen = new Pen(new SolidColorBrush(Color.Parse("#6f7785")), 1);
@@ -64,6 +69,10 @@ public sealed class WaveformView : Control
     private double _dragOffset;
     private bool _seeking;
     private int _regionDrag;
+    private double _viewStart;
+    private double _viewLen;
+    private bool _panning;
+    private double _panLastX;
     private MarkerField? _labelLock;
     private IBrush _hlBrush = new SolidColorBrush(Color.Parse("#f5356c"));
     private IPen _hlPen = new Pen(new SolidColorBrush(Color.Parse("#f5356c")), 2.5);
@@ -74,7 +83,7 @@ public sealed class WaveformView : Control
     static WaveformView()
     {
         AffectsRender<WaveformView>(PeaksProperty, MarkersProperty, SampleLengthProperty, PlayFractionProperty,
-            RegionStartProperty, RegionEndProperty);
+            StartFractionProperty, RegionStartProperty, RegionEndProperty);
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -150,6 +159,11 @@ public sealed class WaveformView : Control
             Hook(change.OldValue as IEnumerable, false);
             Hook(change.NewValue as IEnumerable, true);
         }
+        else if (change.Property == SampleLengthProperty)
+        {
+            _viewStart = 0;
+            _viewLen = 0;
+        }
         else if (change.Property == RegionStartProperty || change.Property == RegionEndProperty)
         {
             RegionChanged?.Invoke();
@@ -177,7 +191,58 @@ public sealed class WaveformView : Control
         }
     }
 
-    private double XOf(long pos) => SampleLength <= 1 ? 0 : pos / (double) (SampleLength - 1) * Bounds.Width;
+    private const double ZoomStep = 1.25;
+    private const double MinViewLen = 16;
+
+    private double Domain => Math.Max(1, SampleLength - 1);
+
+    private (double Start, double Len) View()
+    {
+        var dom = Domain;
+        var len = _viewLen <= 0 || _viewLen >= dom ? dom : Math.Max(_viewLen, Math.Min(MinViewLen, dom));
+        var start = Math.Clamp(_viewStart, 0, dom - len);
+        return (start, len);
+    }
+
+    private double XOf(long pos)
+    {
+        if (SampleLength <= 1 || Bounds.Width <= 0)
+        {
+            return 0;
+        }
+
+        var (vs, vl) = View();
+        return (pos - vs) / vl * Bounds.Width;
+    }
+
+    private double SampleAt(double x)
+    {
+        if (Bounds.Width <= 0)
+        {
+            return 0;
+        }
+
+        var (vs, vl) = View();
+        return Math.Clamp(vs + x / Bounds.Width * vl, 0, Domain);
+    }
+
+    private void ZoomAt(double mouseX, double deltaY)
+    {
+        var w = Bounds.Width;
+        if (w <= 0)
+        {
+            return;
+        }
+
+        var (vs, vl) = View();
+        var mx = Math.Clamp(mouseX, 0, w);
+        var sAt = vs + mx / w * vl;
+        var factor = deltaY > 0 ? 1.0 / ZoomStep : ZoomStep;
+        _viewLen = Math.Clamp(vl * factor, MinViewLen, Domain);
+        _viewStart = sAt - mx / w * _viewLen;
+        (_viewStart, _viewLen) = View();
+        InvalidateVisual();
+    }
 
     private MarkerField? HitLabel(Point pt)
     {
@@ -200,6 +265,15 @@ public sealed class WaveformView : Control
 
         var pt = e.GetPosition(this);
 
+        if (e.GetCurrentPoint(this).Properties.IsMiddleButtonPressed)
+        {
+            _panning = true;
+            _panLastX = pt.X;
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            return;
+        }
+
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && SampleLength > 1)
         {
             var props = e.GetCurrentPoint(this).Properties;
@@ -209,7 +283,7 @@ public sealed class WaveformView : Control
                 var snap = HitLabel(pt);
                 var frame = snap is not null
                     ? snap.Position
-                    : (long) Math.Round(Math.Clamp(pt.X, 0, Bounds.Width) / Bounds.Width * (SampleLength - 1));
+                    : (long) Math.Round(SampleAt(pt.X));
 
                 if (props.IsLeftButtonPressed)
                 {
@@ -232,7 +306,7 @@ public sealed class WaveformView : Control
             && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             _drag = _labelLock;
-            _dragOffset = pt.X - XOf(_drag.Position);
+            _dragOffset = pt.X - Math.Clamp(XOf(_drag.Position), 0, Bounds.Width);
             e.Pointer.Capture(this);
             e.Handled = true;
             return;
@@ -257,9 +331,19 @@ public sealed class WaveformView : Control
 
         var cursorX = e.GetPosition(this).X;
 
+        if (_panning)
+        {
+            var (_, vl) = View();
+            _viewStart -= (cursorX - _panLastX) / Bounds.Width * vl;
+            _panLastX = cursorX;
+            (_viewStart, _viewLen) = View();
+            InvalidateVisual();
+            return;
+        }
+
         if (_regionDrag != 0 && SampleLength > 1)
         {
-            var rf = (long) Math.Round(Math.Clamp(cursorX, 0, Bounds.Width) / Bounds.Width * (SampleLength - 1));
+            var rf = (long) Math.Round(SampleAt(cursorX));
 
             if (_regionDrag == 1)
             {
@@ -275,8 +359,7 @@ public sealed class WaveformView : Control
 
         if (_drag is not null && SampleLength > 1)
         {
-            var x = Math.Clamp(cursorX - _dragOffset, 0, Bounds.Width);
-            var frame = (long) Math.Round(x / Bounds.Width * (SampleLength - 1));
+            var frame = (long) Math.Round(SampleAt(cursorX - _dragOffset));
             _drag.Position = Math.Clamp(frame, 0, SampleLength - 1);
         }
         else if (_seeking)
@@ -289,7 +372,7 @@ public sealed class WaveformView : Control
     {
         base.OnPointerReleased(e);
 
-        if (_drag is null && !_seeking && _regionDrag == 0)
+        if (_drag is null && !_seeking && _regionDrag == 0 && !_panning)
         {
             return;
         }
@@ -298,6 +381,7 @@ public sealed class WaveformView : Control
         _dragOffset = 0;
         _seeking = false;
         _regionDrag = 0;
+        _panning = false;
         e.Pointer.Capture(null);
         e.Handled = true;
     }
@@ -305,6 +389,13 @@ public sealed class WaveformView : Control
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
         base.OnPointerWheelChanged(e);
+
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control) && SampleLength > 1 && Bounds.Width > 0)
+        {
+            ZoomAt(e.GetPosition(this).X, e.Delta.Y);
+            e.Handled = true;
+            return;
+        }
 
         if (!e.KeyModifiers.HasFlag(KeyModifiers.Shift) || LabelRows is null)
         {
@@ -372,8 +463,9 @@ public sealed class WaveformView : Control
 
     private void RaiseSeek(double x)
     {
-        var frac = Math.Clamp(x / Bounds.Width, 0, 1);
-        SeekRequested?.Invoke(frac);
+        var sample = SampleAt(x);
+        var frac = SampleLength > 1 ? sample / (SampleLength - 1) : 0;
+        SeekRequested?.Invoke(Math.Clamp(frac, 0, 1));
     }
 
     public override void Render(DrawingContext ctx)
@@ -397,27 +489,60 @@ public sealed class WaveformView : Control
         {
             var n = peaks.Length;
             var amax = mid - 2;
-            
-            for (var i = 0; i < n; i++)
+            var (vs, vl) = View();
+
+            for (var px = 0; px < (int) w; px++)
             {
-                var x = (i + 0.5) / n * w;
-                var a = Math.Clamp(peaks[i], 0f, 1f) * amax;
-                
-                if (a < 0.5)
+                var a = (int) (vs + px / w * vl);
+                var b = (int) (vs + (px + 1) / w * vl);
+                a = a < 0 ? 0 : a >= n ? n - 1 : a;
+                b = b < 0 ? 0 : b >= n ? n - 1 : b;
+                if (b < a) b = a;
+
+                var step = (b - a) / 2048 + 1;
+                var min = peaks[a];
+                var max = peaks[a];
+
+                for (var i = a; i <= b; i += step)
                 {
-                    a = 0.5;
+                    var s = peaks[i];
+                    if (s < min) min = s;
+                    if (s > max) max = s;
                 }
-                
-                ctx.DrawLine(WavePen, new Point(x, mid - a), new Point(x, mid + a));
+
+                var y0 = mid - Math.Clamp(max, -1f, 1f) * amax;
+                var y1 = mid - Math.Clamp(min, -1f, 1f) * amax;
+
+                if (y1 - y0 < 1)
+                {
+                    y0 -= 0.5;
+                    y1 += 0.5;
+                }
+
+                ctx.DrawLine(WavePen, new Point(px + 0.5, y0), new Point(px + 0.5, y1));
+            }
+        }
+
+        var sf = StartFraction;
+
+        if (sf is >= 0 and <= 1)
+        {
+            var sx = XOf((long) (sf * Domain));
+            if (sx >= 0 && sx <= w)
+            {
+                ctx.DrawLine(StartPen, new Point(sx, 0), new Point(sx, h));
             }
         }
 
         var pf = PlayFraction;
-        
+
         if (pf is >= 0 and <= 1)
         {
-            var cx = pf * w;
-            ctx.DrawLine(CursorPen, new Point(cx, 0), new Point(cx, h));
+            var cx = XOf((long) (pf * Domain));
+            if (cx >= 0 && cx <= w)
+            {
+                ctx.DrawLine(CursorPen, new Point(cx, 0), new Point(cx, h));
+            }
         }
 
         if (SampleLength > 1)
@@ -427,14 +552,14 @@ public sealed class WaveformView : Control
 
             if (rs > 0)
             {
-                var x0 = XOf(rs);
+                var x0 = Math.Clamp(XOf(rs), 0, w);
                 ctx.FillRectangle(CutBrush, new Rect(0, 0, x0, h));
                 ctx.DrawLine(RegionPen, new Point(x0, 0), new Point(x0, h));
             }
 
             if (re >= 0 && re < SampleLength - 1)
             {
-                var x1 = XOf(re);
+                var x1 = Math.Clamp(XOf(re), 0, w);
                 ctx.FillRectangle(CutBrush, new Rect(x1, 0, w - x1, h));
                 ctx.DrawLine(RegionPen, new Point(x1, 0), new Point(x1, h));
             }
@@ -458,10 +583,10 @@ public sealed class WaveformView : Control
                 }
 
                 var x = XOf(m.Position);
-                
+
                 var locked = ReferenceEquals(m, _labelLock);
 
-                if (!locked)
+                if (!locked && x >= 0 && x <= w)
                 {
                     ctx.DrawLine(MarkerPen, new Point(x, 0), new Point(x, h));
                 }

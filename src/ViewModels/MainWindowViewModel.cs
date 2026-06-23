@@ -417,7 +417,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 var wav = track.UsesFileSource
                     ? AudioDecoder.DecodeAdded(track.FileSource!, Settings)
                     : AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
-                var peaks = WaveformService.Peaks(wav, 1600);
+                var peaks = WaveformService.Samples(wav);
 
                 if (track.SampleLength <= 0 || track.SampleRate <= 0)
                 {

@@ -52,6 +52,19 @@ public sealed partial class MarkerField : ObservableObject
                 return;
             }
 
+            if (t.EndsWith('s') || t.EndsWith('S'))
+            {
+                var sp = t[..^1].Trim().Replace(',', '.');
+
+                if (SampleLength > 0 && double.TryParse(sp, NumberStyles.Float, CultureInfo.InvariantCulture, out var smp))
+                {
+                    var off = (long) Math.Round(smp);
+                    Position = Math.Clamp(smp < 0 ? SampleLength + off : off, 0, SampleLength - 1);
+                }
+
+                return;
+            }
+
             if (SampleRate > 0 && double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var sec))
             {
                 Position = sec < 0
