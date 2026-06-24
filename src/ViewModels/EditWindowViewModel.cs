@@ -7,6 +7,13 @@ using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
 
+public enum MarkerValueUnit
+{
+    Seconds,
+    Samples,
+    Percent
+}
+
 public sealed partial class MarkerField : ObservableObject
 {
     public string Name { get; init; } = "";
@@ -19,18 +26,40 @@ public sealed partial class MarkerField : ObservableObject
 
     [ObservableProperty] private long _position;
     [ObservableProperty] private bool _highlighted;
+    [ObservableProperty] private MarkerValueUnit _displayUnit;
 
     public bool IsOff => Position < 0;
+
+    public string ValueTip => Position < 0
+        ? Str.MarkerValueOff
+        : string.Format(CultureInfo.InvariantCulture, Str.MarkerValueTipFmt,
+            Position,
+            SampleRate > 0 ? (double) Position / SampleRate : 0,
+            SampleLength > 0 ? (double) Position / SampleLength * 100 : 0);
 
     public void Revert() => Position = InitialPosition;
     public void Reset() => Position = MarkerDefaults.Resolve(MarkerDefaults.Get(Name), SampleLength, SampleRate);
     
     public string SecondsText
     {
-        get => Position < 0 ? ""
-            : SampleRate > 0
-                ? ((double) Position / SampleRate).ToString("0.###", CultureInfo.InvariantCulture)
-                : Position.ToString(CultureInfo.InvariantCulture);
+        get
+        {
+            if (Position < 0)
+            {
+                return "";
+            }
+
+            return DisplayUnit switch
+            {
+                MarkerValueUnit.Samples => Position.ToString(CultureInfo.InvariantCulture) + "s",
+                MarkerValueUnit.Percent => SampleLength > 0
+                    ? ((double) Position / SampleLength * 100).ToString("0.###", CultureInfo.InvariantCulture) + "%"
+                    : "",
+                _ => SampleRate > 0
+                    ? ((double) Position / SampleRate).ToString("0.###", CultureInfo.InvariantCulture)
+                    : Position.ToString(CultureInfo.InvariantCulture)
+            };
+        }
         set
         {
             var t = value?.Trim();
@@ -80,7 +109,10 @@ public sealed partial class MarkerField : ObservableObject
     {
         OnPropertyChanged(nameof(IsOff));
         OnPropertyChanged(nameof(SecondsText));
+        OnPropertyChanged(nameof(ValueTip));
     }
+
+    partial void OnDisplayUnitChanged(MarkerValueUnit value) => OnPropertyChanged(nameof(SecondsText));
 }
 
 public sealed class MarkerGroup

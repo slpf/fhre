@@ -455,7 +455,25 @@ public partial class WaveformWindow : Window
 
     private TextBox? _ctxField;
 
-    private void OnFieldContextRequested(object? sender, ContextRequestedEventArgs e) => _ctxField = sender as TextBox;
+    private void OnFieldContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        _ctxField = sender as TextBox;
+
+        if (_ctxField?.ContextFlyout is MenuFlyout mf && _ctxField.DataContext is MarkerField f)
+        {
+            foreach (var item in mf.Items.OfType<MenuItem>())
+            {
+                if (item.Tag is "toSeconds")
+                {
+                    item.IsVisible = f.DisplayUnit != MarkerValueUnit.Seconds;
+                }
+                else if (item.Tag is "toSamples")
+                {
+                    item.IsVisible = f.DisplayUnit != MarkerValueUnit.Samples;
+                }
+            }
+        }
+    }
 
     private void OnFieldCut(object? sender, RoutedEventArgs e) => _ctxField?.Cut();
 
@@ -466,6 +484,18 @@ public partial class WaveformWindow : Window
     private void OnFieldRevert(object? sender, RoutedEventArgs e) => (_ctxField?.DataContext as MarkerField)?.Revert();
 
     private void OnFieldReset(object? sender, RoutedEventArgs e) => (_ctxField?.DataContext as MarkerField)?.Reset();
+
+    private void OnFieldToSeconds(object? sender, RoutedEventArgs e) => SetFieldUnit(MarkerValueUnit.Seconds);
+
+    private void OnFieldToSamples(object? sender, RoutedEventArgs e) => SetFieldUnit(MarkerValueUnit.Samples);
+
+    private void SetFieldUnit(MarkerValueUnit unit)
+    {
+        if (_ctxField?.DataContext is MarkerField f)
+        {
+            f.DisplayUnit = unit;
+        }
+    }
 
     private void OnLabelRowsChanged()
     {

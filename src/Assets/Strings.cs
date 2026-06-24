@@ -163,6 +163,10 @@ public static class Str
     public const string MenuPaste = "Paste";
     public const string MenuRevert = "Revert";
     public const string MenuReset = "Reset";
+    public const string MenuConvertSeconds = "Convert to seconds";
+    public const string MenuConvertSamples = "Convert to samples";
+    public const string MarkerValueOff = "Marker is off";
+    public const string MarkerValueTipFmt = "Samples: {0}\nSeconds: {1:0.###}\nPercent: {2:0.###}%";
     public const string TipResetMarkers = "Replace markers to custom-track defaults";
     public const string TipResetAllMarkers = "Reset markers for all custom and replaced tracks";
     public const string TitleMarkerDefaults = "Custom-track marker values";

@@ -115,6 +115,7 @@
                                                 <TextBox Grid.Column="2" Classes="field2" Tag="{Binding}"
                                                          Text="{Binding SecondsText, Mode=TwoWay}"
                                                          Watermark="{x:Static assets:Str.WatermarkOff}"
+                                                         ToolTip.Tip="{Binding ValueTip}"
                                                          ContextRequested="OnFieldContextRequested"
                                                          FontFamily="{DynamicResource MonoFont}" FontSize="12">
                                                     <TextBox.ContextFlyout>
@@ -125,6 +126,9 @@
                                                             <Separator/>
                                                             <MenuItem Header="{x:Static assets:Str.MenuRevert}" Click="OnFieldRevert"/>
                                                             <MenuItem Header="{x:Static assets:Str.MenuReset}" Click="OnFieldReset"/>
+                                                            <Separator/>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuConvertSeconds}" Tag="toSeconds" Click="OnFieldToSeconds"/>
+                                                            <MenuItem Header="{x:Static assets:Str.MenuConvertSamples}" Tag="toSamples" Click="OnFieldToSamples"/>
                                                         </MenuFlyout>
                                                     </TextBox.ContextFlyout>
                                                 </TextBox>
