@@ -767,17 +767,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 Log.Line("reload after build failed: " + ex);
             }
-#if DEBUG
-            try
-            {
-                await LufsCheck.RunAsync(bankPath, Tracks.Select(t => (t.SoundName, t.SubIndex)).ToList());
-            }
-            catch (Exception ex)
-            {
-                Log.Line("LUFS check failed: " + ex);
-            }
-#endif
-            
+
             System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
             GC.WaitForPendingFinalizers();
@@ -865,6 +855,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         foreach (var a in addedSamples.Where(a => a.IsReplacement))
         {
             ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
+            ed.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist);
         }
 
         var dead = 0;

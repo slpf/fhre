@@ -187,6 +187,7 @@ public static class StationBackupService
 
             try
             {
+                EnsureOriginal(dst);
                 File.Copy(src, dst, overwrite: true);
                 banks++;
                 log?.Invoke($"restored bank {v.BankName}");
@@ -226,6 +227,7 @@ public static class StationBackupService
                 }
 
                 live.ReplaceWith(XElement.Parse(File.ReadAllText(stored)));
+                EnsureOriginal(path);
                 radio.Save(path);
                 langs++;
                 log?.Invoke($"restored xml {LangCode(langFile)}");
@@ -247,6 +249,25 @@ public static class StationBackupService
             {
                 Directory.Delete(e.Folder, recursive: true);
             }
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    private static void EnsureOriginal(string path)
+    {
+        var bak = path + ".bak";
+
+        if (File.Exists(bak))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Copy(path, bak);
         }
         catch
         {

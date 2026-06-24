@@ -171,7 +171,7 @@ public static class Str
 
     public const string TipSaveBackup = "Save station backup";
     public const string TipBackups = "Station backups";
-    public const string TipRestoreStation = "Restore this station to the game original";
+    public const string TipRestoreStation = "Restore station to original";
     public const string TitleBackups = "Station backups";
     public const string BackupNameTitle = "Station backup";
     public const string BackupNameWatermark = "Enter a name for this backup";
