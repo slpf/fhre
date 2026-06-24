@@ -41,6 +41,7 @@ public partial class WaveformWindow : Window
         _timer.Tick += OnTick;
 
         Wave.SeekRequested += OnSeek;
+        Wave.HeadSeekRequested += OnHeadSeek;
         Wave.LabelRowsChanged += OnLabelRowsChanged;
         Wave.RegionChanged += OnRegionChanged;
         _player.Ended += OnPlaybackEnded;
@@ -170,7 +171,11 @@ public partial class WaveformWindow : Window
 
     private void PlayStop()
     {
-        if (_player.IsPlaying || _player.IsPaused)
+        if (_player.IsPaused)
+        {
+            Resume();
+        }
+        else if (_player.IsPlaying)
         {
             StopPlayback();
         }
@@ -394,6 +399,31 @@ public partial class WaveformWindow : Window
         if (!_player.IsPlaying && !_player.IsPaused)
         {
             _headSec = _startSec;
+        }
+
+        UpdateUi();
+    }
+
+    private void OnHeadSeek(double fraction)
+    {
+        if (!_player.IsPlaying && !_player.IsPaused)
+        {
+            return;
+        }
+
+        var total = Total();
+
+        if (total <= 0)
+        {
+            return;
+        }
+
+        var target = Math.Clamp(fraction * total, RegionStartSec, EffectiveEndSec(total));
+        _headSec = target;
+
+        if (_player.HasMedia)
+        {
+            _player.Position = TimeSpan.FromSeconds(target);
         }
 
         UpdateUi();

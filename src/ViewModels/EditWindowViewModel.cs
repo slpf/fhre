@@ -27,8 +27,10 @@ public sealed partial class MarkerField : ObservableObject
     [ObservableProperty] private long _position;
     [ObservableProperty] private bool _highlighted;
     [ObservableProperty] private MarkerValueUnit _displayUnit;
+    [ObservableProperty] private bool _locked;
 
     public bool IsOff => Position < 0;
+    public bool Editable => !Locked;
 
     public string ValueTip => Position < 0
         ? Str.MarkerValueOff
@@ -113,6 +115,8 @@ public sealed partial class MarkerField : ObservableObject
     }
 
     partial void OnDisplayUnitChanged(MarkerValueUnit value) => OnPropertyChanged(nameof(SecondsText));
+
+    partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(Editable));
 }
 
 public sealed class MarkerGroup

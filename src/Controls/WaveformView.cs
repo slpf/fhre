@@ -45,6 +45,7 @@ public sealed class WaveformView : Control
     public IDictionary<string, int>? LabelRows { get; set; }
 
     public event Action<double>? SeekRequested;
+    public event Action<double>? HeadSeekRequested;
     public event Action? LabelRowsChanged;
     public event Action? RegionChanged;
 
@@ -61,6 +62,8 @@ public sealed class WaveformView : Control
     private static readonly IPen RegionPen = new Pen(new SolidColorBrush(Color.Parse("#6f7785")), 1);
     private static readonly IBrush LabelLockBg = new SolidColorBrush(Color.Parse("#e0b341"));
     private static readonly IBrush LabelLockText = new SolidColorBrush(Color.Parse("#15181d"));
+    private static readonly IBrush LabelLockedBrush = new SolidColorBrush(Color.Parse("#dd7e6b"));
+    private static readonly IPen LockedPen = new Pen(new SolidColorBrush(Color.Parse("#dd7e6b")), 1.5);
     private static readonly Typeface LabelFace = new("Inter");
 
     private readonly List<(MarkerField Marker, Rect Rect)> _labels = [];
@@ -68,6 +71,7 @@ public sealed class WaveformView : Control
     private MarkerField? _drag;
     private double _dragOffset;
     private bool _seeking;
+    private bool _seekHead;
     private int _regionDrag;
     private double _viewStart;
     private double _viewLen;
@@ -302,7 +306,7 @@ public sealed class WaveformView : Control
             }
         }
 
-        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && _labelLock is not null && SampleLength > 1
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && _labelLock is not null && !_labelLock.Locked && SampleLength > 1
             && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             _drag = _labelLock;
@@ -312,10 +316,30 @@ public sealed class WaveformView : Control
             return;
         }
 
-        _seeking = true;
-        e.Pointer.Capture(this);
-
+        var press = e.GetCurrentPoint(this).Properties;
         var hit = HitLabel(pt);
+
+        if (press.IsRightButtonPressed)
+        {
+            if (hit is not null)
+            {
+                hit.Locked = !hit.Locked;
+                InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+
+            _seeking = true;
+            _seekHead = true;
+            e.Pointer.Capture(this);
+            RaiseHeadSeek(pt.X);
+            e.Handled = true;
+            return;
+        }
+
+        _seeking = true;
+        _seekHead = false;
+        e.Pointer.Capture(this);
 
         if (hit is not null && hit.Position >= 0)
         {
@@ -375,7 +399,14 @@ public sealed class WaveformView : Control
         }
         else if (_seeking)
         {
-            RaiseSeek(Math.Clamp(cursorX, 0, Bounds.Width));
+            if (_seekHead)
+            {
+                RaiseHeadSeek(Math.Clamp(cursorX, 0, Bounds.Width));
+            }
+            else
+            {
+                RaiseSeek(Math.Clamp(cursorX, 0, Bounds.Width));
+            }
         }
     }
 
@@ -391,6 +422,7 @@ public sealed class WaveformView : Control
         _drag = null;
         _dragOffset = 0;
         _seeking = false;
+        _seekHead = false;
         _regionDrag = 0;
         _panning = false;
         e.Pointer.Capture(null);
@@ -483,6 +515,13 @@ public sealed class WaveformView : Control
     {
         var frac = SampleLength > 1 ? (double) frame / (SampleLength - 1) : 0;
         SeekRequested?.Invoke(Math.Clamp(frac, 0, 1));
+    }
+
+    private void RaiseHeadSeek(double x)
+    {
+        var sample = SampleAt(x);
+        var frac = SampleLength > 1 ? sample / (SampleLength - 1) : 0;
+        HeadSeekRequested?.Invoke(Math.Clamp(frac, 0, 1));
     }
 
     public override void Render(DrawingContext ctx)
@@ -605,11 +644,11 @@ public sealed class WaveformView : Control
 
                 if (!locked && x >= 0 && x <= w)
                 {
-                    ctx.DrawLine(MarkerPen, new Point(x, 0), new Point(x, h));
+                    ctx.DrawLine(m.Locked ? LockedPen : MarkerPen, new Point(x, 0), new Point(x, h));
                 }
 
                 var label = new FormattedText(m.Name, CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight, LabelFace, 9, locked ? LabelLockText : LabelBrush);
+                    FlowDirection.LeftToRight, LabelFace, 9, locked ? LabelLockText : m.Locked ? LabelLockedBrush : LabelBrush);
 
                 var lx = Math.Min(x + 3, w - label.Width - 2);
                 

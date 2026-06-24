@@ -47,6 +47,10 @@
     <Setter Property="Background" Value="{DynamicResource BgInput}"/>
   </Style>
   
+  <Style Selector="Button.mbutton:disabled /template/ ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+  </Style>
+  
   <Style Selector="Button.mbutton Path">
     <Setter Property="Stroke" Value="{DynamicResource Inter}"/>
     <Setter Property="StrokeThickness" Value="2"/>

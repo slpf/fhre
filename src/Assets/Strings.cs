@@ -157,7 +157,7 @@ public static class Str
     public const string FilterAudioFiles = "Audio files";
 
     public const string TipMarkerDefaults = "Edit default custom-track marker values";
-    public const string TipWaveHotkeys = "Space: play / stop\nP: pause / resume\nLeft / Right: move the playback head\nClick or drag: set the start position\nClick a label: set the start to that marker\nCtrl + wheel: zoom at the cursor\nMiddle-drag: pan the waveform\nCtrl + Left-click: set play region start\nCtrl + Right-click: set play region end\nCtrl + click a label: snap a region edge to it\nShift + hover a label: focus that marker\nShift + drag: move the focused marker\nShift + wheel: raise / lower its label row";
+    public const string TipWaveHotkeys = "Space: play / stop\nP: pause / resume\nLeft / Right: move the playback head\nLeft-click or drag: set the start position\nRight-click or drag: move the playback head\nLeft-click a label: set the start to that marker\nRight-click a label: lock / unlock it\nCtrl + wheel: zoom at the cursor\nMiddle-drag: pan the waveform\nCtrl + Left-click: set play region start\nCtrl + Right-click: set play region end\nCtrl + click a label: snap a region edge to it\nShift + hover a label: focus that marker\nShift + drag: move the focused marker\nShift + wheel: raise / lower its label row";
     public const string MenuCut = "Cut";
     public const string MenuCopy = "Copy";
     public const string MenuPaste = "Paste";
