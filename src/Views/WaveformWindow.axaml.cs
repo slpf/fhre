@@ -233,6 +233,7 @@ public partial class WaveformWindow : Window
         }
 
         StartLoop((double) start.Position / Vm.SampleRate, (double) end.Position / Vm.SampleRate);
+        Wave.Focus();
     }
 
     private void OnPlay(object? sender, RoutedEventArgs e)
@@ -251,7 +252,11 @@ public partial class WaveformWindow : Window
 
     private void OnStop(object? sender, RoutedEventArgs e) => StopPlayback();
 
-    private void OnPlayLoop(object? sender, RoutedEventArgs e) => StartLoop(RegionStartSec, EffectiveEndSec(Total()));
+    private void OnPlayLoop(object? sender, RoutedEventArgs e)
+    {
+        StartLoop(RegionStartSec, EffectiveEndSec(Total()));
+        Wave.Focus();
+    }
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
