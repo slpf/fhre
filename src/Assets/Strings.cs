@@ -43,6 +43,9 @@ public static class Str
     public const string TipPause = "Pause";
     public const string TipStop = "Stop";
     public const string TipPlayLoop = "Play current region as loop";
+    public const string TipSuggestLoops = "Suggest seamless loops";
+    public const string MenuNoLoops = "No good loops found";
+    public const string StatusSuggesting = "Searching for loops…";
     public const string TipPlayMarkerLoop = "Play current marker as loop";
     public const string TipDelete = "Delete track";
     public const string TipReplaceAudio = "Replace track";

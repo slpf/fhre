@@ -142,6 +142,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
     public AppSettings? Settings { get; set; }
 
     public Func<Task<(float[]? Peaks, string? Wav)>>? PeaksLoader { get; set; }
+
+    [ObservableProperty] private bool _isSuggesting;
     private bool _peaksLoaded;
 
     public IEnumerable<MarkerField> AllMarkers => Groups.SelectMany(g => g.Fields);

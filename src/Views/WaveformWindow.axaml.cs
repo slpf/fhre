@@ -1,7 +1,12 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Threading;
+using FH6RB.Assets;
+using FH6RB.Core;
 using FH6RB.Services;
 using FH6RB.ViewModels;
 
@@ -207,6 +212,126 @@ public partial class WaveformWindow : Window
         {
             StartLoop(RegionStartSec, EffectiveEndSec(Total()));
         }
+    }
+
+    private async void OnSuggestLoops(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control ctrl || ctrl.Tag is not MarkerField start || start.LoopEndName is null || Vm.SampleRate <= 0)
+        {
+            return;
+        }
+
+        MarkerField? end = null;
+
+        foreach (var m in Vm.AllMarkers)
+        {
+            if (m.Name == start.LoopEndName)
+            {
+                end = m;
+                break;
+            }
+        }
+
+        if (end is null)
+        {
+            return;
+        }
+
+        var rate = Vm.SampleRate;
+
+        Vm.IsSuggesting = true;
+
+        List<LoopPair> pairs;
+
+        try
+        {
+            if (Vm.Peaks is null)
+            {
+                await Vm.EnsurePeaksAsync();
+            }
+
+            var samples = Vm.Peaks;
+            if (samples is null)
+            {
+                return;
+            }
+
+            pairs = await Task.Run(() => LoopFinder.Find(samples, rate, minDurationMultiplier: 0.1));
+        }
+        finally
+        {
+            Vm.IsSuggesting = false;
+        }
+
+        var headerBrush = Application.Current?.FindResource("Header") as IBrush;
+        var muteBrush = Application.Current?.FindResource("TxtMute") as IBrush;
+        var monoFont = Application.Current?.FindResource("MonoFont") as FontFamily;
+
+        var panel = new StackPanel { Spacing = 0 };
+        var flyout = new SuggestFlyout
+        {
+            Content = panel,
+            Placement = PlacementMode.BottomEdgeAlignedRight,
+        };
+
+        if (pairs.Count == 0)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = Str.MenuNoLoops,
+                Padding = new Thickness(14, 10),
+                Foreground = muteBrush,
+            });
+        }
+        else
+        {
+            var shown = 0;
+
+            foreach (var p in pairs)
+            {
+                var ss = p.LoopStart;
+                var es = p.LoopEnd;
+                var startSec = ss / (double) rate;
+                var endSec = es / (double) rate;
+                var lenSec = (es - ss) / (double) rate;
+
+                var btn = new Button
+                {
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    Padding = new Thickness(14, 8),
+                    Background = Brushes.Transparent,
+                    BorderThickness = new Thickness(0),
+                    Foreground = headerBrush,
+                    Content = new TextBlock
+                    {
+                        Text = $"{startSec:0.00}s ({ss})  \u2192  {endSec:0.00}s ({es})   \u00b7   Length: {lenSec:0.0}s   \u00b7   Match: {p.Score:0.000}",
+                        FontFamily = monoFont!,
+                        FontSize = 12,
+                        TextTrimming = TextTrimming.None,
+                    },
+                };
+
+                var captureStart = start;
+                var captureEnd = end;
+                btn.Click += (_, _) =>
+                {
+                    captureStart.Position = ss;
+                    captureEnd.Position = es;
+                    flyout.Hide();
+                };
+
+                panel.Children.Add(btn);
+                shown++;
+
+                if (shown >= 5)
+                {
+                    break;
+                }
+            }
+        }
+
+        flyout.ShowAt(ctrl);
     }
 
     private void OnPlayMarkerLoop(object? sender, RoutedEventArgs e)
@@ -612,4 +737,14 @@ public partial class WaveformWindow : Window
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close();
+
+    private sealed class SuggestFlyout : Flyout
+    {
+        protected override Control CreatePresenter()
+        {
+            var presenter = base.CreatePresenter()!;
+            presenter.MaxWidth = double.PositiveInfinity;
+            return presenter;
+        }
+    }
 }

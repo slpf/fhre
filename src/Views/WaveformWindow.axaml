@@ -108,13 +108,21 @@
                                                             IsHitTestVisible="False"
                                                             Background="{DynamicResource Line}"/>
                                                 </DockPanel>
-                                                <Button Grid.Column="1" Classes="mbutton" Width="18" Height="18" Margin="0,0,10,0"
-                                                        Click="OnPlayMarkerLoop" Tag="{Binding}"
-                                                        IsVisible="{Binding CanLoop}"
-                                                        ToolTip.Tip="{x:Static assets:Str.TipPlayMarkerLoop}">
-                                                    <Image Classes="loop" Width="18" Height="18"
-                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                </Button>
+                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,10,0"
+                                                            IsVisible="{Binding CanLoop}">
+                                                    <Button Classes="mbutton" Width="18" Height="18" Margin="0,0,6,0"
+                                                            Click="OnSuggestLoops" Tag="{Binding}"
+                                                            ToolTip.Tip="{x:Static assets:Str.TipSuggestLoops}">
+                                                        <Image Source="avares://FH6RB/Assets/icons/icon_pulse.png" Width="18" Height="18"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Button>
+                                                    <Button Classes="mbutton" Width="18" Height="18"
+                                                            Click="OnPlayMarkerLoop" Tag="{Binding}"
+                                                            ToolTip.Tip="{x:Static assets:Str.TipPlayMarkerLoop}">
+                                                        <Image Classes="loop" Width="18" Height="18"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Button>
+                                                </StackPanel>
                                                 <TextBox Grid.Column="2" Classes="field2" Tag="{Binding}"
                                                          IsEnabled="{Binding Editable}"
                                                          Text="{Binding SecondsText, Mode=TwoWay}"
@@ -159,6 +167,17 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                 <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
                 <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="0" Grid.RowSpan="3" IsVisible="{Binding IsSuggesting}"
+                Background="#D8161719">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
+                <Image Source="avares://FH6RB/Assets/icons/icon_processing.png" Width="56" Height="56"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       RenderTransformOrigin="50%,50%" Classes.spin="{Binding IsSuggesting}"/>
+                <TextBlock Text="{x:Static assets:Str.StatusSuggesting}" Foreground="{DynamicResource Header}"
+                           FontSize="14" HorizontalAlignment="Center" TextAlignment="Center"/>
             </StackPanel>
         </Border>
     </Grid>
