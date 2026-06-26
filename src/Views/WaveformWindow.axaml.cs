@@ -352,11 +352,38 @@ public partial class WaveformWindow : Window
         }
         else
         {
+            // Per-track calibration: a track whose best candidate scores 0.95 has
+            // higher intrinsic loopability than one whose best is 0.75 — the
+            // threshold should reflect that. Anchor at topScore - 0.05 with a
+            // [0.65, 0.85] window. Dynamic fill below steps it down further if
+            // we still don't have enough items.
+            var topScore = pairs[0].Score;
+            var calibrated = auto ? Math.Clamp(topScore - 0.05, 0.65, 0.85) : minMatch;
+
+            // Dynamic fill: if fewer than MinShown candidates clear the threshold,
+            // step it down until either we have enough items or we hit the floor.
+            const int MinShown = 3;
+            const double StepDown = 0.025;
+            const double MinThreshold = 0.50;
+
+            var effectiveMinMatch = Math.Min(minMatch, calibrated);
+            while (effectiveMinMatch > MinThreshold)
+            {
+                var count = 0;
+                foreach (var p in pairs)
+                {
+                    if (p.Score >= effectiveMinMatch) count++;
+                    if (count >= MinShown) break;
+                }
+                if (count >= MinShown) break;
+                effectiveMinMatch -= StepDown;
+            }
+
             var shown = 0;
 
             foreach (var p in pairs)
             {
-                if (p.Score < minMatch)
+                if (p.Score < effectiveMinMatch)
                 {
                     continue;
                 }

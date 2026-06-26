@@ -417,7 +417,7 @@ public static class LoopFinder
             // regress; worst case is a candidate gets no bonus.
             if (topN > 0)
             {
-                ApplyTopNBonuses(candidates, topN, chroma, power, onsetEnv, bpm, testOffset, weights, nFrames, rate);
+                ApplyTopNBonuses(candidates, topN, chroma, power, onsetEnv, mono, bpm, testOffset, weights, nFrames, rate);
             }
 
             AppendLoops(mono, rate, candidates, result, effOptions.MaxResults);
@@ -2390,7 +2390,7 @@ public static class LoopFinder
     // the data needed for the check is unavailable. Worst case: a candidate gets
     // no bonus and behaves identically to before.
     private static void ApplyTopNBonuses(List<Cand> candidates, int topN,
-        float[][] chroma, float[][] power, float[] onsetEnv, double bpm,
+        float[][] chroma, float[][] power, float[] onsetEnv, float[] mono, double bpm,
         int testOffset, double[] weights, int nFrames, int rate)
     {
         for (var i = 0; i < topN && i < candidates.Count; i++)
@@ -2399,12 +2399,22 @@ public static class LoopFinder
             var len = c.EndFrame - c.StartFrame;
             if (len <= 0) continue;
 
+            // Gate bonuses by base chroma score. Below 0.80, the chroma match is
+            // unreliable (typically one-off coincidences) — bonuses like
+            // cycle-consistency or multi-resolution can otherwise boost garbage
+            // loops into the top. Above 0.80, the chroma signal is meaningful and
+            // bonuses reinforce genuine periodicity.
+            if (c.Score < 0.80) continue;
+
             double bonus = 0;
             bonus += CycleConsistencyBonus(c.StartFrame, c.EndFrame, len, chroma, testOffset, weights, nFrames);
             bonus += MultiResolutionBonus(c.StartFrame, c.EndFrame, chroma, testOffset, weights, nFrames);
+            bonus += SsmLoopabilityBonus(c.StartFrame, c.EndFrame, len, chroma);
             bonus += PerBandEnergyBonus(c.StartFrame, c.EndFrame, len, power, rate);
+            bonus += VocalBandEnergyBonus(c.StartFrame, c.EndFrame, len, power, rate);
             bonus += OnsetBodyBonus(c.StartFrame, c.EndFrame, len, onsetEnv);
             bonus += TempoAlignedBonus(len, bpm, rate);
+            bonus += BoundaryClickScore(mono, (long) c.StartFrame * Hop, (long) c.EndFrame * Hop);
 
             if (bonus > 0)
             {
@@ -2472,6 +2482,26 @@ public static class LoopFinder
 
         var avg = sumCorr / counted;
         return Math.Max(0, (avg - 0.7) * 0.1);   // 0..+0.03
+    }
+
+    // Vocal-band energy correlation (300–3000 Hz). Captures the most common audible
+    // artifact of music-aligned-but-vocal-mismatched loops: vocal energy envelope
+    // doesn't match across the loop join, so the listener hears a sudden loudness or
+    // character change every cycle. Music alone often matches in chroma/MFCC while
+    // vocals in this band do not — this bonus surfaces those cases additively.
+    // Threshold is more relaxed than PerBandEnergyBonus because vocal content is
+    // noisier than bass.
+    private static double VocalBandEnergyBonus(int b1, int b2, int len, float[][] power, int rate)
+    {
+        var nFrames = power.Length;
+        if (b2 + len >= nFrames) return 0;
+
+        var vocalLo = Math.Max(1, (int)(300.0 * NFft / rate));
+        var vocalHi = Math.Min(Bins, Math.Max(vocalLo + 1, (int)(3000.0 * NFft / rate)));
+        if (vocalHi <= vocalLo) return 0;
+
+        var corr = RmsEnvelopeBandCorr(b1, b2, len, power, vocalLo, vocalHi);
+        return Math.Max(0, (corr - 0.5) * 0.1);   // 0..+0.05
     }
 
     private static double RmsEnvelopeBandCorr(int b1, int b2, int len, float[][] power, int binLo, int binHi)
@@ -2544,5 +2574,79 @@ public static class LoopFinder
         var bars = lenFrames / (beatFrames * 4.0);
         var dist = Math.Abs(bars - Math.Round(bars));
         return Math.Max(0, (0.25 - dist) * 0.2);   // 0..+0.05
+    }
+
+    // 1.7 SSM-based loopability: sample K positions along the loop direction and
+    // average their chroma cosine. A truly periodic region has high similarity at
+    // every offset (b1+k, b2+k); a one-off match only aligns at one point.
+    private static double SsmLoopabilityBonus(int b1, int b2, int len, float[][] chroma)
+    {
+        var chromaLen = chroma.Length;
+        if (b2 + len >= chromaLen) return 0;
+        if (len < 16) return 0;
+
+        var nSamples = Math.Min(5, Math.Max(2, len / 16));
+        double sumSim = 0;
+        var counted = 0;
+        for (var i = 0; i < nSamples; i++)
+        {
+            var p1 = b1 + (i * len) / nSamples;
+            var p2 = b2 + (i * len) / nSamples;
+            if (p2 + 1 >= chromaLen) break;
+            sumSim += CosineSingle(chroma[p1], chroma[p2]);
+            counted++;
+        }
+        if (counted < 2) return 0;
+        var avgSim = sumSim / counted;
+        return Math.Max(0, (avgSim - 0.7) * 0.1);   // 0..+0.03
+    }
+
+    private static double CosineSingle(float[] a, float[] b)
+    {
+        double dot = 0, na = 0, nb = 0;
+        for (var k = 0; k < a.Length; k++)
+        {
+            dot += a[k] * b[k];
+            na += a[k] * a[k];
+            nb += b[k] * b[k];
+        }
+        return dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
+    }
+
+    // 1.8 boundary crossfade discontinuity test. Take 50 ms before the loop end
+    // and 50 ms after the loop start, crossfade them at the midpoint, and measure
+    // the energy spike (max derivative). A click shows up as a sharp transient.
+    // Returns a bonus in [0, +0.05] for clean crossfades; click-prone loops get
+    // no bonus (no penalty — additive only).
+    private static double BoundaryClickScore(float[] audio, long sSample, long eSample)
+    {
+        const int window = 2205;   // ~50 ms at 44.1k
+        var n = audio.Length;
+        var sEnd = (int)Math.Min(n, sSample + window);
+        var eStart = (int)Math.Max(0, eSample - window);
+        var sLen = sEnd - (int)sSample;
+        var eLen = (int)eSample - eStart;
+        if (sLen < 64 || eLen < 64) return 0;
+
+        // Compute max derivative across the crossfade region (combined window).
+        // We can't actually crossfade (would need output buffer); instead sample the
+        // discontinuity at the join by taking the absolute sample difference and
+        // its derivative.
+        double maxSpike = 0;
+        for (var i = 0; i < Math.Min(sLen, eLen); i++)
+        {
+            var left = audio[eStart + i];      // tail of eBase (samples before end)
+            var right = audio[(int)sSample + i]; // head of sBase (samples after start)
+            var diff = Math.Abs(left - right);
+            if (i > 0)
+            {
+                var prevDiff = Math.Abs(audio[eStart + i - 1] - audio[(int)sSample + i - 1]);
+                diff = Math.Max(diff, Math.Abs(diff - prevDiff));
+            }
+            if (diff > maxSpike) maxSpike = diff;
+        }
+
+        // Bonus: smooth join (maxSpike < 0.05) → +0.05; click (>0.3) → 0
+        return Math.Max(0, (0.30 - maxSpike) / 0.25 * 0.05);
     }
 }
