@@ -15,6 +15,16 @@ public sealed class AppSettings
 
     public int EncodeParallelism { get; set; } = 0;
 
+    public bool LoopAutoTune { get; set; } = true;
+    public double LoopMinSeconds { get; set; } = 30.0;
+    public double LoopNoteDeviation { get; set; } = 0.0875;
+    public double LoopMinMatch { get; set; } = 0.9;
+    public bool LoopPreEmphasis { get; set; } = false;
+    public bool LoopMultiResolution { get; set; } = false;
+    public bool LoopDisablePruning { get; set; } = false;
+    public double LoopBorderSimilarity { get; set; } = 0.5;
+    public double LoopTransitionSmoothness { get; set; } = 0.4;
+
     public int SettingsVersion { get; set; }
 
     public Dictionary<string, string> MarkerDefaults { get; set; } = new();

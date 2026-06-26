@@ -6,6 +6,7 @@ public sealed class PlaybackService : IDisposable
 {
     private WaveOutEvent? _out;
     private AudioFileReader? _reader;
+    private LoopSampleProvider? _loop;
     private bool _stopping;
 
     public event Action? Ended;
@@ -31,9 +32,10 @@ public sealed class PlaybackService : IDisposable
             Volume = Lin(volumeDb)
         };
         
-        _out = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 4 };
+        _loop = new LoopSampleProvider(_reader);
+        _out = new WaveOutEvent { DesiredLatency = 200, NumberOfBuffers = 4 };
         _out.PlaybackStopped += OnStopped;
-        _out.Init(_reader);
+        _out.Init(_loop);
         _out.Play();
     }
 
@@ -59,6 +61,27 @@ public sealed class PlaybackService : IDisposable
         _reader?.Volume = Lin(db);
     }
 
+    public void SetLoop(double startSec, double endSec)
+    {
+        if (_reader is null || _loop is null)
+        {
+            return;
+        }
+
+        var wf = _reader.WaveFormat;
+        var block = wf.Channels * (wf.BitsPerSample / 8);
+
+        long ToBytes(double sec)
+        {
+            var frame = (long) Math.Round(sec * wf.SampleRate);
+            return Math.Clamp(frame * block, 0, _reader.Length);
+        }
+
+        _loop.SetLoop(ToBytes(startSec), ToBytes(endSec));
+    }
+
+    public void ClearLoop() => _loop?.Clear();
+
     public void Stop()
     {
         if (_out is null)
@@ -82,6 +105,7 @@ public sealed class PlaybackService : IDisposable
         _reader?.Dispose();
         _out = null;
         _reader = null;
+        _loop = null;
         _stopping = false;
     }
 
@@ -90,6 +114,92 @@ public sealed class PlaybackService : IDisposable
         if (!_stopping)
         {
             Ended?.Invoke();
+        }
+    }
+
+    private sealed class LoopSampleProvider : ISampleProvider
+    {
+        private readonly AudioFileReader _reader;
+        private readonly object _gate = new();
+        private bool _enabled;
+        private long _startBytes;
+        private long _endBytes;
+
+        public LoopSampleProvider(AudioFileReader reader) => _reader = reader;
+
+        public WaveFormat WaveFormat => _reader.WaveFormat;
+
+        public void SetLoop(long startBytes, long endBytes)
+        {
+            lock (_gate)
+            {
+                _startBytes = startBytes;
+                _endBytes = endBytes;
+                _enabled = endBytes > startBytes;
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_gate)
+            {
+                _enabled = false;
+            }
+        }
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            lock (_gate)
+            {
+                if (!_enabled)
+                {
+                    return _reader.Read(buffer, offset, count);
+                }
+
+                var bytesPerSample = _reader.WaveFormat.BitsPerSample / 8;
+                var read = 0;
+                var resets = 0;
+                while (read < count)
+                {
+                    if (_reader.Position >= _endBytes)
+                    {
+                        _reader.Position = _startBytes;
+                        if (++resets > 2)
+                        {
+                            break;
+                        }
+                    }
+
+                    var samplesToEnd = (int) ((_endBytes - _reader.Position) / bytesPerSample);
+                    if (samplesToEnd <= 0)
+                    {
+                        _reader.Position = _startBytes;
+                        if (++resets > 2)
+                        {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    var toRead = Math.Min(count - read, samplesToEnd);
+                    var n = _reader.Read(buffer, offset + read, toRead);
+                    if (n == 0)
+                    {
+                        _reader.Position = _startBytes;
+                        if (++resets > 2)
+                        {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    read += n;
+                }
+
+                return read;
+            }
         }
     }
 

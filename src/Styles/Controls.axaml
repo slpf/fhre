@@ -349,4 +349,27 @@
   <Style Selector="Slider.loudness:pressed /template/ Thumb">
     <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
   </Style>
+
+  <!-- Disabled state for controls inside gated Manual cards. Without these, the
+       custom template still renders at full opacity and accent color, making it
+       hard to see that the controls are blocked behind the Auto toggle. -->
+  <Style Selector="Slider.loudness:disabled">
+    <Setter Property="Opacity" Value="0.4"/>
+  </Style>
+  <Style Selector="Slider.loudness:disabled /template/ Thumb">
+    <Setter Property="Background" Value="{DynamicResource TxtMute}"/>
+  </Style>
+
+  <Style Selector="CheckBox:disabled">
+    <Setter Property="Opacity" Value="0.4"/>
+  </Style>
+
+  <Style Selector="ToggleSwitch:disabled">
+    <Setter Property="Opacity" Value="0.4"/>
+  </Style>
+
+  <!-- Dim text labels inside disabled cards (hints, captions, value chips). -->
+  <Style Selector="Border[IsEnabled=False] TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource TxtFaint}"/>
+  </Style>
 </Styles>

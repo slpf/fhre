@@ -1,0 +1,125 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
+        x:Class="FH6RB.Views.LoopSearchSettingsWindow"
+        x:DataType="vm:LoopSearchSettingsViewModel"
+        Width="460" Height="420"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        Title="{x:Static assets:Str.TitleLoopSearch}"
+        SizeToContent="Height">
+
+    <Grid RowDefinitions="*,Auto">
+        <ScrollViewer Grid.Row="0" Margin="16" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="14">
+
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoopSearch}"/>
+
+                <StackPanel Spacing="6">
+                    <ToggleSwitch IsChecked="{Binding AutoTune}"
+                                  OnContent="{x:Static assets:Str.LblLoopAuto}"
+                                  OffContent="{x:Static assets:Str.LblLoopManual}"/>
+                    <TextBlock Text="{x:Static assets:Str.HintLoopAuto}"
+                               Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                        BorderThickness="1" CornerRadius="8" Padding="14"
+                        IsEnabled="{Binding ManualEnabled}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Classes="sect" Text="MANUAL TUNING" Margin="0,2,0,4"/>
+
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopNoteDeviation}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding NoteDeviationText}"
+                                       Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="0.01" Maximum="0.30"
+                                Value="{Binding NoteDeviation}"
+                                TickFrequency="0.01" IsSnapToTickEnabled="False"
+                                Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopNoteDeviation}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+
+                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopMinMatch}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding MinMatchText}"
+                                       Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="0.50" Maximum="1.00"
+                                Value="{Binding MinMatch}"
+                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopMinMatch}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+
+                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopBorderSimilarity}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding BorderSimilarityText}"
+                                       Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="0.30" Maximum="0.90"
+                                Value="{Binding BorderSimilarity}"
+                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopBorderSimilarity}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+
+                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopTransitionSmoothness}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding TransitionSmoothnessText}"
+                                       Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="0.20" Maximum="0.80"
+                                Value="{Binding TransitionSmoothness}"
+                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopTransitionSmoothness}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+
+                        <Border Background="{DynamicResource LineSoft}" Height="1" Margin="0,4"/>
+
+                        <CheckBox IsChecked="{Binding PreEmphasis}" FontSize="12.5"
+                                  Content="{x:Static assets:Str.LblLoopPreEmphasis}"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopPreEmphasis}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+
+                        <CheckBox IsChecked="{Binding MultiResolution}" FontSize="12.5"
+                                  Content="{x:Static assets:Str.LblLoopMultiResolution}"
+                                  Margin="0, 6, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopMultiResolution}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+
+                        <CheckBox IsChecked="{Binding DisablePruning}" FontSize="12.5"
+                                  Content="{x:Static assets:Str.LblLoopDisablePruning}"
+                                  Margin="0, 6, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopDisablePruning}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="1" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
+                <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -68,6 +68,7 @@ public sealed class WaveformView : Control
 
     private readonly List<(MarkerField Marker, Rect Rect)> _labels = [];
     private readonly Dictionary<string, int> _renderedRows = [];
+    private readonly Dictionary<(MarkerField Marker, bool IsFocus, bool IsLocked), FormattedText> _labelCache = [];
     private MarkerField? _drag;
     private double _dragOffset;
     private bool _seeking;
@@ -524,6 +525,21 @@ public sealed class WaveformView : Control
         HeadSeekRequested?.Invoke(Math.Clamp(frac, 0, 1));
     }
 
+    private FormattedText GetCachedLabel(MarkerField m, bool isFocus)
+    {
+        var key = (m, isFocus, m.Locked);
+        if (_labelCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        var brush = isFocus ? LabelLockText : m.Locked ? LabelLockedBrush : LabelBrush;
+        var text = new FormattedText(m.Name, CultureInfo.InvariantCulture,
+            FlowDirection.LeftToRight, LabelFace, 9, brush);
+        _labelCache[key] = text;
+        return text;
+    }
+
     public override void Render(DrawingContext ctx)
     {
         var w = Bounds.Width;
@@ -647,8 +663,7 @@ public sealed class WaveformView : Control
                     ctx.DrawLine(m.Locked ? LockedPen : MarkerPen, new Point(x, 0), new Point(x, h));
                 }
 
-                var label = new FormattedText(m.Name, CultureInfo.InvariantCulture,
-                    FlowDirection.LeftToRight, LabelFace, 9, locked ? LabelLockText : m.Locked ? LabelLockedBrush : LabelBrush);
+                var label = GetCachedLabel(m, locked);
 
                 var lx = Math.Min(x + 3, w - label.Width - 2);
                 

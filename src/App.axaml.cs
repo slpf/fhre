@@ -16,6 +16,7 @@ public partial class App : Application
     {
         WorkDirs.Clean();
         AudioDecoder.ClearAll();
+        LoopFinder.ClearCache();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {

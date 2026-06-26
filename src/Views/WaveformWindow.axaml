@@ -40,7 +40,7 @@
                                   Markers="{Binding AllMarkers}" SampleLength="{Binding SampleLength}"/>
             </Border>
 
-            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,12,0,0">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,12,0,0">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
                     <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
                             Click="OnPlay" ToolTip.Tip="{x:Static assets:Str.TipPlay}"
@@ -72,6 +72,12 @@
                            Foreground="{DynamicResource TxtMute}" TextAlignment="Right"
                            VerticalAlignment="Center" Margin="8,0,8,0"/>
                 <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Focusable="False"
+                        Click="OnLoopSearchSettings" ToolTip.Tip="{x:Static assets:Str.TipLoopSearchSettings}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="20" Height="20"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <Button Grid.Column="3" Classes="wave_act" Width="32" Height="32" Focusable="False"
                         Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
                         Background="{DynamicResource BgInput}">
                     <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="26" Height="26"

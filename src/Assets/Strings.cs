@@ -102,6 +102,14 @@ public static class Str
     public const string LocalizationsFmt = "Localizations: {0}";
     public const string RadioBanksFmt = "Radio banks: {0}";
     public const string ErrNoRadioInfo = "No RadioInfo_*.xml found. Check the game folder, or close the program.";
+    public const string ErrScanEmptyPath = "Select the Forza Horizon installation folder.";
+    public const string ErrScanDirectoryMissingFmt = "Folder not found: {0}";
+    public const string ErrScanExeMissingFmt = "No ForzaHorizon*.exe in this folder: {0}";
+    public const string ErrScanLanguageMissing = "No RadioInfo_*.xml in this folder. Point at the Forza Horizon installation, not a subfolder.";
+    public const string ErrScanAccessDeniedFmt = "Some subfolders are blocked ({0}). Close Forza / Steam / antivirus and try again.";
+    public const string ErrScanTransientLockFmt = "Some subfolders are temporarily locked ({0}). Try again in a moment.";
+    public const string ErrScanOtherErrorFmt = "Could not read game files ({0}).";
+    public const string ErrScanPartialAccessFmt = "Found game files, but some subfolders are blocked ({0}).";
     public const string EditRestoredFmt = "Restored {0} file(s)";
     public const string EditRestoredFailedFmt = "Restored {0}, {1} failed";
 
@@ -211,4 +219,27 @@ public static class Str
     public const string DlgRestoreStationOk = "Restore";
     public const string DlgRestoreStationCancel = "Cancel";
     public const string StatusBackupRestoredFmt = "Backup restored: {0}";
+
+    public const string TitleLoopSearch = "Loop search";
+    public const string SecLoopSearch = "LOOP SEARCH";
+    public const string LblLoopMinSeconds = "Min loop length";
+    public const string LblLoopNoteDeviation = "Note deviation";
+    public const string LblLoopMinMatch = "Match cutoff";
+    public const string LblLoopPreEmphasis = "Pre-emphasis";
+    public const string LblLoopMultiResolution = "Multi-resolution search";
+    public const string LblLoopDisablePruning = "Disable candidate pruning";
+    public const string LblLoopBorderSimilarity = "Border similarity";
+    public const string LblLoopTransitionSmoothness = "Transition smoothness";
+    public const string HintLoopMinSeconds = "Shortest loop to consider. Longer = stricter, fewer false matches.";
+    public const string HintLoopNoteDeviation = "How similar the loop endpoints must sound. Higher = looser, lower = stricter.";
+    public const string HintLoopMinMatch = "Hide candidates below this match score. Lower = more options, higher = only clean loops.";
+    public const string HintLoopPreEmphasis = "Boost highs before analysis. Helps tracks with heavy bass and quiet hats.";
+    public const string HintLoopMultiResolution = "Also try half-length and double-length loops. Slower, more recall.";
+    public const string HintLoopDisablePruning = "Skip percentile filtering. More candidates, but more noise too.";
+    public const string HintLoopBorderSimilarity = "Chroma similarity required at the loop join. Higher = stricter (fewer false loops), lower = more permissive.";
+    public const string HintLoopTransitionSmoothness = "Max RMS imbalance at the loop join (1/ratio). Higher = stricter (volume must match), lower = more permissive.";
+    public const string TipLoopSearchSettings = "Loop search settings";
+    public const string LblLoopAuto = "Auto";
+    public const string LblLoopManual = "Manual";
+    public const string HintLoopAuto = "Auto picks the best parameters per track. Turn off to tune them manually.";
 }

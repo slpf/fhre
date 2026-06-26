@@ -70,7 +70,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private CancellationTokenSource? _validateCts;
     
     private static GameScan? _gameScanCache;
-    private sealed record GameScan(string Path, string? Exe, int LangCount, int BankCount);
+    // _gameScanCache is intentionally static: the settings dialog reuses the last scan while
+    // the user keeps the same path so the success lines don't flicker on every keystroke.
+    // The static lifetime means a stale transient result can persist across dialog opens
+    // until the path changes or the app restarts — that's an acceptable trade-off for now.
+    private sealed record GameScan(string Path, GameScanner.GameScanResult Result);
 
     public async Task ValidateAsync()
     {
@@ -83,7 +87,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         Error = "";
 
         var cachedGame = _gameScanCache is { } gc && string.Equals(gc.Path, path, StringComparison.OrdinalIgnoreCase) ? gc : null;
-        
+
         if (cachedGame is not null)
         {
             ApplyGameScan(cachedGame);
@@ -99,15 +103,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         {
             var r = await Task.Run(() =>
             {
-                var game = cachedGame ?? new GameScan(
-                    path,
-                    GameScanner.FindExe(path),
-                    string.IsNullOrWhiteSpace(path) ? 0 : GameScanner.LanguageFiles(path).Count,
-                    string.IsNullOrWhiteSpace(path) ? 0 : GameScanner.RadioBankNames(path).Count);
-                
+                var scan = cachedGame?.Result ?? GameScanner.Scan(path);
                 var hasBackups = BackupService.Has(path);
                 var modified = hasBackups && BackupService.HasModified(path);
-                return (game, hasBackups, modified);
+                return (new GameScan(path, scan), hasBackups, modified);
             }, token);
 
             if (token.IsCancellationRequested)
@@ -115,11 +114,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 return;
             }
 
-            _gameScanCache = r.game;
-            
+            _gameScanCache = r.Item1;
+
             if (cachedGame is null)
             {
-                ApplyGameScan(r.game);
+                ApplyGameScan(r.Item1);
             }
 
             CanRestore = r.modified;
@@ -131,7 +130,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            
+
         }
         finally
         {
@@ -144,13 +143,14 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     private void ApplyGameScan(GameScan game)
     {
-        IsValid = game.Exe is not null && game.LangCount > 0;
+        var result = game.Result;
+        IsValid = result.IsValid;
 
         if (IsValid)
         {
-            ExeLine = string.Format(Str.FoundFmt, Path.GetFileName(game.Exe));
-            LangLine = string.Format(Str.LocalizationsFmt, game.LangCount);
-            BankLine = string.Format(Str.RadioBanksFmt, game.BankCount);
+            ExeLine = result.ExePath is null ? "" : string.Format(Str.FoundFmt, Path.GetFileName(result.ExePath));
+            LangLine = string.Format(Str.LocalizationsFmt, result.LanguageFileCount);
+            BankLine = string.Format(Str.RadioBanksFmt, result.BankCount);
             Error = "";
         }
         else
@@ -158,8 +158,23 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             ExeLine = "";
             LangLine = "";
             BankLine = "";
-            Error = Str.ErrNoRadioInfo;
+            Error = FormatScanError(result);
         }
+    }
+
+    private static string FormatScanError(GameScanner.GameScanResult r)
+    {
+        return r.Issue switch
+        {
+            GameScanner.GameScanIssue.EmptyPath => Str.ErrScanEmptyPath,
+            GameScanner.GameScanIssue.DirectoryMissing => string.Format(Str.ErrScanDirectoryMissingFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.ExeMissing => string.Format(Str.ErrScanExeMissingFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.LanguageFilesMissing => Str.ErrScanLanguageMissing,
+            GameScanner.GameScanIssue.AccessDenied => string.Format(Str.ErrScanAccessDeniedFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.TransientLock => string.Format(Str.ErrScanTransientLockFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.PartialAccess => string.Format(Str.ErrScanPartialAccessFmt, r.Detail ?? ""),
+            _ => string.Format(Str.ErrScanOtherErrorFmt, r.Detail ?? ""),
+        };
     }
 
     public void RestoreBackups()
@@ -185,6 +200,13 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.EncodeParallelism = d.EncodeParallelism;
         _settings.MarkerDefaults = new();
         _settings.WaveformLabelRows = new();
+        _settings.LoopAutoTune = d.LoopAutoTune;
+        _settings.LoopMinSeconds = d.LoopMinSeconds;
+        _settings.LoopNoteDeviation = d.LoopNoteDeviation;
+        _settings.LoopMinMatch = d.LoopMinMatch;
+        _settings.LoopPreEmphasis = d.LoopPreEmphasis;
+        _settings.LoopMultiResolution = d.LoopMultiResolution;
+        _settings.LoopDisablePruning = d.LoopDisablePruning;
         _settings.SettingsVersion = SettingsService.CurrentSettingsVersion;
         _settings.GamePath = keepPath;
 

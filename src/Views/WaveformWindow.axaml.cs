@@ -89,6 +89,7 @@ public partial class WaveformWindow : Window
 
             Wave.Peaks = null;
             Vm.Peaks = null;
+            LoopFinder.ClearCache();
 
             System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
             GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
@@ -132,6 +133,15 @@ public partial class WaveformWindow : Window
         _looping = loop;
         _player.Play(wav, 0);
         _player.Position = TimeSpan.FromSeconds(Math.Max(0, fromSec));
+        if (loop)
+        {
+            _player.SetLoop(_loopStart, _loopEnd);
+        }
+        else
+        {
+            _player.ClearLoop();
+        }
+
         _headSec = fromSec;
         _timer.Start();
         UpdateUi();
@@ -237,9 +247,34 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        var rate = Vm.SampleRate;
+        // For PostRaceLoopStart: the PostDrop marker mirrors its position by design
+        // (drop happens at or just after the loop start). Look it up once so we can
+        // sync it when the user picks a candidate.
+        MarkerField? postDrop = null;
+        if (start.Name == "PostRaceLoopStart")
+        {
+            foreach (var m in Vm.AllMarkers)
+            {
+                if (m.Name == "PostDrop")
+                {
+                    postDrop = m;
+                    break;
+                }
+            }
+        }
 
-        Vm.IsSuggesting = true;
+        var rate = Vm.SampleRate;
+        var auto = Vm.Settings?.LoopAutoTune ?? true;
+        var role = start.Name == "PostRaceLoopStart" ? LoopRole.Post
+            : start.Name == "TrackLoopStart" ? LoopRole.Track
+            : LoopRole.Generic;
+        // Auto mode: conservative threshold so the user sees several candidates and
+        // can pick by ear. The best true loops typically score 0.85–0.95 with the
+        // current scoring pipeline; 0.80 keeps the top-1–3 visible on most tracks
+        // while still filtering the worst noise. User can tighten via LoopMinMatch
+        // in Manual mode.
+        // Manual mode: caller-tuned via LoopMinMatch setting (default 0.9).
+        var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.9);
 
         List<LoopPair> pairs;
 
@@ -247,6 +282,7 @@ public partial class WaveformWindow : Window
         {
             if (Vm.Peaks is null)
             {
+                Vm.IsSuggesting = true;
                 await Vm.EnsurePeaksAsync();
             }
 
@@ -256,7 +292,38 @@ public partial class WaveformWindow : Window
                 return;
             }
 
-            pairs = await Task.Run(() => LoopFinder.Find(samples, rate, minDurationMultiplier: 0.1));
+            var cacheKey = Vm.WavPath;
+
+            var loopOptions = auto
+                ? new LoopSearchOptions { Role = role, AutoTune = true, MinLoopSeconds = LoopSearchDefaults.MinLoopSeconds }
+                : new LoopSearchOptions
+                {
+                    AutoTune = false,
+                    Role = role,
+                    MinLoopSeconds = LoopSearchDefaults.MinLoopSeconds,
+                    NoteDeviation = Vm.Settings?.LoopNoteDeviation ?? 0.0875,
+                    BorderSimilarityThreshold = Vm.Settings?.LoopBorderSimilarity ?? 0.5,
+                    TransitionSmoothnessThreshold = Vm.Settings?.LoopTransitionSmoothness ?? 0.4,
+                    PreEmphasis = Vm.Settings?.LoopPreEmphasis ?? false,
+                    MultiResolution = Vm.Settings?.LoopMultiResolution ?? false,
+                    DisablePruning = Vm.Settings?.LoopDisablePruning ?? false,
+                };
+
+            Action<string>? logger = null;
+#if DEBUG
+            logger = s => FH6RB.Services.Log.Line(s);
+#endif
+            var task = Task.Run(() => LoopFinder.Find(samples, rate, loopOptions, cacheKey, logger));
+            if (!Vm.IsSuggesting && !task.IsCompleted)
+            {
+                var first = await Task.WhenAny(task, Task.Delay(120));
+                if (first != task)
+                {
+                    Vm.IsSuggesting = true;
+                }
+            }
+
+            pairs = await task;
         }
         finally
         {
@@ -289,11 +356,17 @@ public partial class WaveformWindow : Window
 
             foreach (var p in pairs)
             {
+                if (p.Score < minMatch)
+                {
+                    continue;
+                }
+
                 var ss = p.LoopStart;
                 var es = p.LoopEnd;
                 var startSec = ss / (double) rate;
                 var endSec = es / (double) rate;
                 var lenSec = (es - ss) / (double) rate;
+                var matchPct = p.Score * 100;
 
                 var btn = new Button
                 {
@@ -305,7 +378,7 @@ public partial class WaveformWindow : Window
                     Foreground = headerBrush,
                     Content = new TextBlock
                     {
-                        Text = $"{startSec:0.00}s ({ss})  \u2192  {endSec:0.00}s ({es})   \u00b7   Length: {lenSec:0.0}s   \u00b7   Match: {p.Score:0.000}",
+                        Text = $"{startSec:0.00}s ({ss})  \u2192  {endSec:0.00}s ({es})   \u00b7   Length: {lenSec:0.0}s   \u00b7   Match: {matchPct:0.0}%",
                         FontFamily = monoFont!,
                         FontSize = 12,
                         TextTrimming = TextTrimming.None,
@@ -314,20 +387,36 @@ public partial class WaveformWindow : Window
 
                 var captureStart = start;
                 var captureEnd = end;
+                var capturePostDrop = postDrop;
                 btn.Click += (_, _) =>
                 {
                     captureStart.Position = ss;
                     captureEnd.Position = es;
+                    // For PostRace loop picks, mirror the loop start to PostDrop.
+                    capturePostDrop?.Position = ss;
+                    StartLoop(ss / (double) rate, es / (double) rate);
+                    Wave.Focus();
                     flyout.Hide();
                 };
 
                 panel.Children.Add(btn);
                 shown++;
 
-                if (shown >= 5)
+                if (shown >= 10)
                 {
                     break;
                 }
+            }
+
+            if (shown == 0)
+            {
+                panel.Children.Clear();
+                panel.Children.Add(new TextBlock
+                {
+                    Text = Str.MenuNoLoops,
+                    Padding = new Thickness(14, 10),
+                    Foreground = muteBrush,
+                });
             }
         }
 
@@ -506,6 +595,12 @@ public partial class WaveformWindow : Window
 
         _headSec = target;
 
+        if (_looping && (target < _loopStart || target >= _loopEnd))
+        {
+            _looping = false;
+            _player.ClearLoop();
+        }
+
         if (_player.HasMedia)
         {
             _player.Position = TimeSpan.FromSeconds(target);
@@ -551,6 +646,12 @@ public partial class WaveformWindow : Window
         var target = Math.Clamp(fraction * total, RegionStartSec, EffectiveEndSec(total));
         _headSec = target;
 
+        if (_looping && (target < _loopStart || target >= _loopEnd))
+        {
+            _looping = false;
+            _player.ClearLoop();
+        }
+
         if (_player.HasMedia)
         {
             _player.Position = TimeSpan.FromSeconds(target);
@@ -563,14 +664,7 @@ public partial class WaveformWindow : Window
     {
         if (_player.HasMedia && _player.IsPlaying)
         {
-            if (_looping)
-            {
-                if (_player.Position.TotalSeconds >= _loopEnd)
-                {
-                    _player.Position = TimeSpan.FromSeconds(_loopStart);
-                }
-            }
-            else if (_player.Position.TotalSeconds >= RegionEndSec)
+            if (!_looping && _player.Position.TotalSeconds >= RegionEndSec)
             {
                 StopPlayback();
             }
@@ -612,6 +706,16 @@ public partial class WaveformWindow : Window
         FormattableString.Invariant($"{(int) t.TotalMinutes}:{t.Seconds:00} ({t.TotalSeconds:0.000})");
 
     private void OnResetDefaults(object? sender, RoutedEventArgs e) => Vm.ResetMarkersToDefaults();
+
+    private async void OnLoopSearchSettings(object? sender, RoutedEventArgs e)
+    {
+        var settings = Vm.Settings ?? new AppSettings();
+        var dlg = new LoopSearchSettingsWindow
+        {
+            DataContext = new LoopSearchSettingsViewModel(settings),
+        };
+        await dlg.ShowDialog(this);
+    }
 
     private TextBox? _ctxField;
 
