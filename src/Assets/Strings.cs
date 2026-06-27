@@ -221,8 +221,8 @@ public static class Str
     public const string DlgRestoreStationCancel = "Cancel";
     public const string StatusBackupRestoredFmt = "Backup restored: {0}";
 
-    public const string TitleLoopSearch = "Loop search";
-    public const string SecLoopSearch = "LOOP SEARCH";
+    public const string TitleLoopSearch = "Loop search settings";
+    public const string SecLoopSearch = "LOOP SEARCH MODE";
     public const string LblLoopMinSeconds = "Min loop length";
     public const string LblLoopNoteDeviation = "Note deviation";
     public const string LblLoopMinMatch = "Match cutoff";
@@ -242,9 +242,9 @@ public static class Str
     public const string TipLoopSearchSettings = "Loop search settings";
     public const string TipPresetSave = "Save current marker positions as a preset";
     public const string TipPresetLoad = "Load marker positions from a preset";
-    public const string PresetNameTitle = "Preset name";
+    public const string PresetNameTitle = "Save marker preset";
     public const string PresetNameWatermark = "My Preset";
-    public const string PresetLoadTitle = "Load marker preset";
+    public const string PresetLoadTitle = "Marker presets";
     public const string PresetInfoFmt = "{0} markers";
     public const string PresetLoadEmpty = "No saved presets yet. Save one with the save button.";
     public const string PresetDeleteTitle = "Delete preset";

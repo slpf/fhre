@@ -13,8 +13,8 @@
 
     <Grid RowDefinitions="*,Auto">
         <ScrollViewer Grid.Row="0" Margin="16" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="14">
-                <StackPanel Spacing="6">
+            <StackPanel Spacing="8">
+                <StackPanel Spacing="4">
                     <TextBlock Text="{x:Static assets:Str.HintLoopAuto}" Margin="12,2,0,8"
                                Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
                     
@@ -29,9 +29,7 @@
                 <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
                         BorderThickness="1" CornerRadius="8" Padding="14"
                         IsEnabled="{Binding ManualEnabled}">
-                    <StackPanel Spacing="10">
-                        <TextBlock Classes="sect" Text="MANUAL TUNING" Margin="0,2,0,4"/>
-
+                    <StackPanel Spacing="6">
                         <Grid ColumnDefinitions="*,Auto">
                             <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopNoteDeviation}"
                                        Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
