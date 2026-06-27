@@ -269,6 +269,33 @@ public sealed partial class EditWindowViewModel : ObservableObject
         }
     }
 
+    public int ApplyMarkerPositions(IReadOnlyDictionary<string, long> positions)
+    {
+        if (!CanEditMarkers) return 0;
+        var max = SampleLength;
+        var hits = 0;
+        foreach (var f in AllMarkers)
+        {
+            if (positions.TryGetValue(f.Name, out var p))
+            {
+                var clamped = Math.Max(0, Math.Min(p, max));
+                f.Position = clamped;
+                hits++;
+            }
+        }
+        return hits;
+    }
+
+    public Dictionary<string, long> CollectMarkerPositions()
+    {
+        var dict = new Dictionary<string, long>();
+        foreach (var f in AllMarkers)
+        {
+            if (f.Position >= 0) dict[f.Name] = f.Position;
+        }
+        return dict;
+    }
+
     public string GainText => $"{(GainDb > 0 ? "+" : "")}{GainDb:0.0} dB";
 
     partial void OnGainDbChanged(double value) => OnPropertyChanged(nameof(GainText));

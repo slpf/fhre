@@ -45,15 +45,17 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     public bool Replaced { get; set; }
     public bool IsReplacing => ReplacementPath is not null;
-    public bool ShowRepBadge => !IsCustom && (IsReplacing || Replaced);
-    public bool CanReplace => !IsCustom;
+    public bool ShowRplBadge => IsReplacing;
+    public bool ShowCstBadge => Replaced && !IsReplacing && !IsCustom;
+    public bool CanReplace => true;
     public bool UsesFileSource => IsUnbuilt || IsReplacing;
-    public string? FileSource => IsUnbuilt ? SourcePath : ReplacementPath;
+    public string? FileSource => IsReplacing ? ReplacementPath : SourcePath;
 
     partial void OnReplacementPathChanged(string? value)
     {
         OnPropertyChanged(nameof(IsReplacing));
-        OnPropertyChanged(nameof(ShowRepBadge));
+        OnPropertyChanged(nameof(ShowRplBadge));
+        OnPropertyChanged(nameof(ShowCstBadge));
         OnPropertyChanged(nameof(UsesFileSource));
         OnPropertyChanged(nameof(FileSource));
         OnPropertyChanged(nameof(CanPlay));

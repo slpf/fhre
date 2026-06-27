@@ -247,9 +247,6 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        // For PostRaceLoopStart: the PostDrop marker mirrors its position by design
-        // (drop happens at or just after the loop start). Look it up once so we can
-        // sync it when the user picks a candidate.
         MarkerField? postDrop = null;
         if (start.Name == "PostRaceLoopStart")
         {
@@ -268,12 +265,6 @@ public partial class WaveformWindow : Window
         var role = start.Name == "PostRaceLoopStart" ? LoopRole.Post
             : start.Name == "TrackLoopStart" ? LoopRole.Track
             : LoopRole.Generic;
-        // Auto mode: conservative threshold so the user sees several candidates and
-        // can pick by ear. The best true loops typically score 0.85–0.95 with the
-        // current scoring pipeline; 0.80 keeps the top-1–3 visible on most tracks
-        // while still filtering the worst noise. User can tighten via LoopMinMatch
-        // in Manual mode.
-        // Manual mode: caller-tuned via LoopMinMatch setting (default 0.9).
         var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.9);
 
         List<LoopPair> pairs;
@@ -352,16 +343,9 @@ public partial class WaveformWindow : Window
         }
         else
         {
-            // Per-track calibration: a track whose best candidate scores 0.95 has
-            // higher intrinsic loopability than one whose best is 0.75 — the
-            // threshold should reflect that. Anchor at topScore - 0.05 with a
-            // [0.65, 0.85] window. Dynamic fill below steps it down further if
-            // we still don't have enough items.
             var topScore = pairs[0].Score;
             var calibrated = auto ? Math.Clamp(topScore - 0.05, 0.65, 0.85) : minMatch;
 
-            // Dynamic fill: if fewer than MinShown candidates clear the threshold,
-            // step it down until either we have enough items or we hit the floor.
             const int MinShown = 3;
             const double StepDown = 0.025;
             const double MinThreshold = 0.50;
@@ -405,7 +389,7 @@ public partial class WaveformWindow : Window
                     Foreground = headerBrush,
                     Content = new TextBlock
                     {
-                        Text = $"{startSec:0.00}s ({ss})  \u2192  {endSec:0.00}s ({es})   \u00b7   Length: {lenSec:0.0}s   \u00b7   Match: {matchPct:0.0}%",
+                        Text = $"{startSec,7:0.00}s ({ss,8})  \u2192  {endSec,7:0.00}s ({es,8})   \u00b7   Length: {lenSec,6:0.0}s   \u00b7   Match: {matchPct,5:0.0}%",
                         FontFamily = monoFont!,
                         FontSize = 12,
                         TextTrimming = TextTrimming.None,
@@ -419,7 +403,6 @@ public partial class WaveformWindow : Window
                 {
                     captureStart.Position = ss;
                     captureEnd.Position = es;
-                    // For PostRace loop picks, mirror the loop start to PostDrop.
                     capturePostDrop?.Position = ss;
                     StartLoop(ss / (double) rate, es / (double) rate);
                     Wave.Focus();
@@ -742,6 +725,53 @@ public partial class WaveformWindow : Window
             DataContext = new LoopSearchSettingsViewModel(settings),
         };
         await dlg.ShowDialog(this);
+    }
+
+    private async void OnSavePreset(object? sender, RoutedEventArgs e)
+    {
+        if (!Vm.CanEditMarkers)
+        {
+            FH6RB.Services.Log.Line("Preset save: no markers to save (CanEditMarkers=false)");
+            return;
+        }
+        var artist = (Vm.Artist ?? "").Trim();
+        var title = (Vm.Title ?? "").Trim();
+        var defaultName = artist.Length > 0 && title.Length > 0
+            ? $"{artist} - {title}"
+            : (title.Length > 0 ? title : Str.PresetNameWatermark);
+
+        var name = await InputDialog.ShowAsync(this, Str.PresetNameTitle, Str.PresetNameWatermark,
+            defaultName);
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        var positions = Vm.CollectMarkerPositions();
+        if (positions.Count == 0)
+        {
+            FH6RB.Services.Log.Line("Preset save: no marker positions set");
+            return;
+        }
+
+        if (MarkerPresetService.Save(name!, Vm.SampleRate, positions))
+        {
+            FH6RB.Services.Log.Line($"Preset saved: {name} ({positions.Count} markers)");
+        }
+    }
+
+    private async void OnLoadPreset(object? sender, RoutedEventArgs e)
+    {
+        if (!Vm.CanEditMarkers)
+        {
+            FH6RB.Services.Log.Line("Preset load: no markers to apply (CanEditMarkers=false)");
+            return;
+        }
+        var name = await MarkerPresetLoadDialog.ShowAsync(this);
+        if (string.IsNullOrWhiteSpace(name)) return;
+
+        var preset = MarkerPresetService.Load(name!);
+        if (preset is null) return;
+
+        var hits = Vm.ApplyMarkerPositions(preset.Markers);
+        FH6RB.Services.Log.Line($"Preset loaded: {name} ({hits} markers updated)");
     }
 
     private TextBox? _ctxField;

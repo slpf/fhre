@@ -78,6 +78,14 @@
     <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_mloop_hover.png"/>
   </Style>
   
+  <Style Selector="Button.mbutton Image.play">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_mplay.png"/>
+  </Style>
+  
+  <Style Selector="Button.mbutton:pointerover Image.play">
+    <Setter Property="Source" Value="avares://FH6RB/Assets/icons/icon_mplay_hover.png"/>
+  </Style>
+  
   <Style Selector="Button.act">
     <Setter Property="Width" Value="32"/>
     <Setter Property="Height" Value="32"/>
@@ -128,6 +136,7 @@
     <Setter Property="Foreground" Value="{DynamicResource TxtFaint}"/>
     <Setter Property="Margin" Value="12,2,0,8"/>
     <Setter Property="HorizontalAlignment" Value="Left"/>
+    <Setter Property="VerticalAlignment" Value="Center"/>
   </Style>
   
   <Style Selector="TextBox.field">

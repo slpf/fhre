@@ -7,10 +7,12 @@ public partial class InputDialog : Window
 {
     public InputDialog() => InitializeComponent();
 
-    public static async Task<string?> ShowAsync(Window owner, string title, string watermark)
+    public static async Task<string?> ShowAsync(Window owner, string title, string watermark,
+        string? defaultValue = null)
     {
         var d = new InputDialog { Title = title };
         d.Input.Watermark = watermark;
+        if (!string.IsNullOrEmpty(defaultValue)) d.Input.Text = defaultValue;
         return await d.ShowDialog<string?>(owner);
     }
 

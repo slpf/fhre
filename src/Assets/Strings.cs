@@ -33,7 +33,8 @@ public static class Str
     public const string BtnRestore = "Restore";
     
     public const string BadgeNew = "NEW";
-    public const string BadgeReplaced = "REP";
+    public const string BadgeReplaced = "RPL";
+    public const string BadgeCustom = "CST";
     public const string BtnAddLabel = "ADD";
     public const string BtnBuildLabel = "BUILD";
     
@@ -239,6 +240,19 @@ public static class Str
     public const string HintLoopBorderSimilarity = "Chroma similarity required at the loop join. Higher = stricter (fewer false loops), lower = more permissive.";
     public const string HintLoopTransitionSmoothness = "Max RMS imbalance at the loop join (1/ratio). Higher = stricter (volume must match), lower = more permissive.";
     public const string TipLoopSearchSettings = "Loop search settings";
+    public const string TipPresetSave = "Save current marker positions as a preset";
+    public const string TipPresetLoad = "Load marker positions from a preset";
+    public const string PresetNameTitle = "Preset name";
+    public const string PresetNameWatermark = "My Preset";
+    public const string PresetLoadTitle = "Load marker preset";
+    public const string PresetInfoFmt = "{0} markers";
+    public const string PresetLoadEmpty = "No saved presets yet. Save one with the save button.";
+    public const string PresetDeleteTitle = "Delete preset";
+    public const string PresetDeleteBodyFmt = "Delete preset \"{0}\"?";
+    public const string PresetSaveSuccess = "Preset saved";
+    public const string PresetLoadSuccess = "Preset loaded";
+    public const string StatusPresetSavedFmt = "Preset saved: {0}";
+    public const string StatusPresetLoadedFmt = "Preset loaded: {0}";
     public const string LblLoopAuto = "Auto";
     public const string LblLoopManual = "Manual";
     public const string HintLoopAuto = "Auto picks the best parameters per track. Turn off to tune them manually.";

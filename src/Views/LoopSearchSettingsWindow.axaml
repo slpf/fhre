@@ -14,17 +14,18 @@
     <Grid RowDefinitions="*,Auto">
         <ScrollViewer Grid.Row="0" Margin="16" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Spacing="14">
-
-                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoopSearch}"/>
-
                 <StackPanel Spacing="6">
-                    <ToggleSwitch IsChecked="{Binding AutoTune}"
-                                  OnContent="{x:Static assets:Str.LblLoopAuto}"
-                                  OffContent="{x:Static assets:Str.LblLoopManual}"/>
-                    <TextBlock Text="{x:Static assets:Str.HintLoopAuto}"
+                    <TextBlock Text="{x:Static assets:Str.HintLoopAuto}" Margin="12,2,0,8"
                                Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                    
+                    <Grid ColumnDefinitions="Auto,*,Auto">
+                        <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoopSearch}"/>
+                        <ToggleSwitch Grid.Column="2" IsChecked="{Binding AutoTune}"
+                                      FlowDirection="RightToLeft" OnContent="{x:Static assets:Str.LblLoopAuto}"
+                                      OffContent="{x:Static assets:Str.LblLoopManual}" Margin="0,0,12,0"/>
+                    </Grid>
                 </StackPanel>
-
+                
                 <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
                         BorderThickness="1" CornerRadius="8" Padding="14"
                         IsEnabled="{Binding ManualEnabled}">

@@ -7,7 +7,7 @@
         x:Class="FH6RB.Views.WaveformWindow"
         x:DataType="vm:EditWindowViewModel"
         Width="780" Height="765"
-        MinWidth="560" MinHeight="765"
+        MinWidth="700" MinHeight="765"
         MaxHeight="765"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
@@ -40,7 +40,7 @@
                                   Markers="{Binding AllMarkers}" SampleLength="{Binding SampleLength}"/>
             </Border>
 
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto" Margin="0,12,0,0">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,12,0,0">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
                     <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
                             Click="OnPlay" ToolTip.Tip="{x:Static assets:Str.TipPlay}"
@@ -69,18 +69,31 @@
                 </StackPanel>
                 <TextBlock Grid.Column="1" x:Name="TimeText" Text="{x:Static assets:Str.TimeZero}"
                            FontFamily="{DynamicResource MonoFont}" FontSize="11"
-                           Foreground="{DynamicResource TxtMute}" TextAlignment="Right"
+                           Foreground="{DynamicResource TxtMute}" TextAlignment="Center"
                            VerticalAlignment="Center" Margin="8,0,8,0"/>
+                
                 <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Focusable="False"
-                        Click="OnLoopSearchSettings" ToolTip.Tip="{x:Static assets:Str.TipLoopSearchSettings}"
-                        Background="{DynamicResource BgInput}">
-                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="20" Height="20"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Button>
-                <Button Grid.Column="3" Classes="wave_act" Width="32" Height="32" Focusable="False"
                         Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
                         Background="{DynamicResource BgInput}">
-                    <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="26" Height="26"
+                    <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="28" Height="28"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <Button Grid.Column="3" Classes="wave_act" Width="32" Height="32" Focusable="False" Margin="6,0,0,0"
+                        Click="OnSavePreset" ToolTip.Tip="{x:Static assets:Str.TipPresetSave}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_m_save.png" Width="18" Height="18"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <Button Grid.Column="4" Classes="wave_act" Width="32" Height="32" Focusable="False" Margin="6,0,0,0"
+                        Click="OnLoadPreset" ToolTip.Tip="{x:Static assets:Str.TipPresetLoad}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_m_load.png" Width="18" Height="18"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <Button Grid.Column="5" Classes="wave_act" Width="32" Height="32" Focusable="False" Margin="6,0,0,0"
+                        Click="OnLoopSearchSettings" ToolTip.Tip="{x:Static assets:Str.TipLoopSearchSettings}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="26" Height="26"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Button>
             </Grid>
@@ -119,13 +132,13 @@
                                                     <Button Classes="mbutton" Width="18" Height="18" Margin="0,0,6,0"
                                                             Click="OnSuggestLoops" Tag="{Binding}"
                                                             ToolTip.Tip="{x:Static assets:Str.TipSuggestLoops}">
-                                                        <Image Source="avares://FH6RB/Assets/icons/icon_pulse.png" Width="18" Height="18"
+                                                        <Image Classes="loop" Width="18" Height="18"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Button>
                                                     <Button Classes="mbutton" Width="18" Height="18"
                                                             Click="OnPlayMarkerLoop" Tag="{Binding}"
                                                             ToolTip.Tip="{x:Static assets:Str.TipPlayMarkerLoop}">
-                                                        <Image Classes="loop" Width="18" Height="18"
+                                                        <Image Classes="play" Width="18" Height="18"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Button>
                                                 </StackPanel>

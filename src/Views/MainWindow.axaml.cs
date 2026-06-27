@@ -48,6 +48,82 @@ public partial class MainWindow : Window
         AppleUniformTypeIdentifiers = ["public.audio"],
     };
 
+    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".oga",
+        ".opus", ".wma", ".aiff", ".aif", ".alac", ".ape", ".wv",
+    };
+
+    private static string? ResolveAudioPath(string path)
+    {
+        if (path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+        {
+            path = ResolveShortcutChain(path) ?? string.Empty;
+        }
+
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        return AudioExtensions.Contains(System.IO.Path.GetExtension(path)) ? path : null;
+    }
+
+    private static string? ResolveShortcut(string lnkPath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return null;
+        }
+
+        try
+        {
+            var shellType = Type.GetTypeFromProgID("WScript.Shell");
+            if (shellType is null)
+            {
+                return null;
+            }
+
+            dynamic? shell = Activator.CreateInstance(shellType);
+            if (shell is null)
+            {
+                return null;
+            }
+
+            dynamic shortcut = shell.CreateShortcut(lnkPath);
+            string target = shortcut.TargetPath;
+            return string.IsNullOrEmpty(target) ? null : target;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private const int ShortcutMaxDepth = 8;
+
+    private static string? ResolveShortcutChain(string path)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < ShortcutMaxDepth && path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase); i++)
+        {
+            if (!seen.Add(path))
+            {
+                return null;
+            }
+
+            var next = ResolveShortcut(path);
+            if (string.IsNullOrEmpty(next))
+            {
+                return null;
+            }
+
+            path = next;
+        }
+
+        return path;
+    }
+
     public async Task ShowSettingsAsync(bool firstRun = false)
     {
         var vm = new SettingsWindowViewModel(Vm.Settings) { IsFirstRun = firstRun };
@@ -272,9 +348,9 @@ public partial class MainWindow : Window
         
         foreach (var file in files)
         {
-            if (file.TryGetLocalPath() is { } path)
+            if (file.TryGetLocalPath() is { } path && ResolveAudioPath(path) is { } audio)
             {
-                paths.Add(path);
+                paths.Add(audio);
             }
         }
 
@@ -359,7 +435,8 @@ public partial class MainWindow : Window
             FileTypeFilter = [AudioFiles],
         });
 
-        if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path)
+        if (files.Count == 0 || files[0].TryGetLocalPath() is not { } picked
+            || ResolveAudioPath(picked) is not { } path)
         {
             return;
         }
@@ -389,8 +466,11 @@ public partial class MainWindow : Window
         track.ReplacementPath = path;
         track.Title = mTitle ?? fTitle;
         track.Artist = mArtist ?? fArtist;
-        
-        track.Markers = null;
+
+        if (!track.IsCustom)
+        {
+            track.Markers = null;
+        }
         track.SampleLength = 0;
         track.SampleRate = 0;
         track.PendingDurationSeconds = mDuration > 0 ? mDuration : null;

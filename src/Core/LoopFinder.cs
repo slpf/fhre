@@ -1,4 +1,4 @@
-namespace FH6RB.Core;
+﻿namespace FH6RB.Core;
 
 public readonly struct LoopPair
 {
@@ -27,10 +27,10 @@ public sealed record LoopSearchOptions
     public bool DisablePruning { get; init; } = false;
     public bool PreEmphasis { get; init; } = false;
     public bool MultiResolution { get; init; } = false;
-    public double BorderSimilarityThreshold { get; init; } = 0.5;
+    public double BorderSimilarityThreshold { get; init; } = 0.3;
     public int RefinePasses { get; init; } = 3;
     public bool RequireOnsetAlignment { get; init; } = true;
-    public double TransitionSmoothnessThreshold { get; init; } = 0.4;
+    public double TransitionSmoothnessThreshold { get; init; } = 0.3;
     public double TimbreWeight { get; init; } = 0.2;
     public double SectionWeight { get; init; } = 0.1;
 
@@ -39,9 +39,6 @@ public sealed record LoopSearchOptions
 
 public static class LoopSearchDefaults
 {
-    // Minimum loop duration in seconds. Hard-coded: the slider was removed from the
-    // settings UI (no real value in letting users tune this). Loops shorter than
-    // this tend to be transient matches rather than genuine musical phrases.
     public const double MinLoopSeconds = 20.0;
 }
 
@@ -52,23 +49,20 @@ public static class LoopFinder
     private const int Bins = NFft / 2 + 1;
     private const int NChroma = 12;
 
-    private static readonly Dictionary<(string Path, LoopSearchOptions Options), List<LoopPair>> _cache = [];
+    private sealed record Analysis(
+        List<Cand> Candidates, double Bpm, int[] Sections, int NFrames,
+        int TrimOffset, double SectionWeight);
 
-    // Auto-detected, per-track tuning. Computed once at the start of Find() when AutoTune
-    // is enabled. Replaces the scattered AutoNoteDeviation / TestOffset heuristics with a
-    // unified view of track characteristics.
+    // Cached per role-independent key: the heavy search runs once; Track/Post only
+    // re-rank the shared candidate set.
+    private static readonly Dictionary<(string Path, LoopSearchOptions Options), Analysis> _cache = [];
+
     internal sealed record LoopAutoProfile
     {
         public double NoteDeviation { get; init; }
         public double LoudnessTolerance { get; init; }
-        public double BorderSimilarity { get; init; }
-        public double TransitionSmoothness { get; init; }
         public double TimbreWeight { get; init; }
         public double SectionWeight { get; init; }
-        public int RefinePasses { get; init; }
-        public int TestOffsetBeats { get; init; }
-        public bool MultiResolution { get; init; }
-        public bool StrictBeatAnchoring { get; init; }
 
         public static LoopAutoProfile Derive(float[][] chroma, float[] onsetEnvelope,
             double[] loudness, int[] beats, int[] sections, double bpm, int nFrames, int rate)
@@ -76,41 +70,21 @@ public static class LoopFinder
             var chromaVar = ComputeChromaVariance(chroma);
             var onsetDensity = ComputeOnsetDensity(onsetEnvelope, nFrames, rate);
             var dynamicRange = ComputeDynamicRange(loudness);
-            var beatRegularity = ComputeBeatRegularity(beats, bpm, rate);
-
             var percussive = onsetDensity > 1.5;
-            var strictBeats = beatRegularity > 0.7;
 
-            // Mapping rules. Auto values are intentionally <= the LoopSearchOptions defaults
-            // so that flipping Auto off does not silently tighten filtering and cause
-            // previously-found loops to disappear. Percussive tracks get *less* timbre
-            // weight because MFCC similarity is unreliable on drums/transients.
-            var noteDev = chromaVar > 0.5 ? 0.11 : (chromaVar < 0.15 ? 0.07 : 0.0875);
-            var loudTol = dynamicRange > 15 ? 0.5 : (dynamicRange > 8 ? 0.4 : 0.25);
-            var border = percussive ? 0.5 : 0.4;
-            var smooth = percussive ? 0.4 : 0.3;
+            var noteDev = chromaVar > 0.5 ? 0.09 : (chromaVar < 0.15 ? 0.07 : 0.08);
+            var loudTol = dynamicRange > 15 ? 0.4 : (dynamicRange > 8 ? 0.35 : 0.25);
             var timbreW = percussive ? 0.05 : 0.2;
             var sectionW = sections.Length > 4 ? 0.2 : 0.1;
-            var refine = chromaVar < 0.2 ? 3 : 2;
-            var testOff = chromaVar > 0.5 ? 6 : (chromaVar < 0.1 ? 24 : 12);
-            var multiRes = chromaVar < 0.4;
 
             return new LoopAutoProfile
             {
                 NoteDeviation = noteDev,
                 LoudnessTolerance = loudTol,
-                BorderSimilarity = border,
-                TransitionSmoothness = smooth,
                 TimbreWeight = timbreW,
                 SectionWeight = sectionW,
-                RefinePasses = refine,
-                TestOffsetBeats = testOff,
-                MultiResolution = multiRes,
-                StrictBeatAnchoring = strictBeats,
             };
         }
-
-        // ---- characteristic extractors ----
 
         private static double ComputeChromaVariance(float[][] chroma)
         {
@@ -144,37 +118,10 @@ public static class LoopFinder
             if (loudness.Length < 4) return 10;
             return Percentile(loudness, 95) - Percentile(loudness, 10);
         }
-
-        private static double ComputeBeatRegularity(int[] beats, double bpm, int rate)
-        {
-            if (beats.Length < 3 || bpm < 30 || rate <= 0) return 0;
-            var intervals = new List<double>(beats.Length - 1);
-            for (var i = 1; i < beats.Length; i++)
-            {
-                intervals.Add(Math.Abs(beats[i] - beats[i - 1]));
-            }
-            var mean = intervals.Average();
-            if (mean < 1e-6) return 0;
-            double sq = 0;
-            foreach (var x in intervals)
-            {
-                var d = x - mean;
-                sq += d * d;
-            }
-            var std = Math.Sqrt(sq / intervals.Count);
-            // Coefficient of variation -> bounded 0..1 stability score
-            var cv = std / mean;
-            return Math.Clamp(1 - cv, 0, 1);
-        }
     }
 
     public static List<LoopPair> Find(float[]? mono, int rate, LoopSearchOptions options, string? cacheKey = null, Action<string>? log = null)
     {
-        if (cacheKey is not null && _cache.TryGetValue((cacheKey, options), out var cached))
-        {
-            return cached;
-        }
-
         var result = new List<LoopPair>();
         try
         {
@@ -183,7 +130,13 @@ public static class LoopFinder
                 return result;
             }
 
-            mono = PreProcess(mono);
+            if (cacheKey is not null && _cache.TryGetValue((cacheKey, options with { Role = LoopRole.Generic }), out var cached))
+            {
+                RankAndAppend(PreProcess(mono, out _), rate, cached, options, result, log);
+                return result;
+            }
+
+            mono = PreProcess(mono, out var trimOffset);
             if (mono.Length < NFft * 4)
             {
                 return result;
@@ -221,12 +174,8 @@ public static class LoopFinder
             anchors = UnionSorted(anchors, sections);
         }
 
-        // Onset envelope is used both for the AutoProfile (per-track heuristics) and for
-        // the additive bonus pass below; compute it once and reuse.
         var onsetEnv = OnsetEnvelope(power, rate);
 
-        // AutoTune: compute one unified profile from track characteristics and override the
-        // relevant thresholds. Manual mode uses the caller's options verbatim.
         LoopAutoProfile? profile = null;
         LoopSearchOptions effOptions = options;
         if (options.AutoTune)
@@ -237,12 +186,8 @@ public static class LoopFinder
             {
                 NoteDeviation = profile.NoteDeviation,
                 LoudnessDifference = profile.LoudnessTolerance,
-                BorderSimilarityThreshold = profile.BorderSimilarity,
-                TransitionSmoothnessThreshold = profile.TransitionSmoothness,
                 TimbreWeight = profile.TimbreWeight,
                 SectionWeight = profile.SectionWeight,
-                RefinePasses = profile.RefinePasses,
-                MultiResolution = profile.MultiResolution,
             };
         }
         var effNoteDev = effOptions.NoteDeviation;
@@ -253,7 +198,7 @@ public static class LoopFinder
             return result;
         }
 
-        var testOffset = TestOffset(nFrames, rate, bpm, chroma, profile?.TestOffsetBeats ?? 12);
+        var testOffset = TestOffset(nFrames, rate, bpm, chroma, 12);
         var weights = Weights(testOffset, Math.Max(2, testOffset / 12), 1);
 
         void LogLine(string s) => log?.Invoke(s);
@@ -276,6 +221,8 @@ public static class LoopFinder
                 passSpecs.Add((baseMinLoop, SecondsToFrames(Math.Min(totalSec, maxLoopBaseSec * 2), rate)));
             }
         }
+
+        var allCandidates = new List<Cand>();
 
         foreach (var (minLoop, maxLoop) in passSpecs)
         {
@@ -305,19 +252,49 @@ public static class LoopFinder
                 RefineSub(candidates, chroma, loudness, testOffset, weights, nFrames);
             }
 
-            // Sample-level cross-correlation is the most reliable validation signal we have.
-            // Promote it out of RefinePasses>=3 gating so it always runs on top-12 candidates.
-            // Early-exit inside RefineXCorr skips low-score candidates to keep cost in check.
             RefineXCorr(candidates, mono, rate);
 
-            if (effOptions.TimbreWeight > 0 && mfcc is not null)
+            var timbreSignal = (mfcc is not null && effOptions.TimbreWeight > 0) ? mfcc : chroma;
+            var timbreEnabled = ReferenceEquals(timbreSignal, mfcc);
+            foreach (var c in candidates)
             {
-                var tw = effOptions.TimbreWeight;
-                foreach (var c in candidates)
+                var len = c.EndFrame - c.StartFrame;
+                var chromaSeam = c.Score;
+                var logSum = Math.Log(Math.Clamp(chromaSeam, 1e-4, 1.0));
+                var factors = 1;
+
+                var timbre = -1.0;
+                if (timbreEnabled)
                 {
-                    var t = LoopScore(c.StartFrame, c.EndFrame, mfcc, testOffset, weights);
-                    c.Score = (1 - tw) * c.Score + tw * t;
+                    timbre = LoopScore(c.StartFrame, c.EndFrame, timbreSignal, testOffset, weights);
+                    logSum += Math.Log(Math.Clamp(timbre, 1e-4, 1.0));
+                    factors++;
                 }
+
+                var b3 = 2 * c.EndFrame - c.StartFrame;
+                if (b3 > c.EndFrame && b3 + len < nFrames)
+                {
+                    var cyc = LoopScore(c.EndFrame, b3, timbreSignal, testOffset, weights);
+                    logSum += Math.Log(Math.Clamp(cyc, 1e-4, 1.0));
+                    factors++;
+                }
+
+                var quality = Math.Exp(logSum / factors);
+
+                // Harmony agrees but timbre doesn't = likely an instrumental/vocal content
+                // mismatch at the seam (e.g. start on an instrumental break, end mid-vocal).
+                // The geomean averages this away, so penalize the gap directly. Loops where
+                // both signals are high have no gap and are unaffected.
+                if (timbre >= 0)
+                {
+                    var gap = chromaSeam - timbre;
+                    if (gap > 0.05)
+                    {
+                        quality -= 0.6 * (gap - 0.05);
+                    }
+                }
+
+                c.Score = Math.Clamp(quality, 0.0, 1.0);
             }
 
             if (effOptions.BorderSimilarityThreshold > 0)
@@ -335,20 +312,13 @@ public static class LoopFinder
             if (effOptions.RequireOnsetAlignment && beats.Length >= 2)
             {
                 var snapshot = new List<Cand>(candidates);
-                if (profile is { StrictBeatAnchoring: true })
-                {
-                    candidates.RemoveAll(c => !BeatAnchored(beats, bpm, rate, c.StartFrame, c.EndFrame));
-                }
-                else
-                {
-                    candidates.RemoveAll(c => !HasAtLeastTwoBeatsInRange(beats, c.StartFrame, c.EndFrame));
-                }
+                candidates.RemoveAll(c => !HasAtLeastTwoBeatsInRange(beats, c.StartFrame, c.EndFrame));
                 if (candidates.Count == 0)
                 {
                     candidates.AddRange(snapshot);
                 }
 
-                LogLine($"  onset(strict={(profile is { StrictBeatAnchoring: true })}) -> {candidates.Count}");
+                LogLine($"  onset -> {candidates.Count}");
             }
 
             if (effOptions.TransitionSmoothnessThreshold > 0)
@@ -363,85 +333,28 @@ public static class LoopFinder
                 LogLine($"  smooth>={effOptions.TransitionSmoothnessThreshold:0.00} -> {candidates.Count}");
             }
 
-            // AutoTune-only score adjustments: penalize silent / transient-mismatched loops,
-            // reward tonal continuity at the wrap. Manual mode stays bit-identical.
-            if (options.AutoTune && candidates.Count > 0)
-            {
-                var rmsPenalty = 0;
-                var onsetPenalty = 0;
-                var wrapBonus = 0;
-                foreach (var c in candidates)
-                {
-                    if (LoopMeanRms(mono, c.StartFrame, c.EndFrame) < 0.001)
-                    {
-                        c.Score *= 0.5;
-                        rmsPenalty++;
-                    }
-                    if (OnsetBoundarySimilarity(onsetEnv, c.StartFrame, c.EndFrame) < 0.3)
-                    {
-                        c.Score *= 0.7;
-                        onsetPenalty++;
-                    }
-                    if (WrapAroundBorderCosine(chroma, c.StartFrame, c.EndFrame, 4) >= 0.7)
-                    {
-                        c.Score = Math.Min(1.0, c.Score + 0.02);
-                        wrapBonus++;
-                    }
-                }
-                candidates.Sort((a, b) => b.Score.CompareTo(a.Score));
-                LogLine($"  autoTune: rms-pen={rmsPenalty} onset-pen={onsetPenalty} wrap-bonus={wrapBonus}");
-            }
-
-            if (candidates.Count > 1)
-            {
-                if (options.Role == LoopRole.Generic)
-                {
-                    PrioritizeDuration(candidates);
-                }
-                else
-                {
-                    RankForRole(candidates, options.Role, nFrames, bpm, rate, sections, effOptions.SectionWeight);
-                }
-            }
-
-            var topN = Math.Min(12, candidates.Count);
-            for (var i = 0; i < topN; i++)
-            {
-                var c = candidates[i];
-                LogLine($"  cand#{i} {(double) (c.StartFrame * Hop) / rate:0.00}s -> {(double) (c.EndFrame * Hop) / rate:0.00}s len={(double) ((c.EndFrame - c.StartFrame) * Hop) / rate:0.0}s score={c.Score:0.000}");
-            }
-
-            // Additive bonus pass for top-N candidates. Each bonus is independently
-            // clamped to [0, +0.1] and silently returns 0 when the data needed for
-            // the check is unavailable. No penalties, so existing good loops cannot
-            // regress; worst case is a candidate gets no bonus.
-            if (topN > 0)
-            {
-                ApplyTopNBonuses(candidates, topN, chroma, power, onsetEnv, mono, bpm, testOffset, weights, nFrames, rate);
-            }
-
-            AppendLoops(mono, rate, candidates, result, effOptions.MaxResults);
-            LogLine($"  appended -> total {result.Count}");
-            if (result.Count >= effOptions.MaxResults)
-            {
-                break;
-            }
+            allCandidates.AddRange(candidates);
         }
 
-        LogLine($"final: {result.Count} loops");
-        foreach (var lp in result)
+        var analysis = new Analysis(allCandidates, bpm, sections, nFrames, trimOffset, effOptions.SectionWeight);
+        if (cacheKey is not null)
         {
-            LogLine($"  {(double) lp.LoopStart / rate:0.00}s -> {(double) lp.LoopEnd / rate:0.00}s len={(double) (lp.LoopEnd - lp.LoopStart) / rate:0.0}s score={lp.Score:0.000}");
+            if (_cache.Count >= 32)
+            {
+                _cache.Clear();
+            }
+
+            _cache[(cacheKey, options with { Role = LoopRole.Generic })] = analysis;
         }
+
+        RankAndAppend(mono, rate, analysis, options, result, log);
 
         return result;
         }
-        finally
+        catch (Exception ex)
         {
-            if (cacheKey is not null)
-            {
-                _cache[(cacheKey, options)] = result;
-            }
+            log?.Invoke($"[LoopFinder] unexpected error: {ex.Message}");
+            return result;
         }
     }
 
@@ -458,8 +371,43 @@ public static class LoopFinder
         }, cacheKey);
     }
 
+    private static void RankAndAppend(float[] mono, int rate, Analysis analysis,
+        LoopSearchOptions options, List<LoopPair> result, Action<string>? log)
+    {
+        void LogLine(string s) => log?.Invoke(s);
+
+        var candidates = new List<Cand>(analysis.Candidates);
+        if (candidates.Count > 1)
+        {
+            if (options.Role == LoopRole.Generic)
+            {
+                PrioritizeDuration(candidates);
+            }
+            else
+            {
+                RankForRole(candidates, options.Role, analysis.NFrames, analysis.Bpm, rate,
+                    analysis.Sections, analysis.SectionWeight);
+            }
+        }
+
+        var topN = Math.Min(12, candidates.Count);
+        for (var i = 0; i < topN; i++)
+        {
+            var c = candidates[i];
+            LogLine($"  cand#{i} {(double) (c.StartFrame * Hop) / rate:0.00}s -> {(double) (c.EndFrame * Hop) / rate:0.00}s len={(double) ((c.EndFrame - c.StartFrame) * Hop) / rate:0.0}s score={c.Score:0.000}");
+        }
+
+        AppendLoops(mono, rate, candidates, result, options.MaxResults, analysis.TrimOffset);
+
+        LogLine($"final: {result.Count} loops");
+        foreach (var lp in result)
+        {
+            LogLine($"  {(double) lp.LoopStart / rate:0.00}s -> {(double) lp.LoopEnd / rate:0.00}s len={(double) (lp.LoopEnd - lp.LoopStart) / rate:0.0}s score={lp.Score:0.000}");
+        }
+    }
+
     private static void AppendLoops(float[] mono, int rate, List<Cand> candidates,
-        List<LoopPair> result, int maxResults)
+        List<LoopPair> result, int maxResults, long trimOffset)
     {
         var tol = (int) (1.0 * rate / Hop);
         var tolSamples = (long) tol * Hop;
@@ -467,8 +415,8 @@ public static class LoopFinder
 
         foreach (var p in candidates)
         {
-            var s = NearestZeroCrossing(mono, rate, (long) p.StartFrame * Hop);
-            var e = NearestZeroCrossing(mono, rate, (long) p.EndFrame * Hop);
+            var s = NearestZeroCrossing(mono, rate, (long) p.StartFrame * Hop) + trimOffset;
+            var e = NearestZeroCrossing(mono, rate, (long) p.EndFrame * Hop) + trimOffset;
 
             var dup = result.Any(q =>
             {
@@ -516,10 +464,8 @@ public static class LoopFinder
 
     private static int TestOffset(int nFrames, int rate, double bpm, float[][]? chroma, int beatsOverride = 12)
     {
-        // Base: 12 beats at detected tempo (overridable by LoopAutoProfile when AutoTune is on).
         var beats = (double) beatsOverride;
 
-        // Adapt to chroma variance: stable harmony → longer window, chaotic → shorter.
         if (chroma is { Length: >= 8 })
         {
             var step = Math.Max(1, chroma.Length / 100);
@@ -624,7 +570,6 @@ public static class LoopFinder
         list.Sort((a, b) => b.Score.CompareTo(a.Score));
     }
 
-    // ---- candidate generation (port of _find_candidate_pairs) ----
     private static List<Cand> FindCandidatePairs(float[][] chroma, double[] loudness, int[] beats,
         int minLoop, int maxLoop, double gateScale, int preRollFrames,
         double noteDeviation, double loudnessDifference)
@@ -704,7 +649,6 @@ public static class LoopFinder
         return avg;
     }
 
-    // ---- scoring + pruning (port of _assess_and_filter_loop_pairs) ----
     private static void Assess(float[][] chroma, List<Cand> candidates, int testOffset, double[] weights,
         bool disablePruning)
     {
@@ -754,7 +698,6 @@ public static class LoopFinder
         return keep;
     }
 
-    // ---- beat detection (port of librosa.onset_strength + beat_track, simplified) ----
     private static (double Bpm, int[] Beats) DetectBeats(float[][] power, int rate)
     {
         var onset = OnsetEnvelope(power, rate);
@@ -784,8 +727,6 @@ public static class LoopFinder
         var onset = new float[n];
         if (n < 2) return onset;
 
-        // Multi-band spectral flux: low (kick/bass), mid (snare/vocal), high (hat/cymbal).
-        // Take max across bands — different genres emphasize different attacks.
         var lowEnd = Math.Max(1, (int) (250.0 * NFft / rate));
         var midEnd = Math.Min(Bins, Math.Max(lowEnd + 1, (int) (2000.0 * NFft / rate)));
 
@@ -806,7 +747,6 @@ public static class LoopFinder
             onset[f] = Math.Max(low, Math.Max(mid, high));
         }
 
-        // light log-compression for dynamic range
         for (var f = 0; f < n; f++)
         {
             onset[f] = (float) Math.Log(1.0 + onset[f] * 1e6);
@@ -818,7 +758,6 @@ public static class LoopFinder
     private static double EstimateTempo(float[] onset, int rate)
     {
         var n = onset.Length;
-        // BPM range: 60 - 200; lag = 60/bpm * rate / Hop frames
         var minBpm = 60.0;
         var maxBpm = 200.0;
         var minLag = Math.Max(2, (int) Math.Round(60.0 / maxBpm * rate / Hop));
@@ -829,7 +768,6 @@ public static class LoopFinder
             return 120;
         }
 
-        // PLP-style: Gaussian window around track midpoint to down-weight intro/outro
         var halfWin = Math.Min(n / 4, maxLag * 4);
         if (halfWin < minLag * 2) halfWin = minLag * 2;
         var mid = n / 2.0;
@@ -868,14 +806,12 @@ public static class LoopFinder
     {
         var n = onset.Length;
         var beatPeriod = Math.Max(2.0, 60.0 / bpm * rate / Hop);
-        var tightness = 100.0; // higher = stricter periodicity, like librosa tightness=100
+        var tightness = 100.0;
 
-        // DP: dp[f, 0] = best score if f is NOT a beat, dp[f, 1] = best score if f IS a beat
         var dpBeat = new double[n];
         var dpSkip = new double[n];
-        var bestPrevBeat = new int[n]; // best previous beat frame index (for backtrack when current is beat)
+        var bestPrevBeat = new int[n];
 
-        // Seed: first beat at frame 0
         dpBeat[0] = onset[0];
         dpSkip[0] = double.NegativeInfinity;
         bestPrevBeat[0] = -1;
@@ -884,7 +820,6 @@ public static class LoopFinder
         {
             dpSkip[f] = Math.Max(dpSkip[f - 1], dpBeat[f - 1]);
 
-            // find best previous beat to come from, allowing lag near beatPeriod ± tightness
             var lagLo = Math.Max(1, (int) Math.Round(beatPeriod * 0.5));
             var lagHi = Math.Max(lagLo + 1, (int) Math.Round(beatPeriod * 1.5));
 
@@ -895,7 +830,6 @@ public static class LoopFinder
             {
                 var prevScore = Math.Max(dpSkip[f - lag], dpBeat[f - lag]);
                 if (prevScore <= double.NegativeInfinity / 2) continue;
-                // Gaussian penalty for deviating from beatPeriod
                 var x = (lag - beatPeriod) / beatPeriod;
                 var pen = Math.Exp(-0.5 * tightness * x * x);
                 var s = prevScore + pen + onset[f];
@@ -910,7 +844,6 @@ public static class LoopFinder
             bestPrevBeat[f] = bestLag;
         }
 
-        // Backtrack from last frame
         var beats = new List<int>();
         var lastBeat = -1;
         for (var f = n - 1; f >= 0; f--)
@@ -923,7 +856,7 @@ public static class LoopFinder
                     lastBeat = f;
                     var prev = bestPrevBeat[f];
                     if (prev < 1) break;
-                    f = f - prev + 1; // loop will f-- so advance to prev frame
+                    f = f - prev + 1;
                 }
             }
         }
@@ -941,7 +874,6 @@ public static class LoopFinder
         return arr;
     }
 
-    // ---- sub-hop refine (single-frame neighborhood around top candidates) ----
     private static void RefineHop(List<Cand> list, float[][] chroma, double[] loudness, int testOffset,
         double[] weights, int minLoop, int maxLoop, int nFrames)
     {
@@ -986,7 +918,6 @@ public static class LoopFinder
         list.Sort((a, b) => b.Score.CompareTo(a.Score));
     }
 
-    // ---- sub-hop refinement (linear chroma interpolation at ±0.5 frame) ----
     private static void RefineSub(List<Cand> candidates, float[][] chroma, double[] loudness, int testOffset,
         double[] weights, int nFrames)
     {
@@ -1079,17 +1010,15 @@ public static class LoopFinder
         return dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
     }
 
-    // ---- sample-level cross-correlation refinement (top-N with early-exit) ----
     private static void RefineXCorr(List<Cand> candidates, float[] audio, int rate)
     {
         var topN = Math.Min(candidates.Count, 12);
         var work = candidates.GetRange(0, topN);
-        var maxLag = Math.Max(64, rate / 100); // ±10 ms at 44.1k
-        var win = Math.Min(2048, rate / 20); // 50 ms window
+        var maxLag = Math.Max(64, rate / 100);
+        var win = Math.Min(2048, rate / 20);
 
         foreach (var c in work)
         {
-            // Early-exit: chroma score too low — sample-level XCorr is unlikely to help.
             if (c.Score < 0.7) continue;
 
             var sBase = c.StartFrame * Hop;
@@ -1122,7 +1051,7 @@ public static class LoopFinder
             {
                 c.StartFrame = bestS / Hop;
                 c.EndFrame = bestE / Hop;
-                c.Score = Math.Min(1.0, c.Score + 0.05 * bestCorr); // mild boost for well-aligned samples
+                c.Score = Math.Min(1.0, c.Score + 0.05 * bestCorr);
             }
         }
     }
@@ -1143,11 +1072,8 @@ public static class LoopFinder
         return sum / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
     }
 
-    // ---- border similarity filter ----
     private static void BorderSimilarityFilter(List<Cand> candidates, float[][] chroma, int rate, double threshold)
     {
-        // First 50 ms after loopStart vs first 50 ms after loopEnd.
-        // Use actual sample rate so 48 kHz / 96 kHz audio gets correct window width.
         var borderFrames = Math.Max(2, (int) Math.Round(0.050 * rate / Hop));
         borderFrames = Math.Min(borderFrames, Math.Max(2, chroma.Length / 4));
 
@@ -1180,116 +1106,6 @@ public static class LoopFinder
         return false;
     }
 
-    // ---- loop span RMS (rejects silent / near-silent loops that trivially match) ----
-    private static double LoopMeanRms(float[] audio, int startFrame, int endFrame)
-    {
-        var s = Math.Max(0, startFrame) * Hop;
-        var e = Math.Min(audio.Length, endFrame * Hop);
-        var len = e - s;
-        if (len <= 0) return 0;
-        double sum = 0;
-        for (var i = s; i < e; i++) sum += audio[i] * audio[i];
-        return Math.Sqrt(sum / len);
-    }
-
-    // ---- onset envelope similarity at the loop boundary ----
-    // catches transients (drum hits) that chroma ignores: a snare at end with no snare at start
-    // gives low similarity even when chroma is stable. Returns 1/ratio (1.0 when both silent).
-    private static double OnsetBoundarySimilarity(float[] onset, int startFrame, int endFrame)
-    {
-        const int span = 3;
-        var n = onset.Length;
-        if (n == 0) return 1.0;
-
-        double endE = 0, startE = 0;
-        for (var d = -span; d <= 0; d++)
-        {
-            var i = Math.Clamp(endFrame + d, 0, n - 1);
-            endE += onset[i];
-        }
-        for (var d = 0; d <= span; d++)
-        {
-            var i = Math.Clamp(startFrame + d, 0, n - 1);
-            startE += onset[i];
-        }
-        endE /= span + 1;
-        startE /= span + 1;
-
-        if (endE < 1e-3 && startE < 1e-3) return 1.0;
-        if (endE < 1e-3 || startE < 1e-3) return 0.0;
-        var ratio = Math.Max(endE, startE) / Math.Min(endE, startE);
-        return 1.0 / ratio;
-    }
-
-    // ---- wrap-around border cosine: chroma just BEFORE end vs chroma just AFTER start ----
-    // symmetrical to BorderCosine (forward window). Confirms tonal continuity across the join.
-    private static double WrapAroundBorderCosine(float[][] chroma, int startFrame, int endFrame, int span)
-    {
-        var n = chroma.Length;
-        var preEnd = new float[NChroma];
-        var postStart = new float[NChroma];
-        var preN = 0;
-        var postN = 0;
-        for (var k = 0; k < span; k++)
-        {
-            var pi = endFrame - span + k;
-            if (pi >= 0 && pi < n)
-            {
-                var p = chroma[pi];
-                for (var c = 0; c < NChroma; c++) preEnd[c] += p[c];
-                preN++;
-            }
-            var qi = startFrame + k;
-            if (qi >= 0 && qi < n)
-            {
-                var q = chroma[qi];
-                for (var c = 0; c < NChroma; c++) postStart[c] += q[c];
-                postN++;
-            }
-        }
-        if (preN == 0 || postN == 0) return 1.0;
-        var inv1 = 1f / preN;
-        var inv2 = 1f / postN;
-        double dot = 0, na = 0, nb = 0;
-        for (var c = 0; c < NChroma; c++)
-        {
-            var a = preEnd[c] * inv1;
-            var b = postStart[c] * inv2;
-            dot += a * b;
-            na += a * a;
-            nb += b * b;
-        }
-        return dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
-    }
-
-    // ---- binary-search nearest beat distance ----
-    private static int NearestBeatDistance(int[] beats, int frame)
-    {
-        if (beats.Length == 0) return int.MaxValue;
-        var lo = 0;
-        var hi = beats.Length - 1;
-        while (lo < hi)
-        {
-            var mid = (lo + hi) >> 1;
-            if (beats[mid] < frame) lo = mid + 1; else hi = mid;
-        }
-        var d1 = Math.Abs(beats[lo] - frame);
-        var d2 = lo > 0 ? Math.Abs(beats[lo - 1] - frame) : int.MaxValue;
-        return Math.Min(d1, d2);
-    }
-
-    // ---- strict beat-anchoring at BOTH boundaries (replaces weak "2 beats anywhere" check) ----
-    private static bool BeatAnchored(int[] beats, double bpm, int rate,
-        int startFrame, int endFrame)
-    {
-        if (beats.Length < 2 || bpm < 30) return false;
-        var beatFrames = 60.0 / bpm * rate / Hop;
-        var tol = Math.Max(2, (int) Math.Round(beatFrames / 8.0));
-        return NearestBeatDistance(beats, startFrame) <= tol
-            && NearestBeatDistance(beats, endFrame) <= tol;
-    }
-
-    // ---- number of section boundaries lying strictly inside the loop span ----
     private static int SectionCrossingCount(int[] sections, int startFrame, int endFrame)
     {
         if (sections.Length == 0) return 0;
@@ -1301,7 +1117,6 @@ public static class LoopFinder
         return n;
     }
 
-    // ---- transition smoothness (RMS match across loop join) ----
     private static double TransitionSmoothness(float[] audio, int rate, int startFrame, int endFrame)
     {
         var ms = (int) (0.050 * rate);
@@ -1422,6 +1237,12 @@ public static class LoopFinder
     {
         var barFrames = bpm > 1 ? 60.0 / bpm * 4.0 * rate / Hop : 0;
 
+        static double Gauss(double x, double mu, double sig)
+        {
+            var d = (x - mu) / sig;
+            return Math.Exp(-0.5 * d * d);
+        }
+
         double Priority(Cand c)
         {
             var len = c.EndFrame - c.StartFrame;
@@ -1430,10 +1251,46 @@ public static class LoopFinder
             var endFrac = (double) c.EndFrame / nFrames;
             var pr = c.Score;
 
-            pr += 0.05 * endFrac;
+            // Empirical priors from official FH4/FH5/FH6 RadioInfo loops (700+ samples).
+            // Quality (Score) stays dominant; these are moderate nudges shaping the order.
 
+            // Bar-quantization: ~90% of official loops are an integer number of bars,
+            // clustered on round counts. Role bar-count targets: Track ~80, Post ~16.
+            if (barFrames > 1)
+            {
+                var bars = len / barFrames;
+                var bdist = Math.Min(bars - Math.Floor(bars), Math.Ceiling(bars) - bars);
+                pr += 0.04 * (1 - 2 * bdist);
+
+                var nb = (int) Math.Round(bars);
+                if (nb % 16 == 0)
+                {
+                    pr += 0.02;
+                }
+                else if (nb % 8 == 0)
+                {
+                    pr += 0.012;
+                }
+                else if (nb % 4 == 0)
+                {
+                    pr += 0.006;
+                }
+
+                if (bars >= 1)
+                {
+                    var target = role == LoopRole.Track ? 80.0 : 16.0;
+                    var lr = Math.Log(bars / target);
+                    pr += 0.025 * Math.Exp(-lr * lr / (2 * 0.5 * 0.5));
+                }
+            }
+
+            // Position / length priors (soft Gaussians around the official medians).
             if (role == LoopRole.Track)
             {
+                pr += 0.03 * Gauss(startFrac, 0.16, 0.12);
+                pr += 0.03 * Gauss(endFrac, 0.88, 0.10);
+                pr += 0.025 * Gauss(lenFrac, 0.68, 0.20);
+
                 if (lenFrac < 0.15)
                 {
                     pr -= 0.06 * (0.15 - lenFrac) / 0.15;
@@ -1441,25 +1298,22 @@ public static class LoopFinder
             }
             else
             {
+                pr += 0.03 * Gauss(startFrac, 0.76, 0.12);
+                pr += 0.03 * Gauss(endFrac, 0.92, 0.08);
+                pr += 0.025 * Gauss(lenFrac, 0.16, 0.10);
+
+                // Post loops live in the second half — keep this a firm structural penalty.
+                if (startFrac < 0.5)
+                {
+                    pr -= 0.30 * (0.5 - startFrac) * 2.0;
+                }
+
                 if (lenFrac > 0.4)
                 {
                     pr -= 0.06 * Math.Min(1.0, (lenFrac - 0.4) / 0.6);
                 }
-
-                pr -= 0.30 * Math.Max(0, 0.5 - startFrac) * 2.0;
             }
 
-            if (barFrames > 1)
-            {
-                var bars = len / barFrames;
-                var frac = bars - Math.Floor(bars);
-                var dist = Math.Min(frac, 1 - frac);
-                pr += 0.005 * (1 - 2 * dist);
-            }
-
-            // Penalize loops that span multiple sections — they tend to cross section
-            // boundaries mid-loop, which sounds jarring. Applied only when sections are
-            // confidently detected (>=3) and SectionWeight is enabled.
             if (sectionWeight > 0 && sections.Length >= 3)
             {
                 var crossings = SectionCrossingCount(sections, c.StartFrame, c.EndFrame);
@@ -1469,13 +1323,7 @@ public static class LoopFinder
             return pr;
         }
 
-        foreach (var c in list)
-        {
-            var adj = Math.Min(0.05, Priority(c) - c.Score);
-            c.Score = Math.Clamp(c.Score + adj, 0, 1);
-        }
-
-        list.Sort((a, b) => b.Score.CompareTo(a.Score));
+        list.Sort((a, b) => Priority(b).CompareTo(Priority(a)));
     }
 
     private static double LoopScore(int b1, int b2, float[][] chroma, int testDuration, double[] weights)
@@ -1487,7 +1335,6 @@ public static class LoopFinder
         return Math.Max(ahead, behind);
     }
 
-    // ---- consensus sub-window scoring: penalizes candidates where ANY sub-window fails ----
     private static double SubseqSimilarityConsensus(int b1Start, int b2Start, float[][] chroma,
         int testEndOffset, double[] weights)
     {
@@ -1508,11 +1355,6 @@ public static class LoopFinder
             var newB1 = b1Start + shift;
             var newB2 = b2Start + shift;
 
-            // Guard against SubseqSimilarity's clamping behaviour for negative offsets:
-            // when b1 or b2 is shifted below 0, it clamps to 0 and inflates maxOffset,
-            // which can then over-read at the OTHER start position (e.g. b2 near end).
-            // Only run sub-windows that have enough chroma data at BOTH start positions
-            // with no clamping required.
             if (newB1 < 0 || newB2 < 0
                 || newB1 + thirdLen > chromaLen
                 || newB2 + thirdLen > chromaLen)
@@ -1527,8 +1369,6 @@ public static class LoopFinder
 
         var mean = (scores[0] + scores[1] + scores[2]) / 3.0;
         var min = Math.Min(scores[0], Math.Min(scores[1], scores[2]));
-        // Floor the consensus result by the base score to preserve calibration for
-        // short loops where individual sub-windows are too small to be meaningful.
         return Math.Min(baseScore, 0.7 * mean + 0.3 * min);
     }
 
@@ -1544,8 +1384,6 @@ public static class LoopFinder
             b1Start += maxNeg;
             b2Start += maxNeg;
             maxOffset = Math.Abs(maxNeg);
-            // Defensive: if a caller shifts one start below 0 and the other is near the end,
-            // maxOffset reflects the clamp amount but can exceed the chroma tail at b2Start.
             var remaining = Math.Min(chromaLen - b1Start, chromaLen - b2Start);
             if (remaining < maxOffset) maxOffset = Math.Max(0, remaining);
         }
@@ -1577,7 +1415,6 @@ public static class LoopFinder
             sims[i] = dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
         }
 
-        // weighted average over testLength (zero-pad missing tail to match weights length)
         double num = 0, den = 0;
         for (var i = 0; i < testLength; i++)
         {
@@ -1610,7 +1447,6 @@ public static class LoopFinder
         return w;
     }
 
-    // ---- nearest zero crossing (port of Audacity / PyMusicLooper) ----
     private static long NearestZeroCrossing(float[] audio, int rate, long sampleIdx)
     {
         var windowSize = Math.Max(1, rate / 100);
@@ -1661,7 +1497,6 @@ public static class LoopFinder
         return sampleIdx + argmin - offset + offsetCorrection;
     }
 
-    // ---- DSP front-end ----
     private static float[][] Stft(float[] x, bool preEmphasis)
     {
         var win = new double[NFft];
@@ -1741,7 +1576,6 @@ public static class LoopFinder
         return blended;
     }
 
-    // ---- tuning detection (median pitch offset from A=440, in semitones) ----
     private static double DetectTuningOffset(float[][] power, int rate)
     {
         var loBin = Math.Max(1, (int) (100.0 * NFft / rate));
@@ -2162,7 +1996,6 @@ public static class LoopFinder
             }
         }
 
-        // base_c: roll rows by -3 so C is index 0
         var rolled = new double[NChroma][];
         for (var c = 0; c < NChroma; c++)
         {
@@ -2193,7 +2026,6 @@ public static class LoopFinder
             for (var k = 0; k < Bins; k++)
             {
                 var db = 10 * Math.Log10(Math.Max(1e-10, p[k])) + aw[k];
-                // insert into top-K
                 if (db > topBuf[TopK - 1])
                 {
                     var j = TopK - 1;
@@ -2232,7 +2064,6 @@ public static class LoopFinder
         return 2.0 + 20.0 * Math.Log10(ra);
     }
 
-    // ---- math helpers ----
     private static double Norm(float[] a)
     {
         double s = 0;
@@ -2264,8 +2095,7 @@ public static class LoopFinder
 
     private static int SecondsToFrames(double seconds, int rate) => (int) Math.Floor(seconds * rate / Hop);
 
-    // ---- pre-processing (peak normalize + silence trim) ----
-    private static float[] PreProcess(float[] x)
+    private static float[] PreProcess(float[] x, out int trimOffset)
     {
         var n = x.Length;
 
@@ -2278,7 +2108,7 @@ public static class LoopFinder
 
         var scale = (max > 0 && Math.Abs(max - 1f) > 1e-3f) ? 0.99f / max : 1f;
 
-        const float silenceThresh = 1e-3f; // ~ -60 dBFS
+        const float silenceThresh = 1e-3f;
         var first = 0;
         var last = n - 1;
         for (var i = 0; i < n; i++)
@@ -2292,6 +2122,7 @@ public static class LoopFinder
 
         var trimLen = last - first + 1;
         var shouldTrim = trimLen < n * 0.85 && trimLen >= NFft * 4;
+        trimOffset = shouldTrim ? first : 0;
 
         if (!shouldTrim && scale == 1f)
         {
@@ -2383,270 +2214,5 @@ public static class LoopFinder
                 }
             }
         }
-    }
-
-    // ---- additive bonus pass for top-N candidates ----
-    // Each bonus is independently clamped to [0, +0.1] and silently returns 0 when
-    // the data needed for the check is unavailable. Worst case: a candidate gets
-    // no bonus and behaves identically to before.
-    private static void ApplyTopNBonuses(List<Cand> candidates, int topN,
-        float[][] chroma, float[][] power, float[] onsetEnv, float[] mono, double bpm,
-        int testOffset, double[] weights, int nFrames, int rate)
-    {
-        for (var i = 0; i < topN && i < candidates.Count; i++)
-        {
-            var c = candidates[i];
-            var len = c.EndFrame - c.StartFrame;
-            if (len <= 0) continue;
-
-            // Gate bonuses by base chroma score. Below 0.80, the chroma match is
-            // unreliable (typically one-off coincidences) — bonuses like
-            // cycle-consistency or multi-resolution can otherwise boost garbage
-            // loops into the top. Above 0.80, the chroma signal is meaningful and
-            // bonuses reinforce genuine periodicity.
-            if (c.Score < 0.80) continue;
-
-            double bonus = 0;
-            bonus += CycleConsistencyBonus(c.StartFrame, c.EndFrame, len, chroma, testOffset, weights, nFrames);
-            bonus += MultiResolutionBonus(c.StartFrame, c.EndFrame, chroma, testOffset, weights, nFrames);
-            bonus += SsmLoopabilityBonus(c.StartFrame, c.EndFrame, len, chroma);
-            bonus += PerBandEnergyBonus(c.StartFrame, c.EndFrame, len, power, rate);
-            bonus += VocalBandEnergyBonus(c.StartFrame, c.EndFrame, len, power, rate);
-            bonus += OnsetBodyBonus(c.StartFrame, c.EndFrame, len, onsetEnv);
-            bonus += TempoAlignedBonus(len, bpm, rate);
-            bonus += BoundaryClickScore(mono, (long) c.StartFrame * Hop, (long) c.EndFrame * Hop);
-
-            if (bonus > 0)
-            {
-                c.Score = Math.Min(1.0, c.Score + Math.Min(bonus, 0.4));
-            }
-        }
-    }
-
-    // 1.1 cycle-consistency: check that the next "iteration" of the loop also matches.
-    // Real periodic audio is genuinely self-similar; one-off coincidences are not.
-    private static double CycleConsistencyBonus(int b1, int b2, int len,
-        float[][] chroma, int testOffset, double[] weights, int nFrames)
-    {
-        var b3 = 2 * b2 - b1;
-        if (b3 < 0 || b3 + len >= nFrames) return 0;
-        var score = LoopScore(b2, b3, chroma, testOffset, weights);
-        return Math.Max(0, (score - 0.7) * 0.1);   // 0..+0.03
-    }
-
-    // 1.2 multi-resolution: test at 3 different testOffsets, bonus only if all are high.
-    // Weights arrays must be sized to match each testOffset, since
-    // SubseqSimilarityConsensus indexes them by t * thirdLen where thirdLen = testLength/3.
-    private static double MultiResolutionBonus(int b1, int b2, float[][] chroma,
-        int testOffset, double[] weights, int nFrames)
-    {
-        var shortOffset = testOffset / 3;
-        var longOffset = Math.Min(testOffset * 2, nFrames - b2 - 1);
-        // need >= 9 frames for consensus to apply
-        if (shortOffset < 9 || longOffset < 9) return 0;
-
-        var shortWeights = Weights(shortOffset, Math.Max(2, shortOffset / 12), 1);
-        var longWeights = Weights(longOffset, Math.Max(2, longOffset / 12), 1);
-
-        var shortScore = LoopScore(b1, b2, chroma, shortOffset, shortWeights);
-        var longScore = LoopScore(b1, b2, chroma, longOffset, longWeights);
-        var baseScore = LoopScore(b1, b2, chroma, testOffset, weights);
-        var minScore = Math.Min(baseScore, Math.Min(shortScore, longScore));
-        return Math.Max(0, (minScore - 0.8) * 0.15);   // 0..+0.03
-    }
-
-    // 1.3 per-band energy correlation: RMS envelope in 3 bands (sub-bass / mid / high)
-    // should match between the two halves of the loop. Catches cases where overall
-    // chroma matches but specific frequency bands diverge.
-    private static double PerBandEnergyBonus(int b1, int b2, int len, float[][] power, int rate)
-    {
-        var nFrames = power.Length;
-        if (b2 + len >= nFrames) return 0;
-
-        // Band boundaries must be derived from rate, not the hardcoded 44100 Hz.
-        var lowEnd = Math.Max(1, (int)(250.0 * NFft / rate));
-        var midEnd = Math.Min(Bins, Math.Max(lowEnd + 1, (int)(2000.0 * NFft / rate)));
-
-        double sumCorr = 0;
-        var counted = 0;
-
-        // Band 1: sub-bass (0..lowEnd)
-        sumCorr += RmsEnvelopeBandCorr(b1, b2, len, power, 0, lowEnd);
-        counted++;
-        // Band 2: mid (lowEnd..midEnd)
-        sumCorr += RmsEnvelopeBandCorr(b1, b2, len, power, lowEnd, midEnd);
-        counted++;
-        // Band 3: high (midEnd..Bins)
-        sumCorr += RmsEnvelopeBandCorr(b1, b2, len, power, midEnd, Bins);
-        counted++;
-
-        var avg = sumCorr / counted;
-        return Math.Max(0, (avg - 0.7) * 0.1);   // 0..+0.03
-    }
-
-    // Vocal-band energy correlation (300–3000 Hz). Captures the most common audible
-    // artifact of music-aligned-but-vocal-mismatched loops: vocal energy envelope
-    // doesn't match across the loop join, so the listener hears a sudden loudness or
-    // character change every cycle. Music alone often matches in chroma/MFCC while
-    // vocals in this band do not — this bonus surfaces those cases additively.
-    // Threshold is more relaxed than PerBandEnergyBonus because vocal content is
-    // noisier than bass.
-    private static double VocalBandEnergyBonus(int b1, int b2, int len, float[][] power, int rate)
-    {
-        var nFrames = power.Length;
-        if (b2 + len >= nFrames) return 0;
-
-        var vocalLo = Math.Max(1, (int)(300.0 * NFft / rate));
-        var vocalHi = Math.Min(Bins, Math.Max(vocalLo + 1, (int)(3000.0 * NFft / rate)));
-        if (vocalHi <= vocalLo) return 0;
-
-        var corr = RmsEnvelopeBandCorr(b1, b2, len, power, vocalLo, vocalHi);
-        return Math.Max(0, (corr - 0.5) * 0.1);   // 0..+0.05
-    }
-
-    private static double RmsEnvelopeBandCorr(int b1, int b2, int len, float[][] power, int binLo, int binHi)
-    {
-        var env1 = RmsEnvelope(b1, b2, power, binLo, binHi);
-        var env2 = RmsEnvelope(b2, b2 + len, power, binLo, binHi);
-        return PearsonCorr(env1, env2);
-    }
-
-    private static double[] RmsEnvelope(int f0, int f1, float[][] power, int binLo, int binHi)
-    {
-        var n = Math.Max(1, f1 - f0);
-        var env = new double[n];
-        for (var f = f0; f < f1 && f < power.Length; f++)
-        {
-            var p = power[f];
-            double sum = 0;
-            for (var k = binLo; k < binHi && k < p.Length; k++)
-            {
-                sum += p[k];
-            }
-            env[f - f0] = Math.Sqrt(sum / Math.Max(1, binHi - binLo));
-        }
-        return env;
-    }
-
-    private static double PearsonCorr(double[] a, double[] b)
-    {
-        var n = Math.Min(a.Length, b.Length);
-        if (n < 4) return 0;
-        double meanA = 0, meanB = 0;
-        for (var i = 0; i < n; i++) { meanA += a[i]; meanB += b[i]; }
-        meanA /= n; meanB /= n;
-        double cov = 0, varA = 0, varB = 0;
-        for (var i = 0; i < n; i++)
-        {
-            var da = a[i] - meanA;
-            var db = b[i] - meanB;
-            cov += da * db;
-            varA += da * da;
-            varB += db * db;
-        }
-        var denom = Math.Sqrt(varA * varB);
-        return denom > 1e-10 ? cov / denom : 0;
-    }
-
-    // 1.5 onset-envelope similarity across the whole loop body (not just the join).
-    private static double OnsetBodyBonus(int b1, int b2, int len, float[] onsetEnv)
-    {
-        var n = onsetEnv.Length;
-        if (b2 + len >= n || len < 8) return 0;
-
-        var seg1 = new double[Math.Min(len, n - b1)];
-        var seg2 = new double[Math.Min(len, n - b2)];
-        var l1 = Math.Min(seg1.Length, b1 >= n ? 0 : n - b1);
-        var l2 = Math.Min(seg2.Length, b2 >= n ? 0 : n - b2);
-        Array.Copy(onsetEnv, b1, seg1, 0, l1);
-        Array.Copy(onsetEnv, b2, seg2, 0, l2);
-
-        var corr = PearsonCorr(seg1, seg2);
-        return Math.Max(0, (corr - 0.5) * 0.1);   // 0..+0.05
-    }
-
-    // 1.6 tempo-aligned: bonus if loop length is close to an integer number of bars.
-    private static double TempoAlignedBonus(int lenFrames, double bpm, int rate)
-    {
-        if (bpm < 30) return 0;
-        var beatFrames = 60.0 / bpm * rate / Hop;
-        if (beatFrames < 1) return 0;
-        var bars = lenFrames / (beatFrames * 4.0);
-        var dist = Math.Abs(bars - Math.Round(bars));
-        return Math.Max(0, (0.25 - dist) * 0.2);   // 0..+0.05
-    }
-
-    // 1.7 SSM-based loopability: sample K positions along the loop direction and
-    // average their chroma cosine. A truly periodic region has high similarity at
-    // every offset (b1+k, b2+k); a one-off match only aligns at one point.
-    private static double SsmLoopabilityBonus(int b1, int b2, int len, float[][] chroma)
-    {
-        var chromaLen = chroma.Length;
-        if (b2 + len >= chromaLen) return 0;
-        if (len < 16) return 0;
-
-        var nSamples = Math.Min(5, Math.Max(2, len / 16));
-        double sumSim = 0;
-        var counted = 0;
-        for (var i = 0; i < nSamples; i++)
-        {
-            var p1 = b1 + (i * len) / nSamples;
-            var p2 = b2 + (i * len) / nSamples;
-            if (p2 + 1 >= chromaLen) break;
-            sumSim += CosineSingle(chroma[p1], chroma[p2]);
-            counted++;
-        }
-        if (counted < 2) return 0;
-        var avgSim = sumSim / counted;
-        return Math.Max(0, (avgSim - 0.7) * 0.1);   // 0..+0.03
-    }
-
-    private static double CosineSingle(float[] a, float[] b)
-    {
-        double dot = 0, na = 0, nb = 0;
-        for (var k = 0; k < a.Length; k++)
-        {
-            dot += a[k] * b[k];
-            na += a[k] * a[k];
-            nb += b[k] * b[k];
-        }
-        return dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
-    }
-
-    // 1.8 boundary crossfade discontinuity test. Take 50 ms before the loop end
-    // and 50 ms after the loop start, crossfade them at the midpoint, and measure
-    // the energy spike (max derivative). A click shows up as a sharp transient.
-    // Returns a bonus in [0, +0.05] for clean crossfades; click-prone loops get
-    // no bonus (no penalty — additive only).
-    private static double BoundaryClickScore(float[] audio, long sSample, long eSample)
-    {
-        const int window = 2205;   // ~50 ms at 44.1k
-        var n = audio.Length;
-        var sEnd = (int)Math.Min(n, sSample + window);
-        var eStart = (int)Math.Max(0, eSample - window);
-        var sLen = sEnd - (int)sSample;
-        var eLen = (int)eSample - eStart;
-        if (sLen < 64 || eLen < 64) return 0;
-
-        // Compute max derivative across the crossfade region (combined window).
-        // We can't actually crossfade (would need output buffer); instead sample the
-        // discontinuity at the join by taking the absolute sample difference and
-        // its derivative.
-        double maxSpike = 0;
-        for (var i = 0; i < Math.Min(sLen, eLen); i++)
-        {
-            var left = audio[eStart + i];      // tail of eBase (samples before end)
-            var right = audio[(int)sSample + i]; // head of sBase (samples after start)
-            var diff = Math.Abs(left - right);
-            if (i > 0)
-            {
-                var prevDiff = Math.Abs(audio[eStart + i - 1] - audio[(int)sSample + i - 1]);
-                diff = Math.Max(diff, Math.Abs(diff - prevDiff));
-            }
-            if (diff > maxSpike) maxSpike = diff;
-        }
-
-        // Bonus: smooth join (maxSpike < 0.05) → +0.05; click (>0.3) → 0
-        return Math.Max(0, (0.30 - maxSpike) / 0.25 * 0.05);
     }
 }
