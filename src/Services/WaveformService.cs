@@ -58,12 +58,13 @@ public static class WaveformService
             }
         }
 
-        if (rate <= 0 || bits != 16 || channels < 1)
+        var bytesPerSample = bits / 8;
+        if (rate <= 0 || bytesPerSample <= 0 || channels < 1)
         {
             return (0, 0);
         }
-        
-        return (rate, dataLen / (2 * channels));
+
+        return (rate, dataLen / (bytesPerSample * channels));
     }
 
     public static float[] Samples(string wavPath)

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FH6RB.Core;
 
 namespace FH6RB.Services;
 
@@ -24,6 +25,11 @@ public sealed class AppSettings
     public bool LoopDisablePruning { get; set; } = false;
     public double LoopBorderSimilarity { get; set; } = 0.5;
     public double LoopTransitionSmoothness { get; set; } = 0.4;
+    public double LoopLoudnessDifference { get; set; } = 0.4;
+    public bool LoopUseHarmonicChroma { get; set; } = false;
+    public bool LoopUseSsmNomination { get; set; } = false;
+    public bool LoopRequireOnsetAlignment { get; set; } = true;
+    public LoopStage LoopStages { get; set; } = LoopStage.All;
 
     public int SettingsVersion { get; set; }
 

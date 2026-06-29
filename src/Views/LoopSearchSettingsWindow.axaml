@@ -86,6 +86,20 @@
                         <TextBlock Text="{x:Static assets:Str.HintLoopTransitionSmoothness}"
                                    Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
 
+                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopLoudnessDifference}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding LoudnessDifferenceText}"
+                                       Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="0.10" Maximum="1.00"
+                                Value="{Binding LoudnessDifference}"
+                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopLoudnessDifference}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+
                         <Border Background="{DynamicResource LineSoft}" Height="1" Margin="0,4"/>
 
                         <CheckBox IsChecked="{Binding PreEmphasis}" FontSize="12.5"
@@ -107,6 +121,27 @@
                         <TextBlock Text="{x:Static assets:Str.HintLoopDisablePruning}"
                                    Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
                                    TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+
+                        <CheckBox IsChecked="{Binding UseHarmonicChroma}" FontSize="12.5"
+                                  Content="{x:Static assets:Str.LblLoopHarmonicChroma}"
+                                  Margin="0, 6, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopHarmonicChroma}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+
+                        <CheckBox IsChecked="{Binding RequireOnsetAlignment}" FontSize="12.5"
+                                  Content="{x:Static assets:Str.LblLoopOnsetAlignment}"
+                                  Margin="0, 6, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopOnsetAlignment}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+
+                        <CheckBox IsChecked="{Binding UseSsmNomination}" FontSize="12.5"
+                                  Content="{x:Static assets:Str.LblLoopSsmNomination}"
+                                  Margin="0, 6, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintLoopSsmNomination}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
+                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
                     </StackPanel>
                 </Border>
 
@@ -118,6 +153,7 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                 <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
                 <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
+                <Button x:Name="RunTestsButton" Classes="big" Click="OnRunTests" Content="{x:Static assets:Str.BtnRunTests}"/>
             </StackPanel>
         </Border>
     </Grid>

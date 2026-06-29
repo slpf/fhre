@@ -31,8 +31,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isBuilding;
     [ObservableProperty] private bool _isAddingTracks;
     [ObservableProperty] private bool _isBackingUp;
+    [ObservableProperty] private bool _isTesting;
 
-    public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp;
+    public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting;
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
 
@@ -47,6 +48,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     partial void OnIsBuildingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsAddingTracksChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsBackingUpChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsTestingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     public string? PendingErrorDialog { get; set; }
     public string? PendingDialogTitle { get; set; }
 
@@ -62,6 +64,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private RadioInfo? _radio;
     private string? _radioForFile;
     private int _nextSeq;
+    private readonly Dictionary<string, FileStream> _sourceLocks = new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressReload;
     private int _loadGen;
     
@@ -551,7 +554,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         StopPlayback();
         _player.Dispose();
     }
-    
+
     public void RefreshNowPlaying()
     {
         if (_nowPlaying is null)
@@ -638,6 +641,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
             SampleRate = sampleRate,
             SampleLength = (long)(durationSeconds * sampleRate),
         };
+
+        if (File.Exists(sourcePath) && !_sourceLocks.ContainsKey(sourcePath))
+        {
+            try
+            {
+                _sourceLocks[sourcePath] = new FileStream(
+                    sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }
+            catch
+            {
+            }
+        }
 
         return new TrackItemViewModel(track, gainDb: null) { SourcePath = sourcePath };
     }

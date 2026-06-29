@@ -7,9 +7,26 @@ public readonly struct LoopPair
     public float NoteDistance { get; init; }
     public float LoudnessDifference { get; init; }
     public float Score { get; init; }
+    public string? Source { get; init; }
 }
 
 public enum LoopRole { Generic, Track, Post }
+
+[Flags]
+public enum LoopStage
+{
+    None = 0,
+    BorderFilter = 1 << 0,
+    SmoothnessFilter = 1 << 1,
+    FluxFilter = 1 << 2,
+    XCorr = 1 << 3,
+    ZeroCrossingSnap = 1 << 4,
+    Cyclicity = 1 << 5,
+    Phase = 1 << 6,
+    BarSnap = 1 << 7,
+    PhraseSnap = 1 << 8,
+    All = BorderFilter | SmoothnessFilter | FluxFilter | XCorr | ZeroCrossingSnap | Cyclicity | Phase,
+}
 
 public sealed record LoopSearchOptions
 {
@@ -33,13 +50,21 @@ public sealed record LoopSearchOptions
     public double TransitionSmoothnessThreshold { get; init; } = 0.3;
     public double TimbreWeight { get; init; } = 0.2;
     public double SectionWeight { get; init; } = 0.1;
+    public double ChromaPeakThreshold { get; init; } = 0.0;
+    public double VadThreshold { get; init; } = 0.0;
+    public bool RequireVocalPhrase { get; init; } = false;
+    public double PhaseContinuityWeight { get; init; } = 0.15;
+    public LoopStage Stages { get; init; } = LoopStage.All;
+    public bool UseHarmonicChroma { get; init; } = false;
+    public bool UseAutocorrOffset { get; init; } = true;
+    public bool UseSsmNomination { get; init; } = false;
 
     public static LoopSearchOptions Default { get; } = new();
 }
 
 public static class LoopSearchDefaults
 {
-    public const double MinLoopSeconds = 20.0;
+    public const double MinLoopSeconds = 15.0;
 }
 
 public static class LoopFinder
@@ -50,12 +75,37 @@ public static class LoopFinder
     private const int NChroma = 12;
 
     private sealed record Analysis(
-        List<Cand> Candidates, double Bpm, int[] Sections, int NFrames,
-        int TrimOffset, double SectionWeight);
+        List<Cand> Candidates, double Bpm, int[] Sections, int[] Bars, int NFrames,
+        int TrimOffset, int OriginalLength, double SectionWeight);
 
     // Cached per role-independent key: the heavy search runs once; Track/Post only
     // re-rank the shared candidate set.
-    private static readonly Dictionary<(string Path, LoopSearchOptions Options), Analysis> _cache = [];
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, LoopSearchOptions Options), Analysis> _cache = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, double[][]> _chromaFilterbanks = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int Rate, int NMels), double[][]> _melFilterbanks = new();
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<double[], double[]> _reversedWeights = new();
+
+    private static LoopSearchOptions CacheKeyOptions(LoopSearchOptions o)
+    {
+        if (!o.AutoTune) return o with { Role = LoopRole.Generic };
+        return o with
+        {
+            Role = LoopRole.Generic,
+            NoteDeviation = 0,
+            LoudnessDifference = 0,
+            TimbreWeight = 0,
+            SectionWeight = 0,
+            PhaseContinuityWeight = 0,
+        };
+    }
+
+    private static double[] ReversedWeights(double[] weights)
+        => _reversedWeights.GetValue(weights, static w =>
+        {
+            var r = (double[]) w.Clone();
+            Array.Reverse(r);
+            return r;
+        });
 
     internal sealed record LoopAutoProfile
     {
@@ -63,6 +113,10 @@ public static class LoopFinder
         public double LoudnessTolerance { get; init; }
         public double TimbreWeight { get; init; }
         public double SectionWeight { get; init; }
+        public double PhaseContinuityWeight { get; init; }
+
+        public static bool IsPercussive(float[] onset, int nFrames, int rate)
+            => ComputeOnsetDensity(onset, nFrames, rate) > 1.5;
 
         public static LoopAutoProfile Derive(float[][] chroma, float[] onsetEnvelope,
             double[] loudness, int[] beats, int[] sections, double bpm, int nFrames, int rate)
@@ -72,10 +126,15 @@ public static class LoopFinder
             var dynamicRange = ComputeDynamicRange(loudness);
             var percussive = onsetDensity > 1.5;
 
-            var noteDev = chromaVar > 0.5 ? 0.09 : (chromaVar < 0.15 ? 0.07 : 0.08);
-            var loudTol = dynamicRange > 15 ? 0.4 : (dynamicRange > 8 ? 0.35 : 0.25);
-            var timbreW = percussive ? 0.05 : 0.2;
-            var sectionW = sections.Length > 4 ? 0.2 : 0.1;
+            static double C01(double x) => Math.Clamp(x, 0.0, 1.0);
+
+            var noteDev = Math.Clamp(0.07 + 0.02 * C01((chromaVar - 0.15) / 0.35), 0.06, 0.10);
+            var loudTol = Math.Clamp(0.25 + 0.15 * C01((dynamicRange - 8.0) / 7.0), 0.20, 0.45);
+            var timbreW = percussive
+                ? Math.Clamp(0.20 - 0.15 * C01((onsetDensity - 1.5) / 2.0), 0.03, 0.20)
+                : 0.20;
+            var sectionW = Math.Clamp(0.10 + 0.10 * C01((sections.Length - 2) / 6.0), 0.05, 0.22);
+            var phaseW = percussive ? 0.10 : 0.18;
 
             return new LoopAutoProfile
             {
@@ -83,6 +142,7 @@ public static class LoopFinder
                 LoudnessTolerance = loudTol,
                 TimbreWeight = timbreW,
                 SectionWeight = sectionW,
+                PhaseContinuityWeight = phaseW,
             };
         }
 
@@ -120,6 +180,15 @@ public static class LoopFinder
         }
     }
 
+    private static double MeanVad(float[] vad, int nFrames)
+    {
+        if (vad.Length == 0) return 0;
+        var lim = Math.Min(nFrames, vad.Length);
+        double sum = 0;
+        for (var f = 0; f < lim; f++) sum += vad[f];
+        return lim > 0 ? sum / lim : 0;
+    }
+
     public static List<LoopPair> Find(float[]? mono, int rate, LoopSearchOptions options, string? cacheKey = null, Action<string>? log = null)
     {
         var result = new List<LoopPair>();
@@ -130,226 +199,359 @@ public static class LoopFinder
                 return result;
             }
 
-            if (cacheKey is not null && _cache.TryGetValue((cacheKey, options with { Role = LoopRole.Generic }), out var cached))
+            if (cacheKey is not null && _cache.TryGetValue((cacheKey, CacheKeyOptions(options)), out var cached))
             {
                 RankAndAppend(PreProcess(mono, out _), rate, cached, options, result, log);
                 return result;
             }
 
+            var originalLength = mono.Length;
             mono = PreProcess(mono, out var trimOffset);
             if (mono.Length < NFft * 4)
             {
                 return result;
             }
 
-        var total = mono.Length;
-        var totalSec = (double) total / rate;
-        var minLoopBaseSec = options.MinLoopSeconds
-            ?? options.MinDurationMultiplier * totalSec;
-        var maxLoopBaseSec = options.MaxLoopSeconds ?? totalSec;
-
-        var power = Stft(mono, options.PreEmphasis);
-        var nFrames = power.Length;
-        if (nFrames < 8)
-        {
-            return result;
-        }
-
-        var chromaFull = Chroma(power, rate);
-        var chromaLow = ChromaLowBand(power, rate);
-        var chromaCombined = BlendChroma(chromaFull, chromaLow, fullWeight: 0.7, lowWeight: 0.3);
-        var tuningOffset = DetectTuningOffset(power, rate);
-        var chroma = Math.Abs(tuningOffset) > 0.05
-            ? RotateChroma(chromaCombined, -tuningOffset)
-            : chromaCombined;
-        var loudness = Loudness(power, rate);
-
-        var (bpm, beats) = DetectBeats(power, rate);
-        var stride = CoarseStride(nFrames);
-        var coarseAnchors = StridedFrames(nFrames, stride);
-        var anchors = beats.Length >= 2 ? UnionSorted(beats, coarseAnchors) : coarseAnchors;
-        var sections = options.SectionWeight > 0 ? DetectSections(chroma, beats, nFrames, rate) : [];
-        if (sections.Length > 0)
-        {
-            anchors = UnionSorted(anchors, sections);
-        }
-
-        var onsetEnv = OnsetEnvelope(power, rate);
-
-        LoopAutoProfile? profile = null;
-        LoopSearchOptions effOptions = options;
-        if (options.AutoTune)
-        {
-            profile = LoopAutoProfile.Derive(chroma, onsetEnv, loudness, beats, sections,
-                bpm, nFrames, rate);
-            effOptions = options with
+            var total = mono.Length;
+            var totalSec = (double) total / rate;
+            var minLoopBaseSec = options.MinLoopSeconds
+                ?? options.MinDurationMultiplier * totalSec;
+            var maxLoopBaseSec = options.MaxLoopSeconds ?? totalSec;
+    
+            var power = Stft(mono, options.PreEmphasis);
+            var nFrames = power.Length;
+            if (nFrames < 8)
             {
-                NoteDeviation = profile.NoteDeviation,
-                LoudnessDifference = profile.LoudnessTolerance,
-                TimbreWeight = profile.TimbreWeight,
-                SectionWeight = profile.SectionWeight,
-            };
-        }
-        var effNoteDev = effOptions.NoteDeviation;
-        var mfcc = effOptions.TimbreWeight > 0 ? Mfcc(power, rate) : null;
-
-        if (anchors.Length < 2)
-        {
-            return result;
-        }
-
-        var testOffset = TestOffset(nFrames, rate, bpm, chroma, 12);
-        var weights = Weights(testOffset, Math.Max(2, testOffset / 12), 1);
-
-        void LogLine(string s) => log?.Invoke(s);
-
-        LogLine($"[LoopFinder] rate={rate} dur={totalSec:0.0}s frames={nFrames} role={options.Role} auto={options.AutoTune}");
-        LogLine($"  bpm={bpm:0.0} tuning={tuningOffset:0.000} sections={sections.Length} anchors={anchors.Length}");
-        LogLine($"  noteDev={effNoteDev:0.000} loudDiff={effOptions.LoudnessDifference:0.00} minLoop={minLoopBaseSec:0.0}s maxLoop={maxLoopBaseSec:0.0}s");
-        LogLine($"  border>={effOptions.BorderSimilarityThreshold:0.00} smooth>={effOptions.TransitionSmoothnessThreshold:0.00} onset={effOptions.RequireOnsetAlignment} timbre={effOptions.TimbreWeight:0.00} section={effOptions.SectionWeight:0.00} prune={!effOptions.DisablePruning}");
-
-        var passSpecs = new List<(int MinLoop, int MaxLoop)>();
-        var baseMinLoop = Math.Max(1, SecondsToFrames(minLoopBaseSec, rate));
-        var baseMaxLoop = SecondsToFrames(maxLoopBaseSec, rate);
-        passSpecs.Add((baseMinLoop, baseMaxLoop));
-
-        if (effOptions.MultiResolution && minLoopBaseSec / 2 >= 1)
-        {
-            passSpecs.Add((Math.Max(1, SecondsToFrames(minLoopBaseSec / 2, rate)), baseMaxLoop));
-            if (maxLoopBaseSec < totalSec)
-            {
-                passSpecs.Add((baseMinLoop, SecondsToFrames(Math.Min(totalSec, maxLoopBaseSec * 2), rate)));
+                return result;
             }
-        }
-
-        var allCandidates = new List<Cand>();
-
-        foreach (var (minLoop, maxLoop) in passSpecs)
-        {
-            var candidates = FindCandidatePairs(
-                chroma, loudness, anchors, minLoop, maxLoop,
-                effOptions.GateScale, effOptions.PreRollFrames,
-                effNoteDev, effOptions.LoudnessDifference);
-            LogLine($"pass [{minLoop}-{maxLoop}]: gate -> {candidates.Count}");
-            if (candidates.Count == 0)
+    
+            var onsetEnv = OnsetEnvelope(power, rate);
+    
+            var autoHarmonic = false;
+            var autoVadThreshold = 0.0;
+            var autoRequireVocalPhrase = false;
+            float[]? vadScores = null;
+            if (options.AutoTune)
             {
-                continue;
-            }
-
-            Assess(chroma, candidates, testOffset, weights, effOptions.DisablePruning);
-            LogLine($"  assess/prune -> {candidates.Count}");
-
-            if (effOptions.RefinePasses >= 1 && stride > 1)
-            {
-                Refine(candidates, chroma, loudness, testOffset, weights, stride, minLoop, maxLoop, nFrames);
-            }
-            if (effOptions.RefinePasses >= 2)
-            {
-                RefineHop(candidates, chroma, loudness, testOffset, weights, minLoop, maxLoop, nFrames);
-            }
-            if (effOptions.RefinePasses >= 3)
-            {
-                RefineSub(candidates, chroma, loudness, testOffset, weights, nFrames);
-            }
-
-            RefineXCorr(candidates, mono, rate);
-
-            var timbreSignal = (mfcc is not null && effOptions.TimbreWeight > 0) ? mfcc : chroma;
-            var timbreEnabled = ReferenceEquals(timbreSignal, mfcc);
-            foreach (var c in candidates)
-            {
-                var len = c.EndFrame - c.StartFrame;
-                var chromaSeam = c.Score;
-                var logSum = Math.Log(Math.Clamp(chromaSeam, 1e-4, 1.0));
-                var factors = 1;
-
-                var timbre = -1.0;
-                if (timbreEnabled)
+                autoHarmonic = LoopAutoProfile.IsPercussive(onsetEnv, nFrames, rate);
+                vadScores = DetectVocalActivity(power, rate);
+                if (MeanVad(vadScores, nFrames) > 0.45)
                 {
-                    timbre = LoopScore(c.StartFrame, c.EndFrame, timbreSignal, testOffset, weights);
-                    logSum += Math.Log(Math.Clamp(timbre, 1e-4, 1.0));
-                    factors++;
+                    autoVadThreshold = 0.4;
+                    autoRequireVocalPhrase = true;
                 }
-
-                var b3 = 2 * c.EndFrame - c.StartFrame;
-                if (b3 > c.EndFrame && b3 + len < nFrames)
+            }
+            else if (options.VadThreshold > 0)
+            {
+                vadScores = DetectVocalActivity(power, rate);
+            }
+    
+            var useHarmonic = options.UseHarmonicChroma || autoHarmonic;
+            var vadThreshold = options.VadThreshold > 0 ? options.VadThreshold : autoVadThreshold;
+            var requireVocalPhrase = options.RequireVocalPhrase || autoRequireVocalPhrase;
+            var useSsm = options.UseSsmNomination || options.AutoTune;
+    
+            var chromaSource = useHarmonic ? HarmonicComponent(power, rate) : power;
+            var chromaFull = Chroma(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold);
+            var chromaLow = ChromaLowBand(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold);
+            var chromaCombined = BlendChroma(chromaFull, chromaLow, fullWeight: 0.7, lowWeight: 0.3);
+            var tuningOffset = DetectTuningOffset(power, rate);
+            var chroma = Math.Abs(tuningOffset) > 0.05
+                ? RotateChroma(chromaCombined, -tuningOffset)
+                : chromaCombined;
+            var loudness = Loudness(power, rate);
+    
+            var (bpm, beats) = DetectBeats(power, rate, onsetEnv);
+    
+            var stride = CoarseStride(nFrames);
+            var coarseAnchors = StridedFrames(nFrames, stride);
+            var anchors = beats.Length >= 2 ? UnionSorted(beats, coarseAnchors) : coarseAnchors;
+            var sections = options.SectionWeight > 0 ? DetectSections(chroma, beats, nFrames, rate) : [];
+            if (sections.Length > 0)
+            {
+                anchors = UnionSorted(anchors, sections);
+            }
+            if (requireVocalPhrase && vadScores != null)
+            {
+                var phrases = DetectVocalPhrases(vadScores, vadThreshold, nFrames, rate);
+                if (phrases.Length >= 2)
                 {
-                    var cyc = LoopScore(c.EndFrame, b3, timbreSignal, testOffset, weights);
-                    logSum += Math.Log(Math.Clamp(cyc, 1e-4, 1.0));
-                    factors++;
-                }
-
-                var quality = Math.Exp(logSum / factors);
-
-                // Harmony agrees but timbre doesn't = likely an instrumental/vocal content
-                // mismatch at the seam (e.g. start on an instrumental break, end mid-vocal).
-                // The geomean averages this away, so penalize the gap directly. Loops where
-                // both signals are high have no gap and are unaffected.
-                if (timbre >= 0)
-                {
-                    var gap = chromaSeam - timbre;
-                    if (gap > 0.05)
+                    var phrasePoints = new List<int>(phrases.Length / 2 + 1);
+                    for (var i = 0; i < phrases.Length; i += 2)
                     {
-                        quality -= 0.6 * (gap - 0.05);
+                        phrasePoints.Add(phrases[i]);
+                    }
+                    anchors = UnionSorted(anchors, phrasePoints.ToArray());
+                }
+            }
+    
+            LoopAutoProfile? profile = null;
+            LoopSearchOptions effOptions = options;
+            if (options.AutoTune)
+            {
+                profile = LoopAutoProfile.Derive(chroma, onsetEnv, loudness, beats, sections,
+                    bpm, nFrames, rate);
+                effOptions = options with
+                {
+                    NoteDeviation = profile.NoteDeviation,
+                    LoudnessDifference = profile.LoudnessTolerance,
+                    TimbreWeight = profile.TimbreWeight,
+                    SectionWeight = profile.SectionWeight,
+                    PhaseContinuityWeight = profile.PhaseContinuityWeight,
+                    UseHarmonicChroma = useHarmonic,
+                    VadThreshold = vadThreshold,
+                    RequireVocalPhrase = requireVocalPhrase,
+                    UseSsmNomination = useSsm,
+                };
+            }
+            var effNoteDev = effOptions.NoteDeviation;
+            var mfcc = effOptions.TimbreWeight > 0 ? Mfcc(power, rate) : null;
+    
+            if (anchors.Length < 2)
+            {
+                return result;
+            }
+    
+            var testOffset = TestOffset(nFrames, rate, bpm, chroma, options.UseAutocorrOffset);
+            var weights = Weights(testOffset, Math.Max(2, testOffset / 12), 1);
+    
+            void LogLine(string s) => log?.Invoke(s);
+    
+            LogLine($"[LoopFinder] rate={rate} dur={totalSec:0.0}s frames={nFrames} role={options.Role} auto={options.AutoTune} hps={useHarmonic} autoOffset={options.UseAutocorrOffset} ssm={useSsm} vad={vadThreshold:0.00} phrase={requireVocalPhrase}");
+            LogLine($"  bpm={bpm:0.0} tuning={tuningOffset:0.000} sections={sections.Length} anchors={anchors.Length} testOffset={testOffset}");
+            LogLine($"  noteDev={effNoteDev:0.000} loudDiff={effOptions.LoudnessDifference:0.00} minLoop={minLoopBaseSec:0.0}s maxLoop={maxLoopBaseSec:0.0}s");
+            LogLine($"  border>={effOptions.BorderSimilarityThreshold:0.00} smooth>={effOptions.TransitionSmoothnessThreshold:0.00} onset={effOptions.RequireOnsetAlignment} timbre={effOptions.TimbreWeight:0.00} section={effOptions.SectionWeight:0.00} phase={effOptions.PhaseContinuityWeight:0.00} prune={!effOptions.DisablePruning}");
+    
+            var passSpecs = new List<(int MinLoop, int MaxLoop)>();
+            var baseMinLoop = Math.Max(1, SecondsToFrames(minLoopBaseSec, rate));
+            var baseMaxLoop = SecondsToFrames(maxLoopBaseSec, rate);
+            passSpecs.Add((baseMinLoop, baseMaxLoop));
+    
+            if (effOptions.MultiResolution && minLoopBaseSec / 2 >= 1)
+            {
+                passSpecs.Add((Math.Max(1, SecondsToFrames(minLoopBaseSec / 2, rate)), baseMaxLoop));
+                if (maxLoopBaseSec < totalSec)
+                {
+                    passSpecs.Add((baseMinLoop, SecondsToFrames(Math.Min(totalSec, maxLoopBaseSec * 2), rate)));
+                }
+            }
+    
+            var allCandidates = new List<Cand>();
+
+            List<Cand>? ssmCands = null;
+            if (useSsm)
+            {
+                var ds = Math.Max(2, (int) Math.Round(0.1 * rate / Hop));
+                if (nFrames / ds >= 16)
+                {
+                    var winFrames = Math.Clamp((int) Math.Round(2.0 * rate / Hop / ds), 2, Math.Max(2, nFrames / ds / 4));
+                    var mfccCands = FindSsmCandidates(Mfcc(AggregatePower(power, ds), rate), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcSsm);
+                    var rhythmCands = FindSsmCandidates(OnsetWindowFeat(onsetEnv, ds, winFrames), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcRhythm);
+                    ssmCands = mfccCands;
+                    ssmCands.AddRange(rhythmCands);
+                    LogLine($"  ssm nominator -> ssm:{mfccCands.Count} rhythm:{rhythmCands.Count}");
+                }
+            }
+
+            int[]? phraseOnsets = null;
+            if ((effOptions.Stages & LoopStage.PhraseSnap) != 0)
+            {
+                var snapVad = vadScores ?? DetectVocalActivity(power, rate);
+                var snapThresh = vadThreshold > 0 ? vadThreshold : 0.4;
+                var phrases = DetectVocalPhrases(snapVad, snapThresh, nFrames, rate);
+                if (phrases.Length >= 4)
+                {
+                    phraseOnsets = new int[phrases.Length / 2];
+                    for (var i = 0; i < phraseOnsets.Length; i++) phraseOnsets[i] = phrases[i * 2];
+                }
+            }
+
+            var ssmAdded = false;
+            foreach (var (minLoop, maxLoop) in passSpecs)
+            {
+                var candidates = FindCandidatePairs(
+                    chroma, loudness, anchors, minLoop, maxLoop,
+                    effOptions.GateScale, effOptions.PreRollFrames,
+                    effNoteDev, effOptions.LoudnessDifference);
+                if (!ssmAdded && ssmCands is { Count: > 0 })
+                {
+                    candidates.AddRange(ssmCands);
+                    ssmAdded = true;
+                    MarkCrossValidated(candidates, rate);
+                }
+                LogLine($"pass [{minLoop}-{maxLoop}]: gate -> {candidates.Count}");
+                if (candidates.Count == 0)
+                {
+                    continue;
+                }
+    
+                Assess(chroma, candidates, testOffset, weights, effOptions.DisablePruning);
+                LogLine($"  assess/prune -> {candidates.Count}");
+    
+                if (effOptions.RefinePasses >= 1 && stride > 1)
+                {
+                    Refine(candidates, chroma, loudness, testOffset, weights, stride, minLoop, maxLoop, nFrames);
+                }
+                if (effOptions.RefinePasses >= 2)
+                {
+                    RefineHop(candidates, chroma, loudness, testOffset, weights, minLoop, maxLoop, nFrames);
+                }
+                if (effOptions.RefinePasses >= 3)
+                {
+                    RefineSub(candidates, chroma, loudness, testOffset, weights, nFrames);
+                }
+    
+                if ((effOptions.Stages & LoopStage.XCorr) != 0)
+                {
+                    RefineXCorr(candidates, mono, rate);
+                }
+
+                if ((effOptions.Stages & LoopStage.PhraseSnap) != 0 && phraseOnsets is { Length: >= 2 })
+                {
+                    RefinePhraseSnap(candidates, mono, phraseOnsets, nFrames, rate);
+                }
+    
+                var timbreSignal = (mfcc is not null && effOptions.TimbreWeight > 0) ? mfcc : chroma;
+                var timbreEnabled = ReferenceEquals(timbreSignal, mfcc);
+                foreach (var c in candidates)
+                {
+                    var len = c.EndFrame - c.StartFrame;
+                    var chromaSeam = c.FrameAdjusted
+                        ? LoopScore(c.StartFrame, c.EndFrame, chroma, testOffset, weights)
+                        : c.Score;
+                    var quality = chromaSeam;
+                    var w = 1.0;
+    
+                    var timbre = -1.0;
+                    if (timbreEnabled)
+                    {
+                        timbre = LoopScore(c.StartFrame, c.EndFrame, timbreSignal, testOffset, weights);
+                        var tw = 3.0 * effOptions.TimbreWeight;
+                        quality += tw * timbre;
+                        w += tw;
+                    }
+    
+                    var b3 = 2 * c.EndFrame - c.StartFrame;
+                    if ((effOptions.Stages & LoopStage.Cyclicity) != 0
+                        && b3 > c.EndFrame && b3 + len < nFrames
+                        && chromaSeam >= 0.4 && (!timbreEnabled || timbre >= 0.3))
+                    {
+                        var cyc = LoopScore(c.EndFrame, b3, timbreSignal, testOffset, weights);
+                        quality += 0.3 * cyc;
+                        w += 0.3;
+                    }
+    
+                    if ((effOptions.Stages & LoopStage.Phase) != 0 && effOptions.PhaseContinuityWeight > 0)
+                    {
+                        var phase = PhaseContinuity(mono, c.StartFrame, c.EndFrame);
+                        quality += effOptions.PhaseContinuityWeight * phase;
+                        w += effOptions.PhaseContinuityWeight;
+                    }
+    
+                    quality /= w;
+    
+                    if (timbre >= 0)
+                    {
+                        var gap = chromaSeam - timbre;
+                        if (gap > 0.15)
+                        {
+                            quality -= 0.25 * (gap - 0.15);
+                        }
+                    }
+
+                    var srcBits = c.Sources;
+                    var srcCount = ((srcBits & 1) != 0 ? 1 : 0) + ((srcBits & 2) != 0 ? 1 : 0) + ((srcBits & 4) != 0 ? 1 : 0);
+                    if (srcCount > 1) quality += 0.04 * (srcCount - 1);
+
+                    c.Score = Math.Clamp(quality, 0.0, 1.0);
+                }
+    
+                if ((effOptions.Stages & LoopStage.BorderFilter) != 0 && effOptions.BorderSimilarityThreshold > 0)
+                {
+                    var snapshot = new List<Cand>(candidates);
+                    BorderSimilarityFilter(candidates, chroma, rate, effOptions.BorderSimilarityThreshold);
+                    if (candidates.Count == 0)
+                    {
+                        candidates.AddRange(snapshot);
+                    }
+    
+                    LogLine($"  border>={effOptions.BorderSimilarityThreshold:0.00} -> {candidates.Count}");
+                }
+    
+                if (effOptions.RequireOnsetAlignment && beats.Length >= 2)
+                {
+                    var snapshot = new List<Cand>(candidates);
+                    candidates.RemoveAll(c => !HasAtLeastTwoBeatsInRange(beats, c.StartFrame, c.EndFrame));
+                    if (candidates.Count == 0)
+                    {
+                        candidates.AddRange(snapshot);
+                    }
+    
+                    LogLine($"  onset -> {candidates.Count}");
+                }
+    
+                if (effOptions.TransitionSmoothnessThreshold > 0)
+                {
+                    if ((effOptions.Stages & LoopStage.SmoothnessFilter) != 0)
+                    {
+                        var snapshot = new List<Cand>(candidates);
+                        TransitionSmoothnessFilter(candidates, mono, rate, effOptions.TransitionSmoothnessThreshold);
+                        if (candidates.Count == 0)
+                        {
+                            candidates.AddRange(snapshot);
+                        }
+    
+                        LogLine($"  smooth>={effOptions.TransitionSmoothnessThreshold:0.00} -> {candidates.Count}");
+                    }
+    
+                    if ((effOptions.Stages & LoopStage.FluxFilter) != 0)
+                    {
+                        var fluxSnapshot = new List<Cand>(candidates);
+                        SpectralFluxFilter(candidates, power, rate, effOptions.TransitionSmoothnessThreshold);
+                        if (candidates.Count == 0)
+                        {
+                            candidates.AddRange(fluxSnapshot);
+                        }
+    
+                        LogLine($"  flux<{effOptions.TransitionSmoothnessThreshold:0.00} -> {candidates.Count}");
                     }
                 }
-
-                c.Score = Math.Clamp(quality, 0.0, 1.0);
+    
+                allCandidates.AddRange(candidates);
             }
+    
+            allCandidates.Sort((a, b) => b.Score.CompareTo(a.Score));
 
-            if (effOptions.BorderSimilarityThreshold > 0)
+            int[] bars = [];
+            if (bpm > 1 && beats.Length >= 1)
             {
-                var snapshot = new List<Cand>(candidates);
-                BorderSimilarityFilter(candidates, chroma, rate, effOptions.BorderSimilarityThreshold);
-                if (candidates.Count == 0)
+                var barLen = 4.0 * 60.0 / bpm * rate / Hop;
+                if (barLen > 1)
                 {
-                    candidates.AddRange(snapshot);
+                    var barList = new List<int>();
+                    for (var b = beats[0]; b < nFrames; b += (int) barLen)
+                    {
+                        barList.Add(b);
+                    }
+                    bars = barList.ToArray();
                 }
-
-                LogLine($"  border>={effOptions.BorderSimilarityThreshold:0.00} -> {candidates.Count}");
             }
 
-            if (effOptions.RequireOnsetAlignment && beats.Length >= 2)
+            var analysis = new Analysis(allCandidates, bpm, sections, bars, nFrames, trimOffset, originalLength, effOptions.SectionWeight);
+            if (cacheKey is not null)
             {
-                var snapshot = new List<Cand>(candidates);
-                candidates.RemoveAll(c => !HasAtLeastTwoBeatsInRange(beats, c.StartFrame, c.EndFrame));
-                if (candidates.Count == 0)
+                var key = (cacheKey, CacheKeyOptions(options));
+                _cache[key] = analysis;
+                while (_cache.Count > 32)
                 {
-                    candidates.AddRange(snapshot);
+                    var oldest = _cache.Keys.First();
+                    _cache.TryRemove(oldest, out _);
                 }
-
-                LogLine($"  onset -> {candidates.Count}");
             }
-
-            if (effOptions.TransitionSmoothnessThreshold > 0)
-            {
-                var snapshot = new List<Cand>(candidates);
-                TransitionSmoothnessFilter(candidates, mono, rate, effOptions.TransitionSmoothnessThreshold);
-                if (candidates.Count == 0)
-                {
-                    candidates.AddRange(snapshot);
-                }
-
-                LogLine($"  smooth>={effOptions.TransitionSmoothnessThreshold:0.00} -> {candidates.Count}");
-            }
-
-            allCandidates.AddRange(candidates);
-        }
-
-        var analysis = new Analysis(allCandidates, bpm, sections, nFrames, trimOffset, effOptions.SectionWeight);
-        if (cacheKey is not null)
-        {
-            if (_cache.Count >= 32)
-            {
-                _cache.Clear();
-            }
-
-            _cache[(cacheKey, options with { Role = LoopRole.Generic })] = analysis;
-        }
-
-        RankAndAppend(mono, rate, analysis, options, result, log);
-
-        return result;
+    
+            RankAndAppend(mono, rate, analysis, options, result, log);
+    
+            return result;
         }
         catch (Exception ex)
         {
@@ -394,20 +596,50 @@ public static class LoopFinder
         for (var i = 0; i < topN; i++)
         {
             var c = candidates[i];
-            LogLine($"  cand#{i} {(double) (c.StartFrame * Hop) / rate:0.00}s -> {(double) (c.EndFrame * Hop) / rate:0.00}s len={(double) ((c.EndFrame - c.StartFrame) * Hop) / rate:0.0}s score={c.Score:0.000}");
+            LogLine($"  cand#{i} {(double) (c.StartFrame * Hop) / rate:0.00}s -> {(double) (c.EndFrame * Hop) / rate:0.00}s len={(double) ((c.EndFrame - c.StartFrame) * Hop) / rate:0.0}s score={c.Score:0.000} src={SourceLabel(c.Sources)}");
         }
 
-        AppendLoops(mono, rate, candidates, result, options.MaxResults, analysis.TrimOffset);
+        var barGrid = (options.Stages & LoopStage.BarSnap) != 0 ? analysis.Bars : null;
+        var barTol = analysis.Bpm > 1 ? (int) Math.Round(0.5 * 60.0 / analysis.Bpm * rate) : 0;
+        AppendLoops(mono, rate, candidates, result, options.MaxResults, analysis.TrimOffset, analysis.OriginalLength, (options.Stages & LoopStage.ZeroCrossingSnap) != 0, barGrid, barTol);
 
         LogLine($"final: {result.Count} loops");
         foreach (var lp in result)
         {
-            LogLine($"  {(double) lp.LoopStart / rate:0.00}s -> {(double) lp.LoopEnd / rate:0.00}s len={(double) (lp.LoopEnd - lp.LoopStart) / rate:0.0}s score={lp.Score:0.000}");
+            LogLine($"  {(double) lp.LoopStart / rate:0.00}s -> {(double) lp.LoopEnd / rate:0.00}s len={(double) (lp.LoopEnd - lp.LoopStart) / rate:0.0}s score={lp.Score:0.000} src={lp.Source}");
         }
     }
 
+    private static long SnapToBar(long sample, int[] barGrid, int tol)
+    {
+        var target = sample / Hop;
+        var lo = 0;
+        var hi = barGrid.Length;
+        while (lo < hi)
+        {
+            var mid = (lo + hi) >> 1;
+            if (barGrid[mid] < target) lo = mid + 1;
+            else hi = mid;
+        }
+        long best = sample;
+        long bestDist = tol;
+        if (lo < barGrid.Length)
+        {
+            var bs = (long) barGrid[lo] * Hop;
+            var d = bs - sample;
+            if (d >= 0 && d <= bestDist) { bestDist = d; best = bs; }
+        }
+        if (lo > 0)
+        {
+            var bs = (long) barGrid[lo - 1] * Hop;
+            var d = sample - bs;
+            if (d >= 0 && d <= bestDist) { bestDist = d; best = bs; }
+        }
+        return best;
+    }
+
     private static void AppendLoops(float[] mono, int rate, List<Cand> candidates,
-        List<LoopPair> result, int maxResults, long trimOffset)
+        List<LoopPair> result, int maxResults, long trimOffset, long originalLength, bool snapToZeroCrossing, int[]? barGrid, int barTol)
     {
         var tol = (int) (1.0 * rate / Hop);
         var tolSamples = (long) tol * Hop;
@@ -415,8 +647,17 @@ public static class LoopFinder
 
         foreach (var p in candidates)
         {
-            var s = NearestZeroCrossing(mono, rate, (long) p.StartFrame * Hop) + trimOffset;
-            var e = NearestZeroCrossing(mono, rate, (long) p.EndFrame * Hop) + trimOffset;
+            var startBase = (long) p.StartFrame * Hop;
+            var endBase = (long) p.EndFrame * Hop;
+            var sRaw = snapToZeroCrossing ? NearestZeroCrossing(mono, rate, startBase) : startBase;
+            var eRaw = snapToZeroCrossing ? NearestZeroCrossing(mono, rate, endBase) : endBase;
+            if (barGrid is { Length: > 0 } && barTol > 0)
+            {
+                sRaw = SnapToBar(sRaw, barGrid, barTol);
+                eRaw = SnapToBar(eRaw, barGrid, barTol);
+            }
+            var s = Math.Clamp(sRaw + trimOffset, 0L, originalLength - 1);
+            var e = Math.Clamp(eRaw + trimOffset, 0L, originalLength - 1);
 
             var dup = result.Any(q =>
             {
@@ -442,6 +683,7 @@ public static class LoopFinder
                 NoteDistance = (float) p.NoteDistance,
                 LoudnessDifference = (float) p.LoudnessDifference,
                 Score = (float) p.Score,
+                Source = SourceLabel(p.Sources),
             });
 
             if (result.Count >= maxResults)
@@ -453,6 +695,19 @@ public static class LoopFinder
 
     public static void ClearCache() => _cache.Clear();
 
+    private const int SrcChroma = 1;
+    private const int SrcSsm = 2;
+    private const int SrcRhythm = 4;
+
+    private static string SourceLabel(int sources)
+    {
+        var parts = new List<string>(3);
+        if ((sources & SrcChroma) != 0) parts.Add("chroma");
+        if ((sources & SrcSsm) != 0) parts.Add("ssm");
+        if ((sources & SrcRhythm) != 0) parts.Add("rhythm");
+        return parts.Count == 0 ? "" : string.Join(",", parts);
+    }
+
     private sealed class Cand
     {
         public int StartFrame;
@@ -460,12 +715,308 @@ public static class LoopFinder
         public double NoteDistance;
         public double LoudnessDifference;
         public double Score;
+        public bool FrameAdjusted;
+        public int Sources = SrcChroma;
     }
 
-    private static int TestOffset(int nFrames, int rate, double bpm, float[][]? chroma, int beatsOverride = 12)
+    private static float[][] HarmonicComponent(float[][] power, int rate)
     {
-        var beats = (double) beatsOverride;
+        var n = power.Length;
+        if (n == 0) return power;
+        var bins = power[0].Length;
+        const int kernel = 17;
+        var half = kernel / 2;
+        var cutoffBin = Math.Min(bins, Math.Max(1, (int) (6000.0 * NFft / rate)));
 
+        var harmonic = new float[n][];
+        Parallel.For(0, n, t =>
+        {
+            var dst = new float[bins];
+            var timeBuf = new float[kernel];
+            var freqBuf = new float[kernel];
+            for (var f = 0; f < cutoffBin; f++)
+            {
+                var k = 0;
+                for (var d = -half; d <= half; d++)
+                {
+                    var tt = t + d;
+                    timeBuf[k] = (tt >= 0 && tt < n) ? power[tt][f] : 0f;
+                    k++;
+                }
+                Array.Sort(timeBuf);
+                var hMed = timeBuf[half];
+
+                k = 0;
+                for (var d = -half; d <= half; d++)
+                {
+                    var ff = f + d;
+                    freqBuf[k] = (ff >= 0 && ff < bins) ? power[t][ff] : 0f;
+                    k++;
+                }
+                Array.Sort(freqBuf);
+                var pMed = freqBuf[half];
+
+                var denom = hMed + pMed;
+                dst[f] = denom > 1e-12 ? power[t][f] * (hMed / denom) : power[t][f];
+            }
+            for (var f = cutoffBin; f < bins; f++)
+            {
+                dst[f] = power[t][f];
+            }
+            harmonic[t] = dst;
+        });
+
+        return harmonic;
+    }
+
+    private static int AutocorrOffset(float[][] chroma, int rate)
+    {
+        var n = chroma.Length;
+        if (n < 16) return 0;
+
+        var ds = Math.Max(1, (int) Math.Round(0.050 * rate / Hop));
+        var m = n / ds;
+        if (m < 16)
+        {
+            ds = Math.Max(1, n / 16);
+            m = n / ds;
+        }
+        if (m < 8) return 0;
+
+        var agg = new float[m][];
+        for (var i = 0; i < m; i++)
+        {
+            var a = new float[NChroma];
+            var cnt = 0;
+            for (var k = 0; k < ds && i * ds + k < n; k++)
+            {
+                var c = chroma[i * ds + k];
+                for (var j = 0; j < NChroma; j++) a[j] += c[j];
+                cnt++;
+            }
+            if (cnt > 0)
+            {
+                var inv = 1f / cnt;
+                for (var j = 0; j < NChroma; j++) a[j] *= inv;
+            }
+            agg[i] = a;
+        }
+
+        var framesPerSec = (double) rate / Hop / ds;
+        var minLag = Math.Max(2, (int) Math.Round(0.8 * framesPerSec));
+        var maxLag = Math.Min(m / 2, (int) Math.Round(12.0 * framesPerSec));
+        if (maxLag <= minLag) return 0;
+
+        var bestLag = minLag;
+        var bestScore = double.NegativeInfinity;
+        for (var lag = minLag; lag <= maxLag; lag++)
+        {
+            double dotSum = 0;
+            var cnt = 0;
+            for (var t = 0; t + lag < m; t++)
+            {
+                dotSum += Cosine(agg[t], agg[t + lag]);
+                cnt++;
+            }
+            if (cnt <= 0) continue;
+            var score = dotSum / cnt;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestLag = lag;
+            }
+        }
+
+        return bestLag * ds;
+    }
+
+    private static double Cosine(float[] a, float[] b)
+    {
+        double dot = 0, na = 0, nb = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            na += a[i] * a[i];
+            nb += b[i] * b[i];
+        }
+        return dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
+    }
+
+    private static float[][] AggregatePower(float[][] power, int ds)
+    {
+        var n = power.Length;
+        var m = Math.Max(1, n / ds);
+        var agg = new float[m][];
+        for (var i = 0; i < m; i++)
+        {
+            var row = new float[Bins];
+            var cnt = 0;
+            for (var k = 0; k < ds && i * ds + k < n; k++)
+            {
+                var p = power[i * ds + k];
+                for (var b = 0; b < Bins; b++) row[b] += p[b];
+                cnt++;
+            }
+            if (cnt > 0)
+            {
+                var inv = 1f / cnt;
+                for (var b = 0; b < Bins; b++) row[b] *= inv;
+            }
+            agg[i] = row;
+        }
+        return agg;
+    }
+
+    private static float[][] OnsetWindowFeat(float[] onset, int ds, int winFrames)
+    {
+        var m = Math.Max(1, onset.Length / ds);
+        var agg = new float[m];
+        for (var i = 0; i < m; i++)
+        {
+            float s = 0;
+            var cnt = 0;
+            for (var k = 0; k < ds && i * ds + k < onset.Length; k++)
+            {
+                s += onset[i * ds + k];
+                cnt++;
+            }
+            agg[i] = cnt > 0 ? s / cnt : 0f;
+        }
+        var w = Math.Max(1, winFrames);
+        var feat = new float[m][];
+        for (var t = 0; t < m; t++)
+        {
+            var row = new float[2 * w + 1];
+            for (var k = -w; k <= w; k++)
+            {
+                var idx = t + k;
+                row[k + w] = (idx >= 0 && idx < m) ? agg[idx] : 0f;
+            }
+            feat[t] = row;
+        }
+        return feat;
+    }
+
+    private static List<Cand> FindSsmCandidates(float[][] feat, int minLoop, int maxLoop, int ds, int nFrames, int rate, int source)
+    {
+        var collected = new List<(int D, int BestI, double Score)>();
+        var m = feat.Length;
+        if (m < 16 || ds < 1) return new List<Cand>();
+
+        var minD = Math.Max(1, minLoop / ds);
+        var maxD = Math.Min(m - 2, maxLoop / ds);
+        if (maxD <= minD) return new List<Cand>();
+
+        var winFrames = Math.Clamp((int) Math.Round(2.0 * rate / Hop / ds), 2, Math.Max(2, m / 4));
+        var dStep = Math.Max(1, (int) Math.Round(0.25 * rate / Hop / ds));
+        var sim = new double[m];
+
+        for (var d = minD; d <= maxD; d += dStep)
+        {
+            var span = m - d;
+            if (span <= winFrames)
+            {
+                collected.Add((d, -1, 0));
+                continue;
+            }
+
+            for (var i = 0; i < span; i++) sim[i] = Cosine(feat[i], feat[i + d]);
+
+            double runSum = 0;
+            for (var i = 0; i < winFrames; i++) runSum += sim[i];
+            var bestI = 0;
+            var bestScore = runSum / winFrames;
+            for (var i = 1; i + winFrames <= span; i++)
+            {
+                runSum += sim[i + winFrames - 1] - sim[i - 1];
+                var avg = runSum / winFrames;
+                if (avg > bestScore)
+                {
+                    bestScore = avg;
+                    bestI = i;
+                }
+            }
+            collected.Add((d, bestI, bestScore));
+        }
+
+        if (collected.Count == 0) return new List<Cand>();
+
+        var sortedScores = new double[collected.Count];
+        for (var i = 0; i < collected.Count; i++) sortedScores[i] = collected[i].Score;
+        Array.Sort(sortedScores);
+        var baseline = sortedScores[sortedScores.Length / 2];
+        var topScore = sortedScores[^1];
+        var threshold = Math.Max(0.6, baseline + 0.5 * (topScore - baseline));
+
+        var peaks = new List<(int D, int BestI, double Score)>();
+        for (var idx = 0; idx < collected.Count; idx++)
+        {
+            var (d, bestI, sc) = collected[idx];
+            if (bestI < 0 || sc < threshold) continue;
+            var prevS = idx > 0 ? collected[idx - 1].Score : double.NegativeInfinity;
+            var nextS = idx < collected.Count - 1 ? collected[idx + 1].Score : double.NegativeInfinity;
+            if (sc >= prevS && sc >= nextS) peaks.Add((d, bestI, sc));
+        }
+
+        peaks.Sort((x, y) => y.Score.CompareTo(x.Score));
+        var result = new List<Cand>();
+        var take = Math.Min(40, peaks.Count);
+        for (var k = 0; k < take; k++)
+        {
+            var (d, bestI, sc) = peaks[k];
+            var start = bestI * ds;
+            var end = (bestI + d) * ds;
+            if (end < nFrames && end - start >= minLoop && end - start <= maxLoop)
+            {
+                result.Add(new Cand { StartFrame = start, EndFrame = end, Score = sc, Sources = source });
+            }
+        }
+        return result;
+    }
+
+    private static void MarkCrossValidated(List<Cand> candidates, int rate)
+    {
+        var maxStart = (int) Math.Max(1, Math.Round(2.0 * rate / Hop));
+        var n = candidates.Count;
+        for (var i = 0; i < n; i++)
+        {
+            var a = candidates[i];
+            var lenA = a.EndFrame - a.StartFrame;
+            for (var j = i + 1; j < n; j++)
+            {
+                var b = candidates[j];
+                if ((a.Sources & b.Sources) != 0) continue;
+                var lenB = b.EndFrame - b.StartFrame;
+                if (Math.Abs(lenA - lenB) > 0.10 * Math.Max(lenA, lenB)) continue;
+                if (Math.Abs(a.StartFrame - b.StartFrame) > maxStart) continue;
+                var merged = a.Sources | b.Sources;
+                a.Sources = merged;
+                b.Sources = merged;
+            }
+        }
+    }
+
+    private static int TestOffset(int nFrames, int rate, double bpm, float[][]? chroma, bool useAutocorr)
+    {
+        if (useAutocorr)
+        {
+            var minWin = Math.Max(1, (int) Math.Round(1.5 * rate / Hop));
+            var maxWin = Math.Max(minWin, Math.Min(nFrames, (int) Math.Round(30.0 * rate / Hop)));
+
+            if (chroma is { Length: >= 16 })
+            {
+                var auto = AutocorrOffset(chroma, rate);
+                if (auto >= minWin)
+                {
+                    return Math.Clamp(auto, minWin, maxWin);
+                }
+            }
+
+            var fallback = (int) Math.Round(8.0 * 60.0 / Math.Max(bpm, 30.0) * rate / Hop);
+            return Math.Clamp(fallback, minWin, maxWin);
+        }
+
+        var beats = 12.0;
         if (chroma is { Length: >= 8 })
         {
             var step = Math.Max(1, chroma.Length / 100);
@@ -492,8 +1043,7 @@ public static class LoopFinder
 
         var frames = (int) Math.Round(beats * 60.0 / Math.Max(bpm, 30.0) * rate / Hop);
         var lo = Math.Max(1, nFrames / 4);
-        var hi = Math.Max(lo, nFrames);
-        return Math.Clamp(frames, lo, hi);
+        return Math.Clamp(frames, lo, Math.Max(lo, nFrames));
     }
 
     private static int CoarseStride(int nFrames) => Math.Max(1, nFrames / 2500);
@@ -577,18 +1127,22 @@ public static class LoopFinder
         var list = new List<Cand>();
         var w = Math.Max(0, preRollFrames);
 
+        var averaged = new float[beats.Length][];
         var deviation = new double[beats.Length];
         for (var i = 0; i < beats.Length; i++)
         {
-            deviation[i] = Norm(AverageChroma(chroma, beats[i], w)) * noteDeviation * gateScale;
+            averaged[i] = AverageChroma(chroma, beats[i], w);
+            deviation[i] = Norm(averaged[i]) * noteDeviation * gateScale;
         }
 
         for (var idx = 0; idx < beats.Length; idx++)
         {
+            if (deviation[idx] < 0.01) continue;
             var loopEnd = beats[idx];
-            var endAvg = AverageChroma(chroma, loopEnd, w);
-            foreach (var loopStart in beats)
+            var endAvg = averaged[idx];
+            for (var j = 0; j < beats.Length; j++)
             {
+                var loopStart = beats[j];
                 var len = loopEnd - loopStart;
                 if (len < minLoop)
                 {
@@ -600,7 +1154,7 @@ public static class LoopFinder
                     continue;
                 }
 
-                var noteDistance = NormDiff(endAvg, AverageChroma(chroma, loopStart, w));
+                var noteDistance = NormDiff(endAvg, averaged[j]);
                 if (noteDistance <= deviation[idx])
                 {
                     var loud = Math.Abs(loudness[loopEnd] - loudness[loopStart]);
@@ -612,6 +1166,7 @@ public static class LoopFinder
                             EndFrame = loopEnd,
                             NoteDistance = noteDistance,
                             LoudnessDifference = loud,
+                            Sources = SrcChroma,
                         });
                     }
                 }
@@ -698,9 +1253,9 @@ public static class LoopFinder
         return keep;
     }
 
-    private static (double Bpm, int[] Beats) DetectBeats(float[][] power, int rate)
+    private static (double Bpm, int[] Beats) DetectBeats(float[][] power, int rate, float[]? onset = null)
     {
-        var onset = OnsetEnvelope(power, rate);
+        onset ??= OnsetEnvelope(power, rate);
         if (onset.Length < 16)
         {
             return (120, []);
@@ -797,8 +1352,8 @@ public static class LoopFinder
         }
 
         var bpm = 60.0 * rate / Hop / bestLag;
-        if (bpm < minBpm) bpm *= 2;
-        if (bpm > maxBpm) bpm /= 2;
+        while (bpm < minBpm) bpm *= 2;
+        while (bpm > maxBpm) bpm /= 2;
         return bpm;
     }
 
@@ -1012,48 +1567,65 @@ public static class LoopFinder
 
     private static void RefineXCorr(List<Cand> candidates, float[] audio, int rate)
     {
-        var topN = Math.Min(candidates.Count, 12);
+        var topN = Math.Min(candidates.Count, 16);
         var work = candidates.GetRange(0, topN);
         var maxLag = Math.Max(64, rate / 100);
         var win = Math.Min(2048, rate / 20);
 
         foreach (var c in work)
         {
-            if (c.Score < 0.7) continue;
+            if (c.Score < 0.5) continue;
 
             var sBase = c.StartFrame * Hop;
             var eBase = c.EndFrame * Hop;
             if (eBase + win + maxLag >= audio.Length || sBase - maxLag < 0) continue;
 
-            var bestS = sBase;
-            var bestE = eBase;
-            var bestCorr = double.NegativeInfinity;
-
-            for (var dS = -maxLag; dS <= maxLag; dS += 32)
+            var (bestS, bestE, bestCorr) = ScanXCorr(audio, sBase, eBase, win, maxLag, 32, double.NegativeInfinity);
+            if (bestCorr > 0.5)
             {
-                for (var dE = -maxLag; dE <= maxLag; dE += 32)
-                {
-                    var sSample = sBase + dS;
-                    var eSample = eBase + dE;
-                    if (sSample < 0 || eSample + win >= audio.Length) continue;
-
-                    var corr = XcorrSegment(audio, sSample, eSample, win);
-                    if (corr > bestCorr)
-                    {
-                        bestCorr = corr;
-                        bestS = sSample;
-                        bestE = eSample;
-                    }
-                }
+                var (fs, fe, fc) = ScanXCorr(audio, bestS, bestE, win, 32, 8, bestCorr);
+                bestS = fs;
+                bestE = fe;
+                bestCorr = fc;
             }
 
             if (bestCorr > 0.5)
             {
-                c.StartFrame = bestS / Hop;
-                c.EndFrame = bestE / Hop;
-                c.Score = Math.Min(1.0, c.Score + 0.05 * bestCorr);
+                var moved = bestS != sBase || bestE != eBase;
+                c.StartFrame = (int) Math.Round((double) bestS / Hop);
+                c.EndFrame = (int) Math.Round((double) bestE / Hop);
+                c.FrameAdjusted = moved;
+                if (moved)
+                {
+                    c.Score = Math.Min(1.0, c.Score + 0.05 * bestCorr);
+                }
             }
         }
+    }
+
+    private static (int S, int E, double Corr) ScanXCorr(float[] audio, int sBase, int eBase, int win, int maxLag, int step, double minCorr)
+    {
+        var bestS = sBase;
+        var bestE = eBase;
+        var bestCorr = minCorr;
+        for (var dS = -maxLag; dS <= maxLag; dS += step)
+        {
+            for (var dE = -maxLag; dE <= maxLag; dE += step)
+            {
+                var sSample = sBase + dS;
+                var eSample = eBase + dE;
+                if (sSample < 0 || eSample + win >= audio.Length) continue;
+
+                var corr = XcorrSegment(audio, sSample, eSample, win);
+                if (corr > bestCorr)
+                {
+                    bestCorr = corr;
+                    bestS = sSample;
+                    bestE = eSample;
+                }
+            }
+        }
+        return (bestS, bestE, bestCorr);
     }
 
     private static double XcorrSegment(float[] audio, int sSample, int eSample, int win)
@@ -1070,6 +1642,57 @@ public static class LoopFinder
             nb += b * b;
         }
         return sum / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
+    }
+
+    private static void RefinePhraseSnap(List<Cand> candidates, float[] mono, int[] onsets, int nFrames, int rate)
+    {
+        if (onsets.Length < 2) return;
+        var tol = Math.Max(4, (int) Math.Round(1.5 * rate / Hop));
+        var tolHalf = tol / 2;
+        var topN = Math.Min(candidates.Count, 16);
+
+        for (var idx = 0; idx < topN; idx++)
+        {
+            var c = candidates[idx];
+            if (c.Score < 0.5) continue;
+
+            var basePhase = PhaseContinuity(mono, c.StartFrame, c.EndFrame);
+            var phaseGate = Math.Max(0.40, basePhase - 0.15);
+
+            var lo = LowerBound(onsets, c.StartFrame - tol);
+            var bestDelta = 0;
+            var bestDist = int.MaxValue;
+
+            for (var k = lo; k < onsets.Length; k++)
+            {
+                var onset = onsets[k];
+                if (onset > c.StartFrame + tol) break;
+
+                var delta = onset - c.StartFrame;
+                var newEnd = c.EndFrame + delta;
+                if (newEnd <= 0 || newEnd >= nFrames) continue;
+
+                var endLo = LowerBound(onsets, newEnd - tolHalf);
+                if (endLo >= onsets.Length || onsets[endLo] > newEnd + tolHalf) continue;
+
+                var phase = PhaseContinuity(mono, onset, newEnd);
+                if (phase < phaseGate) continue;
+
+                var dist = Math.Abs(delta);
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    bestDelta = delta;
+                }
+            }
+
+            if (bestDelta != 0)
+            {
+                c.StartFrame += bestDelta;
+                c.EndFrame += bestDelta;
+                c.FrameAdjusted = true;
+            }
+        }
     }
 
     private static void BorderSimilarityFilter(List<Cand> candidates, float[][] chroma, int rate, double threshold)
@@ -1093,17 +1716,53 @@ public static class LoopFinder
 
     private static bool HasAtLeastTwoBeatsInRange(int[] beats, int startFrame, int endFrame)
     {
-        var count = 0;
-        foreach (var b in beats)
-        {
-            if (b >= startFrame && b <= endFrame)
-            {
-                count++;
-                if (count >= 2) return true;
-            }
-        }
+        var lo = LowerBound(beats, startFrame);
+        return lo + 1 < beats.Length && beats[lo + 1] <= endFrame;
+    }
 
-        return false;
+    private static int LowerBound(int[] arr, int value)
+    {
+        var lo = 0;
+        var hi = arr.Length;
+        while (lo < hi)
+        {
+            var mid = lo + (hi - lo) / 2;
+            if (arr[mid] < value) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    private static double SpectralFluxAt(float[][] power, int frame, int hop, int halfWindow)
+    {
+        var n = power.Length;
+        var lo = Math.Max(1, frame - halfWindow);
+        var hi = Math.Min(n - 1, frame + halfWindow);
+        double flux = 0;
+        int bins = 0;
+        for (var f = lo; f < hi; f++)
+        {
+            var cur = power[f];
+            var nxt = power[f + 1];
+            int binEnd = Math.Min(cur.Length, nxt.Length);
+            for (var k = 0; k < binEnd; k++)
+            {
+                var d = nxt[k] - cur[k];
+                if (d > 0) flux += d;
+            }
+            bins++;
+        }
+        return bins > 0 ? flux / bins : 0;
+    }
+
+    private static double SpectralFluxContinuity(float[][] power, int rate, int startFrame, int endFrame)
+    {
+        var hop = Hop;
+        var halfWindow = Math.Max(1, (int) (0.025 * rate / hop));
+        var fluxEnd = SpectralFluxAt(power, endFrame, hop, halfWindow);
+        var fluxStart = SpectralFluxAt(power, startFrame, hop, halfWindow);
+        var sum = Math.Max(fluxEnd + fluxStart, 1e-9);
+        return 1.0 - Math.Min(Math.Abs(fluxEnd - fluxStart) / sum, 1.0);
     }
 
     private static int SectionCrossingCount(int[] sections, int startFrame, int endFrame)
@@ -1115,6 +1774,59 @@ public static class LoopFinder
             if (s > startFrame && s < endFrame) n++;
         }
         return n;
+    }
+
+    private static double PhaseContinuity(float[] mono, int startFrame, int endFrame)
+    {
+        const int winSize = 1024;
+        var halfBins = winSize / 2;
+        var startSample = startFrame * Hop;
+        var endSample = endFrame * Hop;
+
+        if (endSample - winSize < 0 || startSample + winSize > mono.Length || endSample <= startSample)
+        {
+            return 1.0;
+        }
+
+        var reA = new double[winSize];
+        var imA = new double[winSize];
+        var reB = new double[winSize];
+        var imB = new double[winSize];
+        WindowedFft(mono, endSample - winSize, winSize, reA, imA);
+        WindowedFft(mono, startSample, winSize, reB, imB);
+
+        double sumRe = 0, sumIm = 0, wSum = 0;
+        for (var k = 1; k < halfBins; k++)
+        {
+            var aRe = reA[k];
+            var aIm = imA[k];
+            var bRe = reB[k];
+            var bIm = imB[k];
+            var magA = Math.Sqrt(aRe * aRe + aIm * aIm);
+            var magB = Math.Sqrt(bRe * bRe + bIm * bIm);
+            var prod = magA * magB;
+            if (prod <= 1e-20) continue;
+            var weight = Math.Min(magA, magB);
+            sumRe += weight * (aRe * bRe + aIm * bIm) / prod;
+            sumIm += weight * (aIm * bRe - aRe * bIm) / prod;
+            wSum += weight;
+        }
+
+        if (wSum <= 1e-9) return 1.0;
+        return Math.Clamp(Math.Sqrt(sumRe * sumRe + sumIm * sumIm) / wSum, 0.0, 1.0);
+    }
+
+    private static void WindowedFft(float[] mono, int start, int n, double[] re, double[] im)
+    {
+        for (var i = 0; i < n; i++)
+        {
+            var s = start + i;
+            var x = (s >= 0 && s < mono.Length) ? mono[s] : 0.0;
+            var win = 0.5 - 0.5 * Math.Cos(2 * Math.PI * i / n);
+            re[i] = x * win;
+            im[i] = 0.0;
+        }
+        Fft(re, im);
     }
 
     private static double TransitionSmoothness(float[] audio, int rate, int startFrame, int endFrame)
@@ -1156,6 +1868,11 @@ public static class LoopFinder
         candidates.RemoveAll(c => TransitionSmoothness(audio, rate, c.StartFrame, c.EndFrame) < threshold);
     }
 
+    private static void SpectralFluxFilter(List<Cand> candidates, float[][] power, int rate, double threshold)
+    {
+        candidates.RemoveAll(c => SpectralFluxContinuity(power, rate, c.StartFrame, c.EndFrame) < threshold);
+    }
+
     private static double BorderCosine(float[][] chroma, int fStart, int fEnd, int span)
     {
         var n = chroma.Length;
@@ -1180,7 +1897,7 @@ public static class LoopFinder
                 endN++;
             }
         }
-        if (startN == 0 || endN == 0) return 1;
+        if (startN == 0 || endN == 0) return 0;
         var inv1 = 1f / startN;
         var inv2 = 1f / endN;
         double dot = 0, na = 0, nb = 0;
@@ -1329,9 +2046,7 @@ public static class LoopFinder
     private static double LoopScore(int b1, int b2, float[][] chroma, int testDuration, double[] weights)
     {
         var ahead = SubseqSimilarityConsensus(b1, b2, chroma, testDuration, weights);
-        var rev = (double[]) weights.Clone();
-        Array.Reverse(rev);
-        var behind = SubseqSimilarityConsensus(b1, b2, chroma, -testDuration, rev);
+        var behind = SubseqSimilarityConsensus(b1, b2, chroma, -testDuration, ReversedWeights(weights));
         return Math.Max(ahead, behind);
     }
 
@@ -1399,8 +2114,9 @@ public static class LoopFinder
             return 0;
         }
 
-        var sims = new double[maxOffset];
-        for (var i = 0; i < maxOffset; i++)
+        var loopLen = Math.Min(testLength, maxOffset);
+        double num = 0, den = 0;
+        for (var i = 0; i < loopLen; i++)
         {
             var a = chroma[b1Start + i];
             var b = chroma[b2Start + i];
@@ -1412,16 +2128,14 @@ public static class LoopFinder
                 nb += b[k] * b[k];
             }
 
-            sims[i] = dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
-        }
-
-        double num = 0, den = 0;
-        for (var i = 0; i < testLength; i++)
-        {
+            var v = dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
             var w = i < weights.Length ? weights[i] : weights[^1];
-            var v = i < maxOffset ? sims[i] : 0.0;
             num += v * w;
             den += w;
+        }
+        for (var i = loopLen; i < testLength; i++)
+        {
+            den += i < weights.Length ? weights[i] : weights[^1];
         }
 
         return den > 0 ? num / den : 0;
@@ -1494,7 +2208,7 @@ public static class LoopFinder
             return sampleIdx;
         }
 
-        return sampleIdx + argmin - offset + offsetCorrection;
+        return Math.Max(0, sampleIdx + argmin - offset + offsetCorrection);
     }
 
     private static float[][] Stft(float[] x, bool preEmphasis)
@@ -1546,7 +2260,7 @@ public static class LoopFinder
         return frames;
     }
 
-    private static float[][] ChromaLowBand(float[][] power, int rate)
+    private static float[][] ChromaLowBand(float[][] power, int rate, float[]? vadScores, double peakThresh, double vadThresh)
     {
         var cutoff = Math.Max(1, (int) (250.0 * NFft / rate));
         var masked = new float[power.Length][];
@@ -1555,7 +2269,7 @@ public static class LoopFinder
             masked[f] = new float[Bins];
             Array.Copy(power[f], masked[f], cutoff);
         }
-        return Chroma(masked, rate);
+        return Chroma(masked, rate, vadScores, peakThresh, vadThresh);
     }
 
     private static float[][] BlendChroma(float[][] full, float[][] low, double fullWeight, double lowWeight)
@@ -1578,8 +2292,8 @@ public static class LoopFinder
 
     private static double DetectTuningOffset(float[][] power, int rate)
     {
-        var loBin = Math.Max(1, (int) (100.0 * NFft / rate));
-        var hiBin = Math.Min(Bins - 1, (int) (1500.0 * NFft / rate));
+        var loBin = Math.Max(2, (int) (100.0 * NFft / rate));
+        var hiBin = Math.Min(Bins - 2, (int) (1500.0 * NFft / rate));
         if (hiBin <= loBin) return 0;
 
         double sum = 0;
@@ -1587,16 +2301,22 @@ public static class LoopFinder
         var step = Math.Max(1, power.Length / 200);
         for (var f = 0; f < power.Length; f += step)
         {
+            var pf = power[f];
             var maxBin = loBin;
             var maxVal = 0.0;
-            var pf = power[f];
-            for (var k = loBin; k < hiBin; k++)
+            for (var k = loBin; k <= hiBin; k++)
             {
                 if (pf[k] > maxVal) { maxVal = pf[k]; maxBin = k; }
             }
-            if (maxVal > 0.001)
+            if (maxVal > 0.001 && maxBin > loBin && maxBin < hiBin)
             {
-                var freq = (double) maxBin * rate / NFft;
+                var yL = pf[maxBin - 1];
+                var yC = pf[maxBin];
+                var yR = pf[maxBin + 1];
+                var denom = yL - 2.0 * yC + yR;
+                var peakOffset = denom != 0 ? 0.5 * (yL - yR) / denom : 0.0;
+                peakOffset = Math.Clamp(peakOffset, -0.5, 0.5);
+                var freq = (double) (maxBin + peakOffset) * rate / NFft;
                 var midi = 69 + 12 * Math.Log2(freq / 440.0);
                 sum += midi - Math.Round(midi);
                 count++;
@@ -1812,6 +2532,9 @@ public static class LoopFinder
     }
 
     private static double[][] MelFilterbank(int rate, int nMels)
+        => _melFilterbanks.GetOrAdd((rate, nMels), static key => BuildMelFilterbank(key.Rate, key.NMels));
+
+    private static double[][] BuildMelFilterbank(int rate, int nMels)
     {
         double HzToMel(double f) => 2595.0 * Math.Log10(1 + f / 700.0);
         double MelToHz(double m) => 700.0 * (Math.Pow(10, m / 2595.0) - 1);
@@ -1894,7 +2617,7 @@ public static class LoopFinder
         return mfcc;
     }
 
-    private static float[][] Chroma(float[][] power, int rate)
+    private static float[][] Chroma(float[][] power, int rate, float[]? vadScores, double peakThresh, double vadThresh)
     {
         var fb = ChromaFilterbank(rate);
         var n = power.Length;
@@ -1927,9 +2650,26 @@ public static class LoopFinder
 
             if (max > 0)
             {
-                for (var ch = 0; ch < NChroma; ch++)
+                double s = 0;
+                for (var ch = 0; ch < NChroma; ch++) s += c[ch];
+                var peakiness = s > 0 ? (float) (max / s) : 0f;
+
+                var vadOk = vadScores == null || vadThresh <= 0 || vadScores[f] >= vadThresh;
+                var peakOk = peakThresh <= 0 || peakiness >= peakThresh;
+
+                if (vadOk && peakOk)
                 {
-                    c[ch] /= max;
+                    for (var ch = 0; ch < NChroma; ch++)
+                    {
+                        c[ch] /= max;
+                    }
+                }
+                else
+                {
+                    for (var ch = 0; ch < NChroma; ch++)
+                    {
+                        c[ch] = 0;
+                    }
                 }
             }
 
@@ -1940,6 +2680,9 @@ public static class LoopFinder
     }
 
     private static double[][] ChromaFilterbank(int rate)
+        => _chromaFilterbanks.GetOrAdd(rate, static r => BuildChromaFilterbank(r));
+
+    private static double[][] BuildChromaFilterbank(int rate)
     {
         var frqbins = new double[Bins];
         for (var k = 1; k < Bins; k++)
@@ -2172,6 +2915,7 @@ public static class LoopFinder
     private static void Fft(double[] re, double[] im)
     {
         var n = re.Length;
+        System.Diagnostics.Debug.Assert((n & (n - 1)) == 0, $"FFT size must be power of two, got {n}");
 
         for (int i = 1, j = 0; i < n; i++)
         {
@@ -2214,5 +2958,100 @@ public static class LoopFinder
                 }
             }
         }
+    }
+
+    private static float[] DetectVocalActivity(float[][] power, int rate)
+    {
+        var n = power.Length;
+        var vad = new float[n];
+
+        var highStart = Math.Max(2, (int) (4000.0 * NFft / rate));
+        var lowEnd = Math.Max(1, (int) (250.0 * NFft / rate));
+        var hfEnd = Math.Min(Bins, (int) (8000.0 * NFft / rate));
+
+        Parallel.For(0, n, f =>
+        {
+            var p = power[f];
+
+            double logSum = 0;
+            double arithSum = 0;
+            int count = 0;
+            for (var k = lowEnd; k < hfEnd; k++)
+            {
+                var v = Math.Max(p[k], 1e-10);
+                logSum += Math.Log(v);
+                arithSum += v;
+                count++;
+            }
+            var flatness = count > 0 ? Math.Exp(logSum / count) / Math.Max(arithSum / count, 1e-10) : 1.0;
+
+            double totalE = 0;
+            double hfE = 0;
+            for (var k = 1; k < Bins; k++)
+            {
+                totalE += p[k];
+                if (k >= highStart) hfE += p[k];
+            }
+            var hfRatio = totalE > 0 ? hfE / totalE : 0;
+
+            var score = (1.0 - Math.Min(flatness, 1.0)) * (1.0 - Math.Min(hfRatio, 1.0));
+            vad[f] = (float) Math.Clamp(score * 2.5, 0.0, 1.0);
+        });
+
+        return vad;
+    }
+
+    private static int[] DetectVocalPhrases(float[] vadScores, double vadThresh, int nFrames, int rate)
+    {
+        var minGapFrames = Math.Max(2, (int) (0.2 * rate / Hop));
+        var minPhraseFrames = Math.Max(2, (int) (0.5 * rate / Hop));
+        var phrases = new List<int>();
+
+        var inPhrase = false;
+        var phraseStart = 0;
+        var gapCount = 0;
+
+        for (var f = 0; f < nFrames && f < vadScores.Length; f++)
+        {
+            var isVocal = vadScores[f] >= vadThresh;
+            if (isVocal)
+            {
+                if (!inPhrase)
+                {
+                    inPhrase = true;
+                    phraseStart = f;
+                }
+                gapCount = 0;
+            }
+            else
+            {
+                if (inPhrase)
+                {
+                    gapCount++;
+                    if (gapCount > minGapFrames)
+                    {
+                        var phraseEnd = f - gapCount;
+                        if (phraseEnd - phraseStart >= minPhraseFrames)
+                        {
+                            phrases.Add(phraseStart);
+                            phrases.Add(phraseEnd);
+                        }
+                        inPhrase = false;
+                    }
+                }
+            }
+        }
+
+        if (inPhrase)
+        {
+            var phraseEnd = Math.Min(nFrames - 1, vadScores.Length - 1);
+            if (phraseEnd - phraseStart >= minPhraseFrames)
+            {
+                phrases.Add(phraseStart);
+                phrases.Add(phraseEnd);
+            }
+        }
+
+        return phrases.ToArray();
     }
 }

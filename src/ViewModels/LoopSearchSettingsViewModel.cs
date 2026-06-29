@@ -37,9 +37,18 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
 
     public string TransitionSmoothnessText => $"{TransitionSmoothness:0.00}";
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LoudnessDifferenceText))]
+    private double _loudnessDifference;
+
+    public string LoudnessDifferenceText => $"{LoudnessDifference:0.00}";
+
     [ObservableProperty] private bool _preEmphasis;
     [ObservableProperty] private bool _multiResolution;
     [ObservableProperty] private bool _disablePruning;
+    [ObservableProperty] private bool _useHarmonicChroma;
+    [ObservableProperty] private bool _useSsmNomination;
+    [ObservableProperty] private bool _requireOnsetAlignment;
 
     public bool Saved { get; private set; }
 
@@ -51,6 +60,10 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
         _minMatch = settings.LoopMinMatch;
         _borderSimilarity = settings.LoopBorderSimilarity;
         _transitionSmoothness = settings.LoopTransitionSmoothness;
+        _loudnessDifference = settings.LoopLoudnessDifference;
+        _useHarmonicChroma = settings.LoopUseHarmonicChroma;
+        _useSsmNomination = settings.LoopUseSsmNomination;
+        _requireOnsetAlignment = settings.LoopRequireOnsetAlignment;
         _preEmphasis = settings.LoopPreEmphasis;
         _multiResolution = settings.LoopMultiResolution;
         _disablePruning = settings.LoopDisablePruning;
@@ -63,6 +76,10 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
         _settings.LoopMinMatch = MinMatch;
         _settings.LoopBorderSimilarity = BorderSimilarity;
         _settings.LoopTransitionSmoothness = TransitionSmoothness;
+        _settings.LoopLoudnessDifference = LoudnessDifference;
+        _settings.LoopUseHarmonicChroma = UseHarmonicChroma;
+        _settings.LoopUseSsmNomination = UseSsmNomination;
+        _settings.LoopRequireOnsetAlignment = RequireOnsetAlignment;
         _settings.LoopPreEmphasis = PreEmphasis;
         _settings.LoopMultiResolution = MultiResolution;
         _settings.LoopDisablePruning = DisablePruning;

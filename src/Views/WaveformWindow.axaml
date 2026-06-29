@@ -40,7 +40,7 @@
                                   Markers="{Binding AllMarkers}" SampleLength="{Binding SampleLength}"/>
             </Border>
 
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" Margin="0,12,0,0">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto,Auto" Margin="0,12,0,0">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="6">
                     <Button Classes="wave_act" Width="32" Height="32" Focusable="False"
                             Click="OnPlay" ToolTip.Tip="{x:Static assets:Str.TipPlay}"
@@ -94,6 +94,12 @@
                         Click="OnLoopSearchSettings" ToolTip.Tip="{x:Static assets:Str.TipLoopSearchSettings}"
                         Background="{DynamicResource BgInput}">
                     <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="26" Height="26"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <Button x:Name="LoopStagesButton" Grid.Column="6" Classes="wave_act" Width="32" Height="32" Focusable="False" Margin="6,0,0,0"
+                        Click="OnLoopStages" ToolTip.Tip="{x:Static assets:Str.TipLoopStages}"
+                        Background="{DynamicResource BgInput}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_toggle.png" Width="22" Height="22"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Button>
             </Grid>

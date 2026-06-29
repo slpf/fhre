@@ -510,7 +510,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        var vm = new EditWindowViewModel(track) { Peaks = media.Peaks, WavPath = media.Wav, Settings = Vm.Settings };
+        var vm = new EditWindowViewModel(track)
+        {
+            Peaks = media.Peaks,
+            WavPath = media.Wav,
+            Settings = Vm.Settings,
+        };
 
         var w = new WaveformWindow { DataContext = vm };
         await w.ShowDialog(this);

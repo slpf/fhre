@@ -30,18 +30,18 @@ public static class AudioDecoder
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
         var key = Key($"add|{source}|{Stamp(source)}|{i}|{tp}");
         var outWav = Path.Combine(Dir, key + ".wav");
-        
+
         if (File.Exists(outWav))
         {
             return outWav;
         }
 
         Directory.CreateDirectory(Dir);
-        
+
         Run(Tools.FfmpegPath,
             $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
             $"-af {Loudnorm.Filter(source, s)} \"{outWav}\"");
-        
+
         return outWav;
     }
 
