@@ -153,9 +153,9 @@ public static class Str
     public const string DlgInterruptSearchBody = "A loop search is still running in the background. Stop it and close the editor?";
     public const string DlgInterruptSearchOk = "Stop and close";
     public const string DlgMissingToolsTitle = "Required tools missing";
-    public const string DlgMissingToolsBody = "{0} not found in its folder next to the program. The app will not work correctly — decoding and building are unavailable. Put the tool into the matching subfolder (ffmpeg/ and/or fsbank/).";
+    public const string DlgMissingToolsBody = "{0} not found in its folder next to the program.\n\nThe app will not work correctly — decoding and building are unavailable.\n\nPut the tool into the matching subfolder (ffmpeg/ and/or fsbank/).";
     public const string DlgMissingVgmstreamTitle = "Optional tool missing";
-    public const string DlgMissingVgmstreamBody = "vgmstream not found next to the program. Bank-track decoding will be unavailable, but adding and building your own tracks still works.";
+    public const string DlgMissingVgmstreamBody = "vgmstream not found next to the program.\n\nBank-track decoding will be unavailable, but adding and building your own tracks still works.";
     public const string MkTrackStart = "Start of the track.";
     public const string MkEnd = "End of the track.";
     public const string MkDjStart = "Free-roam: where the DJ comes in at the end and the music fades out. Best at the very end on the fade, 3-5 sec before the end.";
