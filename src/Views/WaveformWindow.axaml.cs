@@ -43,9 +43,6 @@ public partial class WaveformWindow : Window
     public WaveformWindow()
     {
         InitializeComponent();
-#if !DEBUG
-        LoopStagesButton.IsVisible = false;
-#endif
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _timer.Tick += OnTick;
@@ -229,6 +226,49 @@ public partial class WaveformWindow : Window
         }
     }
 
+    private CancellationTokenSource? _suggestCts;
+    private bool _forceClose;
+    private bool _confirmingClose;
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (_forceClose)
+        {
+            _suggestCts?.Cancel();
+            base.OnClosing(e);
+            return;
+        }
+
+        if (Vm.IsSuggesting)
+        {
+            e.Cancel = true;
+            if (!_confirmingClose)
+            {
+                _ = ConfirmCloseWhileSuggestingAsync();
+            }
+            return;
+        }
+
+        _suggestCts?.Cancel();
+        base.OnClosing(e);
+    }
+
+    private async Task ConfirmCloseWhileSuggestingAsync()
+    {
+        _confirmingClose = true;
+        var ok = await MessageDialog.ShowAsync(this,
+            Str.DlgInterruptSearchTitle,
+            Str.DlgInterruptSearchBody,
+            Str.DlgInterruptSearchOk,
+            Str.BtnCancel);
+        _confirmingClose = false;
+        if (!ok) return;
+
+        _suggestCts?.Cancel();
+        _forceClose = true;
+        Close();
+    }
+
     private async void OnSuggestLoops(object? sender, RoutedEventArgs e)
     {
         if (sender is not Control ctrl || ctrl.Tag is not MarkerField start || start.LoopEndName is null || Vm.SampleRate <= 0)
@@ -270,7 +310,7 @@ public partial class WaveformWindow : Window
         var role = start.Name == "PostRaceLoopStart" ? LoopRole.Post
             : start.Name == "TrackLoopStart" ? LoopRole.Track
             : LoopRole.Generic;
-        var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.9);
+        var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.80);
 
         List<LoopPair> pairs;
 
@@ -290,20 +330,18 @@ public partial class WaveformWindow : Window
 
             var cacheKey = Vm.WavPath;
 
-            var stages = Vm.Settings?.LoopStages ?? LoopStage.All;
-            var useSsm = Vm.Settings?.LoopUseSsmNomination ?? false;
+            var stages = auto ? LoopSearchDefaults.AutoStages : (Vm.Settings?.LoopStages ?? LoopSearchDefaults.AutoStages);
             var loopOptions = auto
-                ? new LoopSearchOptions { Role = role, AutoTune = true, MinLoopSeconds = LoopSearchDefaults.MinLoopSeconds, Stages = stages, UseSsmNomination = useSsm }
+                ? new LoopSearchOptions { Role = role, AutoTune = true, MinLoopSeconds = LoopSearchDefaults.MinLoopSeconds, Stages = stages }
                 : new LoopSearchOptions
                 {
                     AutoTune = false,
                     Role = role,
                     MinLoopSeconds = LoopSearchDefaults.MinLoopSeconds,
                     Stages = stages,
-                    UseSsmNomination = useSsm,
                     NoteDeviation = Vm.Settings?.LoopNoteDeviation ?? 0.0875,
-                    BorderSimilarityThreshold = Vm.Settings?.LoopBorderSimilarity ?? 0.5,
-                    TransitionSmoothnessThreshold = Vm.Settings?.LoopTransitionSmoothness ?? 0.4,
+                    BorderSimilarityThreshold = Vm.Settings?.LoopBorderSimilarity ?? 0.3,
+                    TransitionSmoothnessThreshold = Vm.Settings?.LoopTransitionSmoothness ?? 0.3,
                     LoudnessDifference = Vm.Settings?.LoopLoudnessDifference ?? 0.4,
                     UseHarmonicChroma = Vm.Settings?.LoopUseHarmonicChroma ?? false,
                     RequireOnsetAlignment = Vm.Settings?.LoopRequireOnsetAlignment ?? true,
@@ -317,7 +355,15 @@ public partial class WaveformWindow : Window
             logger = s => FH6RB.Services.Log.Line(s);
 #endif
 
-            var task = Task.Run(() => LoopFinder.Find(samples, rate, loopOptions, cacheKey, logger));
+            _suggestCts?.Cancel();
+            _suggestCts = new CancellationTokenSource();
+            var ct = _suggestCts.Token;
+
+            var task = Task.Run(() =>
+            {
+                if (ct.IsCancellationRequested) return new List<LoopPair>();
+                return LoopFinder.Find(samples, rate, loopOptions, cacheKey, logger, null, ct);
+            }, ct);
             if (!Vm.IsSuggesting && !task.IsCompleted)
             {
                 var first = await Task.WhenAny(task, Task.Delay(120));
@@ -328,6 +374,7 @@ public partial class WaveformWindow : Window
             }
 
             pairs = await task;
+            if (ct.IsCancellationRequested) return;
         }
         finally
         {
@@ -753,8 +800,10 @@ public partial class WaveformWindow : Window
             var testsDir = LoopFinderTester.ResolveTestsDir();
             var resultsDir = LoopFinderTester.ResolveResultsDir();
             var settings = Vm.Settings ?? new AppSettings();
+            _suggestCts?.Cancel();
+            _suggestCts = new CancellationTokenSource();
             await Task.Run(() => LoopFinderTester.RunAsync(
-                testsDir, resultsDir, settings, progress: null, CancellationToken.None));
+                testsDir, resultsDir, settings, progress: null, _suggestCts.Token));
         }
         catch (Exception ex)
         {
@@ -765,93 +814,6 @@ public partial class WaveformWindow : Window
             Vm.IsSuggesting = false;
         }
 #endif
-    }
-
-    private void OnLoopStages(object? sender, RoutedEventArgs e)
-    {
-        if (sender is not Control ctrl) return;
-        var settings = Vm.Settings ?? new AppSettings();
-        var vm = new LoopStagesVm(settings, () => SettingsService.Save(settings));
-
-        var panel = new StackPanel { Spacing = 4, Margin = new Thickness(14, 10) };
-        panel.Children.Add(new TextBlock
-        {
-            Text = Str.TitleLoopStages,
-            Foreground = Application.Current?.FindResource("Header") as IBrush,
-            FontSize = 12.5,
-            Margin = new Thickness(0, 0, 0, 4),
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 250,
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = Str.HintLoopStages,
-            Foreground = Application.Current?.FindResource("TxtFaint") as IBrush,
-            FontSize = 11,
-            Margin = new Thickness(0, 0, 0, 6),
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = 250,
-        });
-
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.BorderFilter), Str.LblStageBorderFilter);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.SmoothnessFilter), Str.LblStageSmoothnessFilter);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.FluxFilter), Str.LblStageFluxFilter);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.XCorr), Str.LblStageXCorr);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.ZeroCrossingSnap), Str.LblStageZeroCrossingSnap);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.Cyclicity), Str.LblStageCyclicity);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.Phase), Str.LblStagePhase);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.BarSnap), Str.LblStageBarSnap);
-        AddStageToggle(panel, vm, nameof(LoopStagesVm.PhraseSnap), Str.LblStagePhraseSnap);
-
-        var flyout = new Flyout
-        {
-            Content = panel,
-            Placement = PlacementMode.BottomEdgeAlignedRight,
-        };
-        flyout.ShowAt(ctrl);
-    }
-
-    private static void AddStageToggle(StackPanel panel, LoopStagesVm vm, string propName, string label)
-    {
-        var cb = new CheckBox { Content = label, FontSize = 12.5 };
-        cb.Bind(Avalonia.Controls.Primitives.ToggleButton.IsCheckedProperty, new Binding
-        {
-            Source = vm,
-            Path = propName,
-            Mode = BindingMode.TwoWay,
-        });
-        panel.Children.Add(cb);
-    }
-
-    private sealed class LoopStagesVm : ObservableObject
-    {
-        private readonly AppSettings _settings;
-        private readonly Action _persist;
-
-        public LoopStagesVm(AppSettings settings, Action persist)
-        {
-            _settings = settings;
-            _persist = persist;
-        }
-
-        private bool Get(LoopStage f) => (_settings.LoopStages & f) != 0;
-
-        private void Set(LoopStage f, bool value)
-        {
-            if (Get(f) == value) return;
-            _settings.LoopStages = value ? _settings.LoopStages | f : _settings.LoopStages & ~f;
-            _persist();
-        }
-
-        public bool BorderFilter { get => Get(LoopStage.BorderFilter); set => Set(LoopStage.BorderFilter, value); }
-        public bool SmoothnessFilter { get => Get(LoopStage.SmoothnessFilter); set => Set(LoopStage.SmoothnessFilter, value); }
-        public bool FluxFilter { get => Get(LoopStage.FluxFilter); set => Set(LoopStage.FluxFilter, value); }
-        public bool XCorr { get => Get(LoopStage.XCorr); set => Set(LoopStage.XCorr, value); }
-        public bool ZeroCrossingSnap { get => Get(LoopStage.ZeroCrossingSnap); set => Set(LoopStage.ZeroCrossingSnap, value); }
-        public bool Cyclicity { get => Get(LoopStage.Cyclicity); set => Set(LoopStage.Cyclicity, value); }
-        public bool Phase { get => Get(LoopStage.Phase); set => Set(LoopStage.Phase, value); }
-        public bool BarSnap { get => Get(LoopStage.BarSnap); set => Set(LoopStage.BarSnap, value); }
-        public bool PhraseSnap { get => Get(LoopStage.PhraseSnap); set => Set(LoopStage.PhraseSnap, value); }
     }
 
     private async void OnSavePreset(object? sender, RoutedEventArgs e)

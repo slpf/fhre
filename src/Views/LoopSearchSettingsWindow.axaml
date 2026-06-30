@@ -4,149 +4,221 @@
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.LoopSearchSettingsWindow"
         x:DataType="vm:LoopSearchSettingsViewModel"
-        Width="460" Height="420"
+        Width="720" SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
-        Title="{x:Static assets:Str.TitleLoopSearch}"
-        SizeToContent="Height">
+        Title="{x:Static assets:Str.TitleLoopSearch}">
 
-    <Grid RowDefinitions="*,Auto">
-        <ScrollViewer Grid.Row="0" Margin="16" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel Spacing="8">
-                <StackPanel Spacing="4">
-                    <TextBlock Text="{x:Static assets:Str.HintLoopAuto}" Margin="12,2,0,8"
-                               Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
-                    
-                    <Grid ColumnDefinitions="Auto,*,Auto">
-                        <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoopSearch}"/>
-                        <ToggleSwitch Grid.Column="2" IsChecked="{Binding AutoTune}"
-                                      FlowDirection="RightToLeft" OnContent="{x:Static assets:Str.LblLoopAuto}"
-                                      OffContent="{x:Static assets:Str.LblLoopManual}" Margin="0,0,12,0"/>
-                    </Grid>
-                </StackPanel>
-                
+    <Window.Styles>
+        <Style Selector="Border.manual-only CheckBox">
+            <Setter Property="IsEnabled" Value="{Binding ManualEnabled}"/>
+        </Style>
+        <Style Selector="Border.manual-only Slider">
+            <Setter Property="IsEnabled" Value="{Binding ManualEnabled}"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto">
+        <StackPanel Grid.Row="0" Margin="16" Spacing="10">
+
+                <Grid ColumnDefinitions="Auto,Auto,*">
+                    <TextBlock Grid.Column="0" Classes="sect" Text="{x:Static assets:Str.SecLoopSearch}" Margin="16 0 8 0"/>
+                    <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="13" Height="13"
+                           VerticalAlignment="Center" Opacity="0.55"
+                           ToolTip.Tip="{x:Static assets:Str.HintLoopAuto}"/>
+                    <ToggleSwitch Grid.Column="2" IsChecked="{Binding AutoTune}"
+                                  FlowDirection="RightToLeft" OnContent="{x:Static assets:Str.LblLoopAuto}"
+                                  OffContent="{x:Static assets:Str.LblLoopManual}"
+                                  HorizontalAlignment="Right" Margin="12 0"/>
+                </Grid>
+
                 <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
                         BorderThickness="1" CornerRadius="8" Padding="14"
-                        IsEnabled="{Binding ManualEnabled}">
+                        Classes="manual-only">
                     <StackPanel Spacing="6">
-                        <Grid ColumnDefinitions="*,Auto">
+
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                             <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopNoteDeviation}"
                                        Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding NoteDeviationText}"
+                            <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="13" Height="13"
+                                   VerticalAlignment="Center" Opacity="0.55" Margin="8 0"
+                                   ToolTip.Tip="{x:Static assets:Str.HintLoopNoteDeviation}"/>
+                            <TextBlock Grid.Column="3" Text="{Binding NoteDeviationText}"
                                        Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="0.01" Maximum="0.30"
-                                Value="{Binding NoteDeviation}"
-                                TickFrequency="0.01" IsSnapToTickEnabled="False"
-                                Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopNoteDeviation}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                                Value="{Binding NoteDeviation}" Margin="0, -12, 0, 0"/>
 
-                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="0, 8, 0, 0">
                             <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopMinMatch}"
                                        Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding MinMatchText}"
+                            <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="13" Height="13"
+                                   VerticalAlignment="Center" Opacity="0.55" Margin="8 0"
+                                   ToolTip.Tip="{x:Static assets:Str.HintLoopMinMatch}"/>
+                            <TextBlock Grid.Column="3" Text="{Binding MinMatchText}"
                                        Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="0.50" Maximum="1.00"
-                                Value="{Binding MinMatch}"
-                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Value="{Binding MinMatch}" IsSnapToTickEnabled="True" TickFrequency="0.05"
                                 Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopMinMatch}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
 
-                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="0, 8, 0, 0">
                             <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopBorderSimilarity}"
                                        Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding BorderSimilarityText}"
+                            <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="13" Height="13"
+                                   VerticalAlignment="Center" Opacity="0.55" Margin="8 0"
+                                   ToolTip.Tip="{x:Static assets:Str.HintLoopBorderSimilarity}"/>
+                            <TextBlock Grid.Column="3" Text="{Binding BorderSimilarityText}"
                                        Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="0.30" Maximum="0.90"
-                                Value="{Binding BorderSimilarity}"
-                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Value="{Binding BorderSimilarity}" IsSnapToTickEnabled="True" TickFrequency="0.05"
                                 Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopBorderSimilarity}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
 
-                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="0, 8, 0, 0">
                             <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopTransitionSmoothness}"
                                        Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding TransitionSmoothnessText}"
+                            <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="13" Height="13"
+                                   VerticalAlignment="Center" Opacity="0.55" Margin="8 0"
+                                   ToolTip.Tip="{x:Static assets:Str.HintLoopTransitionSmoothness}"/>
+                            <TextBlock Grid.Column="3" Text="{Binding TransitionSmoothnessText}"
                                        Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="0.20" Maximum="0.80"
-                                Value="{Binding TransitionSmoothness}"
-                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Value="{Binding TransitionSmoothness}" IsSnapToTickEnabled="True" TickFrequency="0.05"
                                 Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopTransitionSmoothness}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
 
-                        <Grid ColumnDefinitions="*,Auto" Margin="0, 8, 0, 0">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" Margin="0, 8, 0, 0">
                             <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblLoopLoudnessDifference}"
                                        Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding LoudnessDifferenceText}"
+                            <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="13" Height="13"
+                                   VerticalAlignment="Center" Opacity="0.55" Margin="8 0"
+                                   ToolTip.Tip="{x:Static assets:Str.HintLoopLoudnessDifference}"/>
+                            <TextBlock Grid.Column="3" Text="{Binding LoudnessDifferenceText}"
                                        Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>
                         <Slider Classes="loudness" Minimum="0.10" Maximum="1.00"
-                                Value="{Binding LoudnessDifference}"
-                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                Value="{Binding LoudnessDifference}" IsSnapToTickEnabled="True" TickFrequency="0.05"
                                 Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopLoudnessDifference}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
 
-                        <Border Background="{DynamicResource LineSoft}" Height="1" Margin="0,4"/>
+                        <Border Background="{DynamicResource LineSoft}" Height="1" Margin="0,6,0,0"/>
 
-                        <CheckBox IsChecked="{Binding PreEmphasis}" FontSize="12.5"
-                                  Content="{x:Static assets:Str.LblLoopPreEmphasis}"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopPreEmphasis}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
-                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+                        <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" Margin="0,2,0,0">
+                            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding PreEmphasis}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblLoopPreEmphasis}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintLoopPreEmphasis}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding MultiResolution}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblLoopMultiResolution}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintLoopMultiResolution}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding DisablePruning}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblLoopDisablePruning}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintLoopDisablePruning}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding UseHarmonicChroma}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblLoopHarmonicChroma}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintLoopHarmonicChroma}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding RequireOnsetAlignment}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblLoopOnsetAlignment}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintLoopOnsetAlignment}"/>
+                            </StackPanel>
+                        </Grid>
 
-                        <CheckBox IsChecked="{Binding MultiResolution}" FontSize="12.5"
-                                  Content="{x:Static assets:Str.LblLoopMultiResolution}"
-                                  Margin="0, 6, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopMultiResolution}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
-                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+                        <Border Background="{DynamicResource LineSoft}" Height="1" Margin="0,6,0,0"/>
 
-                        <CheckBox IsChecked="{Binding DisablePruning}" FontSize="12.5"
-                                  Content="{x:Static assets:Str.LblLoopDisablePruning}"
-                                  Margin="0, 6, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopDisablePruning}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
-                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
+                        <Grid ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto,Auto" Margin="0,2,0,0">
+                            <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageBorderFilter}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageBorderFilter}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageBorderFilter}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageSmoothnessFilter}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageSmoothnessFilter}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageSmoothnessFilter}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageFluxFilter}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageFluxFilter}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageFluxFilter}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageXCorr}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageXCorr}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageXCorr}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageZeroCrossingSnap}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageZeroCrossingSnap}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageZeroCrossingSnap}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageCyclicity}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageCyclicity}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageCyclicity}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StagePhase}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStagePhase}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStagePhase}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StageBarSnap}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStageBarSnap}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStageBarSnap}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                                <CheckBox IsChecked="{Binding StagePhraseSnap}" FontSize="12"
+                                          Content="{x:Static assets:Str.LblStagePhraseSnap}"/>
+                                <Image Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
+                                       VerticalAlignment="Center" Opacity="0.55"
+                                       ToolTip.Tip="{x:Static assets:Str.HintStagePhraseSnap}"/>
+                            </StackPanel>
+                        </Grid>
 
-                        <CheckBox IsChecked="{Binding UseHarmonicChroma}" FontSize="12.5"
-                                  Content="{x:Static assets:Str.LblLoopHarmonicChroma}"
-                                  Margin="0, 6, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopHarmonicChroma}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
-                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
-
-                        <CheckBox IsChecked="{Binding RequireOnsetAlignment}" FontSize="12.5"
-                                  Content="{x:Static assets:Str.LblLoopOnsetAlignment}"
-                                  Margin="0, 6, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopOnsetAlignment}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
-                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
-
-                        <CheckBox IsChecked="{Binding UseSsmNomination}" FontSize="12.5"
-                                  Content="{x:Static assets:Str.LblLoopSsmNomination}"
-                                  Margin="0, 6, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoopSsmNomination}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5"
-                                   TextWrapping="Wrap" Margin="24, -4, 0, 0"/>
                     </StackPanel>
                 </Border>
 
             </StackPanel>
-        </ScrollViewer>
 
         <Border Grid.Row="1" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">

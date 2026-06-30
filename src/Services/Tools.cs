@@ -11,6 +11,18 @@ public static class Tools
     public static string FsbankclPath => Path.Combine(Root, "fsbank", Exe("fsbankcl"));
     public static string VgmstreamPath => Path.Combine(Root, "vgmstream", Exe("vgmstream-cli"));
 
+    public static string DemucsModelDir => Path.Combine(Root, "demucs");
+
+    public static string? DemucsModelPath()
+    {
+        if (!Directory.Exists(DemucsModelDir)) return null;
+        var files = Directory.GetFiles(DemucsModelDir, "*.onnx");
+        Array.Sort(files, StringComparer.OrdinalIgnoreCase);
+        return files.Length > 0 ? files[0] : null;
+    }
+
+    public static bool HasDemucsModel => DemucsModelPath() is not null;
+
     public static bool HasFfmpeg => File.Exists(FfmpegPath);
     public static bool HasFsbankcl => File.Exists(FsbankclPath);
     public static bool HasVgmstream => File.Exists(VgmstreamPath);

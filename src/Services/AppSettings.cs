@@ -19,17 +19,16 @@ public sealed class AppSettings
     public bool LoopAutoTune { get; set; } = true;
     public double LoopMinSeconds { get; set; } = 30.0;
     public double LoopNoteDeviation { get; set; } = 0.0875;
-    public double LoopMinMatch { get; set; } = 0.9;
+    public double LoopMinMatch { get; set; } = 0.80;
     public bool LoopPreEmphasis { get; set; } = false;
     public bool LoopMultiResolution { get; set; } = false;
     public bool LoopDisablePruning { get; set; } = false;
-    public double LoopBorderSimilarity { get; set; } = 0.5;
-    public double LoopTransitionSmoothness { get; set; } = 0.4;
+    public double LoopBorderSimilarity { get; set; } = 0.3;
+    public double LoopTransitionSmoothness { get; set; } = 0.3;
     public double LoopLoudnessDifference { get; set; } = 0.4;
     public bool LoopUseHarmonicChroma { get; set; } = false;
-    public bool LoopUseSsmNomination { get; set; } = false;
     public bool LoopRequireOnsetAlignment { get; set; } = true;
-    public LoopStage LoopStages { get; set; } = LoopStage.All;
+    public LoopStage LoopStages { get; set; } = LoopSearchDefaults.AutoStages;
 
     public int SettingsVersion { get; set; }
 
@@ -55,7 +54,7 @@ public static class SettingsService
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
-    public const int CurrentSettingsVersion = 2;
+    public const int CurrentSettingsVersion = 5;
 
     public static AppSettings Load()
     {
@@ -70,9 +69,22 @@ public static class SettingsService
             s = new AppSettings();
         }
 
-        if (s.SettingsVersion < CurrentSettingsVersion)
+        if (s.SettingsVersion < 2)
         {
             s.MarkerDefaults = new();
+        }
+        if (s.SettingsVersion < 3)
+        {
+            s.LoopMinMatch = 0.80;
+            s.LoopBorderSimilarity = 0.3;
+            s.LoopTransitionSmoothness = 0.3;
+        }
+        if (s.SettingsVersion < 5)
+        {
+            s.LoopStages = LoopSearchDefaults.AutoStages;
+        }
+        if (s.SettingsVersion < CurrentSettingsVersion)
+        {
             s.SettingsVersion = CurrentSettingsVersion;
             Save(s);
         }

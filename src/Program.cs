@@ -19,6 +19,11 @@ internal static class Program
     internal static void InitAssemblyResolver()
     {
         var libs = Path.Combine(AppContext.BaseDirectory, "libs");
+        if (Directory.Exists(libs))
+        {
+            var path = Environment.GetEnvironmentVariable("PATH") ?? "";
+            Environment.SetEnvironmentVariable("PATH", libs + Path.PathSeparator + path);
+        }
         AssemblyLoadContext.Default.Resolving += (ctx, name) =>
         {
             var dll = Path.Combine(libs, name.Name + ".dll");

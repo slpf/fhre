@@ -4,7 +4,7 @@ public static class Str
 {
     public const string TitleMain = "Forza Horizon Radio Extender";
     public const string TitleSettings = "Settings";
-    public const string TitleMarkers = "Markers";
+    public const string TitleMarkers = "Marker editor";
     public const string TitleEditing = "Editing";
     public const string TitleNotice = "Notice";
     
@@ -138,8 +138,6 @@ public static class Str
         "(a .bak backup exists to restore from). Quit anyway?";
     public const string DlgBuildProgressOk = "Quit";
     public const string DlgBuildProgressCancel = "Keep building";
-
-
     
     public const string GrpCore = "Core";
     public const string GrpDjDrops = "DJ / Drops";
@@ -151,6 +149,13 @@ public static class Str
     public const string DlgFilesInUseTitle = "Files in use";
     public const string DlgFilesInUseBody = "Some game files are in use. Forza Horizon is most likely running. Close the game before building, otherwise saving and building will fail.";
     public const string DlgGameRunningTitle = "Game is running";
+    public const string DlgInterruptSearchTitle = "Stop loop search?";
+    public const string DlgInterruptSearchBody = "A loop search is still running in the background. Stop it and close the editor?";
+    public const string DlgInterruptSearchOk = "Stop and close";
+    public const string DlgMissingToolsTitle = "Required tools missing";
+    public const string DlgMissingToolsBody = "{0} not found in its folder next to the program. The app will not work correctly — decoding and building are unavailable. Put the tool into the matching subfolder (ffmpeg/ and/or fsbank/).";
+    public const string DlgMissingVgmstreamTitle = "Optional tool missing";
+    public const string DlgMissingVgmstreamBody = "vgmstream not found next to the program. Bank-track decoding will be unavailable, but adding and building your own tracks still works.";
     public const string MkTrackStart = "Start of the track.";
     public const string MkEnd = "End of the track.";
     public const string MkDjStart = "Free-roam: where the DJ comes in at the end and the music fades out. Best at the very end on the fade, 3-5 sec before the end.";
@@ -245,12 +250,20 @@ public static class Str
     public const string HintLoopTransitionSmoothness = "Max RMS imbalance at the loop join (1/ratio). Higher = stricter (volume must match), lower = more permissive.";
     public const string LblLoopLoudnessDifference = "Loudness tolerance";
     public const string HintLoopLoudnessDifference = "Max loudness mismatch allowed between loop endpoints. Higher = looser, lower = stricter.";
-    public const string LblLoopHarmonicChroma = "Harmonic-only chroma (HPS)";
+    public const string LblLoopHarmonicChroma = "Harmonic-only chroma";
     public const string HintLoopHarmonicChroma = "Separate harmonic from percussive content before pitch analysis. Cleans detection on drum-heavy tracks.";
     public const string LblLoopOnsetAlignment = "Require beat alignment";
     public const string HintLoopOnsetAlignment = "Keep only loops spanning at least two beats. Turn off for non-rhythmic or vocal tracks.";
     public const string LblLoopSsmNomination = "SSM loop nominator (experimental)";
     public const string HintLoopSsmNomination = "Add waveform/timbre-periodic candidates from a self-similarity scan, on top of pitch matching. Finds loops the pitch matcher misses. Auto mode always uses this; in Manual this toggle controls it.";
+    public const string LblLoopVocalMl = "Vocal separation (ML)";
+    public const string HintLoopVocalMl = "Isolate vocals with an ONNX model placed in the /demucs/ folder and detect loop/phrase boundaries on the clean vocal. Auto-falls back to full-mix analysis when no model is present. Toggle off to A/B.";
+    public const string LblLoopChroma = "Chroma (always on)";
+    public const string HintLoopChroma = "Base pitch-matching nominator. Always runs and scores every candidate, so it cannot be turned off.";
+    public const string LblLoopRhythm = "Rhythm nominator";
+    public const string HintLoopRhythm = "Add onset-pattern self-similarity candidates. Feels close to Chroma, so it is off by default.";
+    public const string SecLoopMethods = "SEARCH METHODS";
+    public const string SecLoopFilters = "STAGE FILTERS";
     public const string TitleLoopStages = "Auxiliary loop-finder stages";
     public const string HintLoopStages = "Toggle auxiliary stages off to A/B their effect on the suggested loops. Mandatory stages always run.";
     public const string LblStageBorderFilter = "Border similarity filter";
@@ -262,6 +275,15 @@ public static class Str
     public const string LblStagePhase = "Phase continuity";
     public const string LblStageBarSnap = "Bar-quantize snap";
     public const string LblStagePhraseSnap = "Vocal-phrase snap";
+    public const string HintStageBorderFilter = "Drop loops whose endpoints differ in pitch content (chroma).";
+    public const string HintStageSmoothnessFilter = "Drop loops with a volume mismatch at the join.";
+    public const string HintStageFluxFilter = "Drop loops with uneven spectral change at the join. Can over-filter vocals.";
+    public const string HintStageXCorr = "Fine-tune loop boundaries by waveform cross-correlation.";
+    public const string HintStageZeroCrossingSnap = "Snap boundaries to the nearest zero crossing to reduce clicks.";
+    public const string HintStageCyclicity = "Bonus score for loops that repeat cleanly several times.";
+    public const string HintStagePhase = "Reward phase continuity at the seam (fewer clicks).";
+    public const string HintStageBarSnap = "Snap boundaries to the nearest musical bar (gentle quantize).";
+    public const string HintStagePhraseSnap = "Snap boundaries to vocal-phrase edges.";
     public const string TipLoopStages = "Auxiliary loop-finder stages";
     public const string TipLoopSearchSettings = "Loop search settings";
     public const string TipPresetSave = "Save current marker positions as a preset";

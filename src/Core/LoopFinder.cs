@@ -57,7 +57,8 @@ public sealed record LoopSearchOptions
     public LoopStage Stages { get; init; } = LoopStage.All;
     public bool UseHarmonicChroma { get; init; } = false;
     public bool UseAutocorrOffset { get; init; } = true;
-    public bool UseSsmNomination { get; init; } = false;
+    public bool UseSsmNomination { get; init; } = true;
+    public bool UseRhythmNomination { get; init; } = true;
 
     public static LoopSearchOptions Default { get; } = new();
 }
@@ -65,6 +66,10 @@ public sealed record LoopSearchOptions
 public static class LoopSearchDefaults
 {
     public const double MinLoopSeconds = 15.0;
+
+    public const LoopStage AutoStages =
+        LoopStage.BorderFilter | LoopStage.SmoothnessFilter | LoopStage.XCorr |
+        LoopStage.Cyclicity | LoopStage.Phase | LoopStage.PhraseSnap;
 }
 
 public static class LoopFinder
@@ -189,7 +194,7 @@ public static class LoopFinder
         return lim > 0 ? sum / lim : 0;
     }
 
-    public static List<LoopPair> Find(float[]? mono, int rate, LoopSearchOptions options, string? cacheKey = null, Action<string>? log = null)
+    public static List<LoopPair> Find(float[]? mono, int rate, LoopSearchOptions options, string? cacheKey = null, Action<string>? log = null, float[]? vocalStem = null, CancellationToken ct = default)
     {
         var result = new List<LoopPair>();
         try
@@ -225,6 +230,9 @@ public static class LoopFinder
                 return result;
             }
     
+            var useVocalStem = vocalStem != null && vocalStem.Length >= NFft * 4;
+            float[][]? vocalPower = null;
+
             var onsetEnv = OnsetEnvelope(power, rate);
     
             var autoHarmonic = false;
@@ -234,7 +242,8 @@ public static class LoopFinder
             if (options.AutoTune)
             {
                 autoHarmonic = LoopAutoProfile.IsPercussive(onsetEnv, nFrames, rate);
-                vadScores = DetectVocalActivity(power, rate);
+                vocalPower ??= useVocalStem ? Stft(vocalStem!, false) : power;
+                vadScores = DetectVocalActivity(vocalPower, rate);
                 if (MeanVad(vadScores, nFrames) > 0.45)
                 {
                     autoVadThreshold = 0.4;
@@ -243,13 +252,15 @@ public static class LoopFinder
             }
             else if (options.VadThreshold > 0)
             {
-                vadScores = DetectVocalActivity(power, rate);
+                vocalPower ??= useVocalStem ? Stft(vocalStem!, false) : power;
+                vadScores = DetectVocalActivity(vocalPower, rate);
             }
     
             var useHarmonic = options.UseHarmonicChroma || autoHarmonic;
             var vadThreshold = options.VadThreshold > 0 ? options.VadThreshold : autoVadThreshold;
             var requireVocalPhrase = options.RequireVocalPhrase || autoRequireVocalPhrase;
-            var useSsm = options.UseSsmNomination || options.AutoTune;
+            var useSsm = options.UseSsmNomination;
+            var useRhythm = options.UseRhythmNomination;
     
             var chromaSource = useHarmonic ? HarmonicComponent(power, rate) : power;
             var chromaFull = Chroma(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold);
@@ -317,7 +328,7 @@ public static class LoopFinder
     
             void LogLine(string s) => log?.Invoke(s);
     
-            LogLine($"[LoopFinder] rate={rate} dur={totalSec:0.0}s frames={nFrames} role={options.Role} auto={options.AutoTune} hps={useHarmonic} autoOffset={options.UseAutocorrOffset} ssm={useSsm} vad={vadThreshold:0.00} phrase={requireVocalPhrase}");
+            LogLine($"[LoopFinder] rate={rate} dur={totalSec:0.0}s frames={nFrames} role={options.Role} auto={options.AutoTune} hps={useHarmonic} autoOffset={options.UseAutocorrOffset} ssm={useSsm} rhythm={useRhythm} vad={vadThreshold:0.00} phrase={requireVocalPhrase} vocal={(useVocalStem ? "ml" : "mix")}");
             LogLine($"  bpm={bpm:0.0} tuning={tuningOffset:0.000} sections={sections.Length} anchors={anchors.Length} testOffset={testOffset}");
             LogLine($"  noteDev={effNoteDev:0.000} loudDiff={effOptions.LoudnessDifference:0.00} minLoop={minLoopBaseSec:0.0}s maxLoop={maxLoopBaseSec:0.0}s");
             LogLine($"  border>={effOptions.BorderSimilarityThreshold:0.00} smooth>={effOptions.TransitionSmoothnessThreshold:0.00} onset={effOptions.RequireOnsetAlignment} timbre={effOptions.TimbreWeight:0.00} section={effOptions.SectionWeight:0.00} phase={effOptions.PhaseContinuityWeight:0.00} prune={!effOptions.DisablePruning}");
@@ -339,17 +350,22 @@ public static class LoopFinder
             var allCandidates = new List<Cand>();
 
             List<Cand>? ssmCands = null;
-            if (useSsm)
+            if (useSsm || useRhythm)
             {
                 var ds = Math.Max(2, (int) Math.Round(0.1 * rate / Hop));
                 if (nFrames / ds >= 16)
                 {
                     var winFrames = Math.Clamp((int) Math.Round(2.0 * rate / Hop / ds), 2, Math.Max(2, nFrames / ds / 4));
-                    var mfccCands = FindSsmCandidates(Mfcc(AggregatePower(power, ds), rate), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcSsm);
-                    var rhythmCands = FindSsmCandidates(OnsetWindowFeat(onsetEnv, ds, winFrames), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcRhythm);
-                    ssmCands = mfccCands;
+                    var mfccCands = useSsm
+                        ? FindSsmCandidates(Mfcc(AggregatePower(power, ds), rate), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcSsm)
+                        : new List<Cand>();
+                    var rhythmCands = useRhythm
+                        ? FindSsmCandidates(OnsetWindowFeat(onsetEnv, ds, winFrames), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcRhythm)
+                        : new List<Cand>();
+                    ssmCands = new List<Cand>(mfccCands.Count + rhythmCands.Count);
+                    ssmCands.AddRange(mfccCands);
                     ssmCands.AddRange(rhythmCands);
-                    LogLine($"  ssm nominator -> ssm:{mfccCands.Count} rhythm:{rhythmCands.Count}");
+                    LogLine($"  nominators -> ssm:{mfccCands.Count} rhythm:{rhythmCands.Count}");
                 }
             }
 
@@ -369,6 +385,7 @@ public static class LoopFinder
             var ssmAdded = false;
             foreach (var (minLoop, maxLoop) in passSpecs)
             {
+                if (ct.IsCancellationRequested) break;
                 var candidates = FindCandidatePairs(
                     chroma, loudness, anchors, minLoop, maxLoop,
                     effOptions.GateScale, effOptions.PreRollFrames,
@@ -702,10 +719,10 @@ public static class LoopFinder
     private static string SourceLabel(int sources)
     {
         var parts = new List<string>(3);
-        if ((sources & SrcChroma) != 0) parts.Add("chroma");
-        if ((sources & SrcSsm) != 0) parts.Add("ssm");
-        if ((sources & SrcRhythm) != 0) parts.Add("rhythm");
-        return parts.Count == 0 ? "" : string.Join(",", parts);
+        if ((sources & SrcChroma) != 0) parts.Add("Chroma");
+        if ((sources & SrcSsm) != 0) parts.Add("SSM");
+        if ((sources & SrcRhythm) != 0) parts.Add("Rhythm");
+        return parts.Count == 0 ? "" : string.Join(", ", parts);
     }
 
     private sealed class Cand

@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using FH6RB.Core;
 using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
@@ -47,8 +48,26 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
     [ObservableProperty] private bool _multiResolution;
     [ObservableProperty] private bool _disablePruning;
     [ObservableProperty] private bool _useHarmonicChroma;
-    [ObservableProperty] private bool _useSsmNomination;
     [ObservableProperty] private bool _requireOnsetAlignment;
+
+    public bool StageBorderFilter { get => (_settings.LoopStages & LoopStage.BorderFilter) != 0; set => UpdateStage(LoopStage.BorderFilter, value); }
+    public bool StageSmoothnessFilter { get => (_settings.LoopStages & LoopStage.SmoothnessFilter) != 0; set => UpdateStage(LoopStage.SmoothnessFilter, value); }
+    public bool StageFluxFilter { get => (_settings.LoopStages & LoopStage.FluxFilter) != 0; set => UpdateStage(LoopStage.FluxFilter, value); }
+    public bool StageXCorr { get => (_settings.LoopStages & LoopStage.XCorr) != 0; set => UpdateStage(LoopStage.XCorr, value); }
+    public bool StageZeroCrossingSnap { get => (_settings.LoopStages & LoopStage.ZeroCrossingSnap) != 0; set => UpdateStage(LoopStage.ZeroCrossingSnap, value); }
+    public bool StageCyclicity { get => (_settings.LoopStages & LoopStage.Cyclicity) != 0; set => UpdateStage(LoopStage.Cyclicity, value); }
+    public bool StagePhase { get => (_settings.LoopStages & LoopStage.Phase) != 0; set => UpdateStage(LoopStage.Phase, value); }
+    public bool StageBarSnap { get => (_settings.LoopStages & LoopStage.BarSnap) != 0; set => UpdateStage(LoopStage.BarSnap, value); }
+    public bool StagePhraseSnap { get => (_settings.LoopStages & LoopStage.PhraseSnap) != 0; set => UpdateStage(LoopStage.PhraseSnap, value); }
+
+    private bool UpdateStage(LoopStage f, bool value, [System.Runtime.CompilerServices.CallerMemberName] string? prop = null)
+    {
+        var nv = value ? _settings.LoopStages | f : _settings.LoopStages & ~f;
+        if (nv == _settings.LoopStages) return false;
+        _settings.LoopStages = nv;
+        OnPropertyChanged(prop);
+        return true;
+    }
 
     public bool Saved { get; private set; }
 
@@ -62,7 +81,6 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
         _transitionSmoothness = settings.LoopTransitionSmoothness;
         _loudnessDifference = settings.LoopLoudnessDifference;
         _useHarmonicChroma = settings.LoopUseHarmonicChroma;
-        _useSsmNomination = settings.LoopUseSsmNomination;
         _requireOnsetAlignment = settings.LoopRequireOnsetAlignment;
         _preEmphasis = settings.LoopPreEmphasis;
         _multiResolution = settings.LoopMultiResolution;
@@ -78,7 +96,6 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
         _settings.LoopTransitionSmoothness = TransitionSmoothness;
         _settings.LoopLoudnessDifference = LoudnessDifference;
         _settings.LoopUseHarmonicChroma = UseHarmonicChroma;
-        _settings.LoopUseSsmNomination = UseSsmNomination;
         _settings.LoopRequireOnsetAlignment = RequireOnsetAlignment;
         _settings.LoopPreEmphasis = PreEmphasis;
         _settings.LoopMultiResolution = MultiResolution;
