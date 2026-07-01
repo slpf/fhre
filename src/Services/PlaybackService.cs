@@ -18,7 +18,21 @@ public sealed class PlaybackService : IDisposable
     public TimeSpan Position
     {
         get => _reader?.CurrentTime ?? TimeSpan.Zero;
-        set { if (_reader is not null) _reader.CurrentTime = value; }
+        set
+        {
+            if (_reader is null)
+            {
+                return;
+            }
+
+            if (_loop is null)
+            {
+                _reader.CurrentTime = value;
+                return;
+            }
+
+            _loop.ExecuteUnderLock(() => _reader.CurrentTime = value);
+        }
     }
 
     public TimeSpan Duration => _reader?.TotalTime ?? TimeSpan.Zero;
@@ -128,6 +142,14 @@ public sealed class PlaybackService : IDisposable
         public LoopSampleProvider(AudioFileReader reader) => _reader = reader;
 
         public WaveFormat WaveFormat => _reader.WaveFormat;
+
+        public void ExecuteUnderLock(Action action)
+        {
+            lock (_gate)
+            {
+                action();
+            }
+        }
 
         public void SetLoop(long startBytes, long endBytes)
         {

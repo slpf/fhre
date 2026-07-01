@@ -38,6 +38,11 @@ public sealed class Fsb5
         var sampleHeaderSize = (int) U32(b, 12);
         var nameStart = HeaderSize + sampleHeaderSize;
 
+        if (numSamples < 0 || numSamples > (b.Length - HeaderSize) / 8)
+        {
+            return [];
+        }
+
         var res = new (long, int)[numSamples];
         var pos = HeaderSize;
 
@@ -84,6 +89,11 @@ public sealed class Fsb5
         var nameSize = (int) U32(b, 16);
         long dataSize = U32(b, 20);
 
+        if (numSamples < 0 || numSamples > (b.Length - HeaderSize) / 8)
+        {
+            throw new InvalidDataException($"FSB5 implausible sample count {numSamples}");
+        }
+
         var header60 = b[0..HeaderSize];
         var shStart = HeaderSize;
         var nameStart = HeaderSize + sampleHeaderSize;
@@ -100,6 +110,11 @@ public sealed class Fsb5
         
         for (int i = 0; i < numSamples; i++)
         {
+            if (pos + 8 > b.Length)
+            {
+                throw new InvalidDataException("FSB5 sample header truncated");
+            }
+
             var raw = U64(b, pos);
             freqId[i] = (int)((raw >> 1) & 0xF);
             chans[i] = (int)((raw >> 5) & 0x3) + 1;
@@ -133,11 +148,19 @@ public sealed class Fsb5
         for (var i = 0; i < numSamples; i++)
         {
             var end = (i + 1 < numSamples) ? dataOff[i + 1] : dataSize;
-            
+            var dStart = (int) (dataStart + dataOff[i]);
+            var dEnd = (int) (dataStart + end);
+
+            if (hdrOff[i] < 0 || hdrLen[i] < 0 || hdrOff[i] + hdrLen[i] > b.Length
+                || dStart < 0 || dEnd < dStart || dEnd > b.Length)
+            {
+                throw new InvalidDataException($"FSB5 sample {i} data range out of bounds");
+            }
+
             samples.Add(new Fsb5Sample
             {
                 Header = b[hdrOff[i]..(hdrOff[i] + hdrLen[i])],
-                Data = b[(int)(dataStart + dataOff[i])..(int)(dataStart + end)],
+                Data = b[dStart..dEnd],
                 Frames = frames[i],
                 SampleRate = freqId[i] < FreqTable.Length ? FreqTable[freqId[i]] : 0,
                 Channels = chans[i],
@@ -173,6 +196,11 @@ public sealed class Fsb5
         var numSamples = (int) U32(b, 8);
         var sampleHeaderSize = (int) U32(b, 12);
         long dataSize = U32(b, 20);
+
+        if (numSamples < 0 || numSamples > (b.Length - HeaderSize) / 8)
+        {
+            throw new InvalidDataException($"FSB5 implausible sample count {numSamples}");
+        }
 
         var header60 = b[0..HeaderSize];
         var hdrOff = new int[numSamples];

@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using FH6RB;
 using FH6RB.Assets;
 using FH6RB.ViewModels;
 
@@ -12,7 +13,10 @@ public partial class SettingsWindow : Window
 
     private SettingsWindowViewModel Vm => (SettingsWindowViewModel)DataContext!;
 
-    private async void OnBrowse(object? sender, RoutedEventArgs e)
+    private void OnBrowse(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(BrowseAsync, "browse", this);
+
+    private async Task BrowseAsync()
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
@@ -36,7 +40,10 @@ public partial class SettingsWindow : Window
 
     private void OnRestore(object? sender, RoutedEventArgs e) => Vm.RestoreBackups();
 
-    private async void OnResetSettings(object? sender, RoutedEventArgs e)
+    private void OnResetSettings(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(ResetSettingsAsync, "reset settings", this);
+
+    private async Task ResetSettingsAsync()
     {
         var ok = await MessageDialog.ShowAsync(this, Str.DlgResetSettingsTitle, Str.DlgResetSettingsBody,
             okText: Str.DlgResetSettingsOk, cancelText: Str.DlgResetSettingsCancel);

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using FH6RB;
 using FH6RB.Assets;
 using FH6RB.Services;
 using FH6RB.ViewModels;
@@ -14,7 +15,10 @@ public partial class BackupsWindow : Window
 
     public BackupsWindow() => InitializeComponent();
 
-    private async void OnRestore(object? sender, RoutedEventArgs e)
+    private void OnRestore(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => RestoreAsync(sender), "restore", this);
+
+    private async Task RestoreAsync(object? sender)
     {
         if (sender is not Button { Tag: BackupRow row })
         {
@@ -34,7 +38,10 @@ public partial class BackupsWindow : Window
         Close();
     }
 
-    private async void OnDelete(object? sender, RoutedEventArgs e)
+    private void OnDelete(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => DeleteAsync(sender), "delete backup", this);
+
+    private async Task DeleteAsync(object? sender)
     {
         if (sender is not Button { Tag: BackupRow row })
         {

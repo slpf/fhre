@@ -44,31 +44,15 @@ public static class Loudnorm
             $":measured_I={mi}:measured_TP={mtp}:measured_LRA={mlra}:measured_thresh={mthresh}:offset={off}:linear=true";
     }
 
-    private static ProcessStartInfo MakePsi(string source, string basef) =>
-        new(Tools.FfmpegPath, $"-hide_banner -i \"{source}\" -af {basef}:print_format=json -f null -")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+    private static string MeasureArgs(string source, string basef)
+        => $"-hide_banner -i \"{source}\" -af {basef}:print_format=json -f null -";
 
     private static (string Mi, string Mtp, string Mlra, string Mthresh, string Off)? Measure(string source, string basef)
     {
         try
         {
-            using var p = Process.Start(MakePsi(source, basef));
-
-            if (p is null)
-            {
-                return null;
-            }
-
-            var err = p.StandardError.ReadToEnd();
-            p.StandardOutput.ReadToEnd();
-            p.WaitForExit();
-
-            return p.ExitCode != 0 ? null : Parse(err);
+            var (_, err, code) = Proc.Run(Tools.FfmpegPath, MeasureArgs(source, basef), timeoutMs: 5 * 60 * 1000);
+            return code != 0 ? null : Parse(err);
         }
         catch
         {
@@ -80,21 +64,10 @@ public static class Loudnorm
     {
         try
         {
-            using var p = Process.Start(MakePsi(source, basef));
-
-            if (p is null)
-            {
-                return null;
-            }
-
-            var errTask = p.StandardError.ReadToEndAsync();
-            var outTask = p.StandardOutput.ReadToEndAsync();
-            await p.WaitForExitAsync().ConfigureAwait(false);
-
-            var err = await errTask.ConfigureAwait(false);
-            await outTask.ConfigureAwait(false);
-
-            return p.ExitCode != 0 ? null : Parse(err);
+            var (_, err, code) = await Task.Run(
+                () => Proc.Run(Tools.FfmpegPath, MeasureArgs(source, basef), timeoutMs: 5 * 60 * 1000)
+            ).ConfigureAwait(false);
+            return code != 0 ? null : Parse(err);
         }
         catch
         {

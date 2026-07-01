@@ -52,7 +52,23 @@ internal static class Program
         }
     }
 
-    private static void LogCrash(Exception? ex, string source)
+    private static readonly string CrashLogPath = ResolveCrashLogPath();
+
+    private static string ResolveCrashLogPath()
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FHRE");
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, "crash.log");
+        }
+        catch
+        {
+            return Path.Combine(AppContext.BaseDirectory, "crash.log");
+        }
+    }
+
+    public static void LogCrash(Exception? ex, string source)
     {
         if (ex is null)
         {
@@ -61,12 +77,12 @@ internal static class Program
 
         try
         {
-            File.AppendAllText(
-                Path.Combine(AppContext.BaseDirectory, "crash.log"),
+            File.AppendAllText(CrashLogPath,
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source}: {ex}{Environment.NewLine}{Environment.NewLine}");
         }
         catch
         {
+            // ignore
         }
     }
 

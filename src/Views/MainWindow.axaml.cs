@@ -3,6 +3,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using FH6RB;
 using FH6RB.Assets;
 using FH6RB.Services;
 using FH6RB.ViewModels;
@@ -18,7 +19,10 @@ public partial class MainWindow : Window
         Opened += OnOpened;
     }
 
-    private async void OnOpened(object? sender, EventArgs e)
+    private void OnOpened(object? sender, EventArgs e)
+        => SafeAsync.Run(OpenedAsync, "open", this);
+
+    private async Task OpenedAsync()
     {
         if (!GameScanner.IsValid(Vm.Settings.GamePath))
         {
@@ -142,9 +146,13 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnSettings(object? sender, RoutedEventArgs e) => await ShowSettingsAsync();
+    private void OnSettings(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => ShowSettingsAsync(), "settings", this);
 
-    private async void OnResetAllMarkers(object? sender, RoutedEventArgs e)
+    private void OnResetAllMarkers(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(ResetAllMarkersAsync, "reset markers", this);
+
+    private async Task ResetAllMarkersAsync()
     {
         var proceed = await MessageDialog.ShowAsync(this, Str.DlgResetMarkersTitle, Str.DlgResetMarkersBody,
             okText: Str.DlgResetMarkersOk, cancelText: Str.DlgResetMarkersCancel);
@@ -155,14 +163,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnMarkerDefaults(object? sender, RoutedEventArgs e)
+    private void OnMarkerDefaults(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(MarkerDefaultsAsync, "marker defaults", this);
+
+    private async Task MarkerDefaultsAsync()
     {
         var vm = new MarkerDefaultsViewModel(Vm.Settings);
         var w = new MarkerDefaultsWindow { DataContext = vm };
         await w.ShowDialog(this);
     }
 
-    private async void OnSaveBackup(object? sender, RoutedEventArgs e)
+    private void OnSaveBackup(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(SaveBackupAsync, "save backup", this);
+
+    private async Task SaveBackupAsync()
     {
         if (Vm.SelectedStation is not { } station)
         {
@@ -216,7 +230,10 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void OnBackups(object? sender, RoutedEventArgs e)
+    private void OnBackups(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(BackupsAsync, "backups", this);
+
+    private async Task BackupsAsync()
     {
         var gamePath = Vm.Settings.GamePath;
         var vm = new BackupsViewModel(gamePath, Vm.SelectedStation);
@@ -256,7 +273,10 @@ public partial class MainWindow : Window
         });
     }
 
-    private async void OnRestoreStation(object? sender, RoutedEventArgs e)
+    private void OnRestoreStation(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(RestoreStationAsync, "restore station", this);
+
+    private async Task RestoreStationAsync()
     {
         if (Vm.SelectedStation is not { } station)
         {
@@ -330,7 +350,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnAddTrack(object? sender, RoutedEventArgs e)
+    private void OnAddTrack(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(AddTrackAsync, "add track", this);
+
+    private async Task AddTrackAsync()
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
@@ -405,7 +428,10 @@ public partial class MainWindow : Window
         Vm.Status = added == 1 ? string.Format(Str.StatusAddedOneFmt, Vm.Tracks[^1].SoundName) : string.Format(Str.StatusAddedManyFmt, added);
     }
 
-    private async void OnEdit(object? sender, RoutedEventArgs e)
+    private void OnEdit(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => EditAsync(sender), "edit", this);
+
+    private async Task EditAsync(object? sender)
     {
         if (sender is Button { Tag: TrackItemViewModel track })
         {
@@ -413,7 +439,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnTransportEdit(object? sender, RoutedEventArgs e)
+    private void OnTransportEdit(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(TransportEditAsync, "transport edit", this);
+
+    private async Task TransportEditAsync()
     {
         if (Vm.NowPlaying is { } track)
         {
@@ -421,7 +450,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnReplace(object? sender, RoutedEventArgs e)
+    private void OnReplace(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => ReplaceAsync(sender), "replace", this);
+
+    private async Task ReplaceAsync(object? sender)
     {
         if (sender is not Button { Tag: TrackItemViewModel track })
         {
@@ -480,7 +512,10 @@ public partial class MainWindow : Window
         Vm.Status = string.Format(Str.StatusReplaceStagedFmt, track.SoundName);
     }
 
-    private async void OnMarkers(object? sender, RoutedEventArgs e)
+    private void OnMarkers(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => MarkersAsync(sender), "markers", this);
+
+    private async Task MarkersAsync(object? sender)
     {
         if (sender is Button { Tag: TrackItemViewModel track })
         {
@@ -551,7 +586,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnBuild(object? sender, RoutedEventArgs e)
+    private void OnBuild(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(BuildAsync, "build", this);
+
+    private async Task BuildAsync()
     {
         await Vm.BuildAsync();
 

@@ -43,7 +43,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     [ObservableProperty] private bool _markersLoading;
 
-    public bool Replaced { get; set; }
+    [ObservableProperty] private bool _replaced;
     public bool IsReplacing => ReplacementPath is not null;
     public bool ShowRplBadge => IsReplacing;
     public bool ShowCstBadge => Replaced && !IsReplacing && !IsCustom;
@@ -59,6 +59,11 @@ public sealed partial class TrackItemViewModel : ObservableObject
         OnPropertyChanged(nameof(UsesFileSource));
         OnPropertyChanged(nameof(FileSource));
         OnPropertyChanged(nameof(CanPlay));
+    }
+
+    partial void OnReplacedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowCstBadge));
     }
 
     public Dictionary<string, long>? Markers { get; set; }

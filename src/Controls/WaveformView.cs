@@ -163,6 +163,7 @@ public sealed class WaveformView : Control
         {
             Hook(change.OldValue as IEnumerable, false);
             Hook(change.NewValue as IEnumerable, true);
+            InvalidateVisual();
         }
         else if (change.Property == SampleLengthProperty)
         {

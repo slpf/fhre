@@ -93,7 +93,15 @@ public sealed class FevBank
     // public int Fsb5Offset => _fsbOff;
     // public int Fsb5Size => _fsbSize;
     public int Fsb5Mode => _fsbOff > 0 && _fsbOff + 0x1C <= _src.Length ? (int) U32(_src, _fsbOff + 0x18) : 0;
-    public byte[] ExtractFsb5() => _src[_fsbOff..(_fsbOff + _fsbSize)];
+    public byte[] ExtractFsb5()
+    {
+        if (_fsbOff < 0 || _fsbSize <= 0 || (long) _fsbOff + _fsbSize > _src.Length)
+        {
+            throw new InvalidDataException($"FSB5 region out of bank bounds (off={_fsbOff}, size={_fsbSize}, bank={_src.Length})");
+        }
+
+        return _src[_fsbOff..(_fsbOff + _fsbSize)];
+    }
     
     public static HashSet<ulong> ReadStblIdsFromFile(string path)
     {
@@ -129,6 +137,11 @@ public sealed class FevBank
 
                 if (id == "LIST")
                 {
+                    if (size < 0 || size > fs.Length - fs.Position)
+                    {
+                        return ids;
+                    }
+
                     var list = new byte[size];
                     
                     if (fs.Read(list, 0, size) == size)
@@ -856,6 +869,20 @@ public sealed class FevBank
 
     private static byte[] ReadExact(Stream s, int count)
     {
+        if (count < 0)
+        {
+            throw new InvalidDataException($"invalid chunk size {count}");
+        }
+
+        if (s.CanSeek)
+        {
+            var remaining = s.Length - s.Position;
+            if (count > remaining)
+            {
+                throw new InvalidDataException($"chunk size {count} exceeds remaining {remaining} bytes");
+            }
+        }
+
         var buf = new byte[count];
         var read = 0;
         

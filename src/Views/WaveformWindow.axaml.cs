@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
+using FH6RB;
 using FH6RB.Assets;
 using FH6RB.Core;
 using FH6RB.Services;
@@ -77,6 +78,12 @@ public partial class WaveformWindow : Window
 
         Closed += (_, _) =>
         {
+            _player.Ended -= OnPlaybackEnded;
+            Wave.SeekRequested -= OnSeek;
+            Wave.HeadSeekRequested -= OnHeadSeek;
+            Wave.LabelRowsChanged -= OnLabelRowsChanged;
+            Wave.RegionChanged -= OnRegionChanged;
+
             WindowMemory.Save(this, Vm.Settings, "Waveform");
             _timer.Stop();
             _player.Dispose();
@@ -92,9 +99,6 @@ public partial class WaveformWindow : Window
             Wave.Peaks = null;
             Vm.Peaks = null;
             LoopFinder.ClearCache();
-
-            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         };
     }
 
@@ -269,7 +273,10 @@ public partial class WaveformWindow : Window
         Close();
     }
 
-    private async void OnSuggestLoops(object? sender, RoutedEventArgs e)
+    private void OnSuggestLoops(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => SuggestLoopsAsync(sender), "suggest loops", this);
+
+    private async Task SuggestLoopsAsync(object? sender)
     {
         if (sender is not Control ctrl || ctrl.Tag is not MarkerField start || start.LoopEndName is null || Vm.SampleRate <= 0)
         {
@@ -774,7 +781,10 @@ public partial class WaveformWindow : Window
 
     private void OnResetDefaults(object? sender, RoutedEventArgs e) => Vm.ResetMarkersToDefaults();
 
-    private async void OnLoopSearchSettings(object? sender, RoutedEventArgs e)
+    private void OnLoopSearchSettings(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(LoopSearchSettingsAsync, "loop search settings", this);
+
+    private async Task LoopSearchSettingsAsync()
     {
         var settings = Vm.Settings ?? new AppSettings();
         var dlg = new LoopSearchSettingsWindow
@@ -816,7 +826,10 @@ public partial class WaveformWindow : Window
 #endif
     }
 
-    private async void OnSavePreset(object? sender, RoutedEventArgs e)
+    private void OnSavePreset(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(SavePresetAsync, "save preset", this);
+
+    private async Task SavePresetAsync()
     {
         if (!Vm.CanEditMarkers)
         {
@@ -846,7 +859,10 @@ public partial class WaveformWindow : Window
         }
     }
 
-    private async void OnLoadPreset(object? sender, RoutedEventArgs e)
+    private void OnLoadPreset(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(LoadPresetAsync, "load preset", this);
+
+    private async Task LoadPresetAsync()
     {
         if (!Vm.CanEditMarkers)
         {

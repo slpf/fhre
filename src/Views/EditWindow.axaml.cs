@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using FH6RB;
 using FH6RB.ViewModels;
 
 namespace FH6RB.Views;
@@ -18,7 +19,10 @@ public partial class EditWindow : Window
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close();
 
-    private async void OnWaveform(object? sender, RoutedEventArgs e)
+    private void OnWaveform(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(WaveformAsync, "waveform", this);
+
+    private async Task WaveformAsync()
     {
         await Vm.EnsurePeaksAsync();
         var w = new WaveformWindow { DataContext = Vm };

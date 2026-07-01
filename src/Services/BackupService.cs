@@ -98,7 +98,7 @@ public static class BackupService
 
             try
             {
-                File.Copy(bak, dst, overwrite: true);
+                Atomic.Copy(bak, dst);
                 banks++;
                 log?.Invoke($"restored bank {bankName}");
             }
@@ -171,7 +171,7 @@ public static class BackupService
             
             try
             {
-                File.Copy(bak, original, overwrite: true);
+                Atomic.Copy(bak, original);
                 restored++;
                 log?.Invoke($"restored {Path.GetFileName(original)}");
             }

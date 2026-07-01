@@ -66,6 +66,7 @@ public static class SettingsService
         }
         catch
         {
+            PreserveCorrupt();
             s = new AppSettings();
         }
 
@@ -95,6 +96,21 @@ public static class SettingsService
     public static void Save(AppSettings settings)
     {
         Directory.CreateDirectory(Dir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(settings, Options));
+        Atomic.Write(FilePath, JsonSerializer.Serialize(settings, Options));
+    }
+
+    private static void PreserveCorrupt()
+    {
+        try
+        {
+            if (File.Exists(FilePath))
+            {
+                File.Move(FilePath, FilePath + ".corrupt", overwrite: true);
+            }
+        }
+        catch
+        {
+            // ignore
+        }
     }
 }

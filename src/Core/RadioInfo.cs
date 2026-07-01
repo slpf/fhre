@@ -43,7 +43,7 @@ public sealed class RadioInfo
             _doc.AddFirst(new XComment($" {XmlMarker} edited "));
         }
 
-        _doc.Save(path);
+        Atomic.Write(path, fs => _doc.Save(fs));
     }
 
     public int MaxCustomSeq()

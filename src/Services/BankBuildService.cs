@@ -154,43 +154,30 @@ public static class BankBuildService
             log);
     }
 
-    private static void Run(string exe, string args, Action<string>? log)
+    private static void Run(string exe, string args, Action<string>? log, CancellationToken ct = default)
     {
         log?.Invoke($"$ {Path.GetFileName(exe)} {args}");
 
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var (outText, errText, code) = Proc.Run(exe, args, ct, timeoutMs: 30 * 60 * 1000);
+        outText = outText.Trim();
+        errText = errText.Trim();
 
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException($"cannot start {exe}");
-        var stdout = p.StandardOutput.ReadToEndAsync();
-        var stderr = p.StandardError.ReadToEndAsync();
-        
-        p.WaitForExit();
-
-        var outText = stdout.Result.Trim();
-        var errText = stderr.Result.Trim();
-
-        if (p.ExitCode != 0)
+        if (code != 0)
         {
             if (outText.Length > 0)
             {
                 log?.Invoke($"  [out] {outText}");
             }
-            
+
             if (errText.Length > 0)
             {
                 log?.Invoke($"  [err] {errText}");
             }
-            
-            var detail = (errText.Length > 0 ? errText : outText);
-            
+
+            var detail = errText.Length > 0 ? errText : outText;
+
             throw new InvalidOperationException(
-                $"{Path.GetFileName(exe)} exited with code {p.ExitCode}" +
+                $"{Path.GetFileName(exe)} exited with code {code}" +
                 (detail.Length > 0 ? $": {detail}" : ""));
         }
 

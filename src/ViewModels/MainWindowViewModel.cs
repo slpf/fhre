@@ -384,7 +384,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
 
             t.Markers = t.SampleLength > 0
-                ? RadioStationEditor.ComputeAutoMarkers(t.SampleLength)
+                ? RadioStationEditor.ComputeAutoMarkers(t.SampleLength, t.SampleRate)
                 : null;
             count++;
         }

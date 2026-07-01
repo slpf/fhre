@@ -8,7 +8,9 @@ namespace FH6RB.Services;
 public static class AudioDecoder
 {
     private static readonly string Dir = Path.Combine(Path.GetTempPath(), "FHRE", "preview");
-    
+    private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
+    private static int _purged;
+
     public static void ClearAll()
     {
         try
@@ -24,7 +26,43 @@ public static class AudioDecoder
         }
     }
 
-    public static string DecodeAdded(string source, AppSettings s)
+    private static void PurgeStale()
+    {
+        if (Interlocked.CompareExchange(ref _purged, 1, 0) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!Directory.Exists(Dir))
+            {
+                return;
+            }
+
+            var cutoff = DateTime.UtcNow - MaxCacheAge;
+            foreach (var f in Directory.EnumerateFiles(Dir))
+            {
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(f) < cutoff)
+                    {
+                        File.Delete(f);
+                    }
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+    }
+
+    public static string DecodeAdded(string source, AppSettings s, CancellationToken ct = default)
     {
         var i = s.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
@@ -37,27 +75,29 @@ public static class AudioDecoder
         }
 
         Directory.CreateDirectory(Dir);
+        PurgeStale();
 
         Run(Tools.FfmpegPath,
             $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
-            $"-af {Loudnorm.Filter(source, s)} \"{outWav}\"");
+            $"-af {Loudnorm.Filter(source, s)} \"{outWav}\"", ct);
 
         return outWav;
     }
 
-    public static string DecodeBank(string bankPath, int sub0)
+    public static string DecodeBank(string bankPath, int sub0, CancellationToken ct = default)
     {
         var key = Key($"bank|{bankPath}|{Stamp(bankPath)}|{sub0}");
         var outWav = Path.Combine(Dir, key + ".wav");
-        
+
         if (File.Exists(outWav))
         {
             return outWav;
         }
 
         Directory.CreateDirectory(Dir);
-        Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{outWav}\" \"{bankPath}\"");
-        
+        PurgeStale();
+        Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{outWav}\" \"{bankPath}\"", ct);
+
         return outWav;
     }
 
@@ -65,26 +105,13 @@ public static class AudioDecoder
 
     private static string Key(string s) => Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(s)))[..16];
 
-    private static void Run(string exe, string args)
+    private static void Run(string exe, string args, CancellationToken ct = default)
     {
-        var psi = new ProcessStartInfo(exe, args)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var (_, err, code) = Proc.Run(exe, args, ct, timeoutMs: 20 * 60 * 1000);
 
-        using var p = Process.Start(psi) ?? throw new InvalidOperationException($"cannot start {Path.GetFileName(exe)}");
-        var so = p.StandardOutput.ReadToEndAsync();
-        var se = p.StandardError.ReadToEndAsync();
-        p.WaitForExit();
-        _ = so.GetAwaiter().GetResult();
-        var err = se.GetAwaiter().GetResult();
-
-        if (p.ExitCode != 0)
+        if (code != 0)
         {
-            throw new InvalidOperationException($"{Path.GetFileName(exe)} exited {p.ExitCode}: {err.Trim()}");
+            throw new InvalidOperationException($"{Path.GetFileName(exe)} exited {code}: {err.Trim()}");
         }
     }
 }

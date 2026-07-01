@@ -15,33 +15,13 @@ public static class MetadataReader
 
         try
         {
-            var psi = new ProcessStartInfo(exe,
+            var args =
                 $"-v error -select_streams a:0 " +
                 $"-show_entries format=duration:format_tags=title,artist:stream_tags=title,artist " +
-                $"-of default=noprint_wrappers=1 \"{path}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-                StandardErrorEncoding = System.Text.Encoding.UTF8,
-            };
+                $"-of default=noprint_wrappers=1 \"{path}\"";
 
-            using var p = Process.Start(psi);
-            
-            if (p is null)
-            {
-                return (null, null, 0);
-            }
-
-            var so = p.StandardOutput.ReadToEndAsync();
-            var se = p.StandardError.ReadToEndAsync();
-            
-            p.WaitForExit();
-            
-            var output = so.GetAwaiter().GetResult();
-            _ = se.GetAwaiter().GetResult();
+            var (output, _, _) = Proc.Run(exe, args, timeoutMs: 120_000,
+                stdoutEncoding: System.Text.Encoding.UTF8, stderrEncoding: System.Text.Encoding.UTF8);
 
             string? title = null;
             string? artist = null;

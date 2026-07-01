@@ -96,7 +96,7 @@ public static class StationBackupService
             }
 
             var file = Path.GetFileName(src);
-            File.Copy(src, Path.Combine(folder, "banks", file), overwrite: true);
+            Atomic.Copy(src, Path.Combine(folder, "banks", file));
             variants.Add(new BackupVariant { Variant = variant, BankName = bankName, BankFile = file });
         }
 
@@ -132,7 +132,7 @@ public static class StationBackupService
             }
 
             var lang = LangCode(langFile);
-            File.WriteAllText(Path.Combine(folder, "xml", lang + ".xml"), node.ToString());
+            Atomic.Write(Path.Combine(folder, "xml", lang + ".xml"), node.ToString());
             languages.Add(lang);
 
             if (radio.StationByNumber(station.Number) is { } editor)
@@ -163,7 +163,7 @@ public static class StationBackupService
             EnabledCount = enabledCount,
         };
 
-        File.WriteAllText(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOpts));
+        Atomic.Write(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOpts));
         log?.Invoke($"backup created: {id}");
 
         return new BackupEntry(folder, manifest);
@@ -188,7 +188,7 @@ public static class StationBackupService
             try
             {
                 EnsureOriginal(dst);
-                File.Copy(src, dst, overwrite: true);
+                Atomic.Copy(src, dst);
                 banks++;
                 log?.Invoke($"restored bank {v.BankName}");
             }

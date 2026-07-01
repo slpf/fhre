@@ -85,7 +85,11 @@ public static class LoopFinder
 
     // Cached per role-independent key: the heavy search runs once; Track/Post only
     // re-rank the shared candidate set.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Path, LoopSearchOptions Options), Analysis> _cache = new();
+    private const int CacheCap = 32;
+    private static readonly object _cacheLock = new();
+    private static readonly LinkedList<(string Path, LoopSearchOptions Options)> _cacheOrder = new();
+    private static readonly Dictionary<(string Path, LoopSearchOptions Options), LinkedListNode<(string Path, LoopSearchOptions Options)>> _cacheNodes = new();
+    private static readonly Dictionary<(string Path, LoopSearchOptions Options), Analysis> _cache = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, double[][]> _chromaFilterbanks = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int Rate, int NMels), double[][]> _melFilterbanks = new();
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<double[], double[]> _reversedWeights = new();
@@ -204,7 +208,7 @@ public static class LoopFinder
                 return result;
             }
 
-            if (cacheKey is not null && _cache.TryGetValue((cacheKey, CacheKeyOptions(options)), out var cached))
+            if (cacheKey is not null && GetCached((cacheKey, CacheKeyOptions(options))) is { } cached)
             {
                 RankAndAppend(PreProcess(mono, out _), rate, cached, options, result, log);
                 return result;
@@ -557,13 +561,7 @@ public static class LoopFinder
             var analysis = new Analysis(allCandidates, bpm, sections, bars, nFrames, trimOffset, originalLength, effOptions.SectionWeight);
             if (cacheKey is not null)
             {
-                var key = (cacheKey, CacheKeyOptions(options));
-                _cache[key] = analysis;
-                while (_cache.Count > 32)
-                {
-                    var oldest = _cache.Keys.First();
-                    _cache.TryRemove(oldest, out _);
-                }
+                SetCache((cacheKey, CacheKeyOptions(options)), analysis);
             }
     
             RankAndAppend(mono, rate, analysis, options, result, log);
@@ -710,7 +708,53 @@ public static class LoopFinder
         }
     }
 
-    public static void ClearCache() => _cache.Clear();
+    public static void ClearCache()
+    {
+        lock (_cacheLock)
+        {
+            _cache.Clear();
+            _cacheNodes.Clear();
+            _cacheOrder.Clear();
+        }
+    }
+
+    private static Analysis? GetCached((string Path, LoopSearchOptions Options) key)
+    {
+        lock (_cacheLock)
+        {
+            if (_cache.TryGetValue(key, out var analysis))
+            {
+                var node = _cacheNodes[key];
+                _cacheOrder.Remove(node);
+                _cacheOrder.AddFirst(node);
+                return analysis;
+            }
+
+            return null;
+        }
+    }
+
+    private static void SetCache((string Path, LoopSearchOptions Options) key, Analysis analysis)
+    {
+        lock (_cacheLock)
+        {
+            if (_cacheNodes.TryGetValue(key, out var existing))
+            {
+                _cacheOrder.Remove(existing);
+            }
+
+            _cacheNodes[key] = _cacheOrder.AddFirst(key);
+            _cache[key] = analysis;
+
+            while (_cache.Count > CacheCap)
+            {
+                var lru = _cacheOrder.Last!.Value;
+                _cacheOrder.RemoveLast();
+                _cacheNodes.Remove(lru);
+                _cache.Remove(lru);
+            }
+        }
+    }
 
     private const int SrcChroma = 1;
     private const int SrcSsm = 2;

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using FH6RB;
 using FH6RB.Assets;
 using FH6RB.Services;
 using FH6RB.ViewModels;
@@ -36,7 +37,10 @@ public partial class MarkerPresetLoadDialog : Window
         Close();
     }
 
-    private async void OnDelete(object? sender, RoutedEventArgs e)
+    private void OnDelete(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(() => DeleteAsync(sender), "delete preset", this);
+
+    private async Task DeleteAsync(object? sender)
     {
         if (sender is not Button { Tag: MarkerPresetRow row })
         {
