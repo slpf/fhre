@@ -422,7 +422,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     : AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
                 var peaks = WaveformService.Samples(wav);
 
-                if (track.SampleLength <= 0 || track.SampleRate <= 0)
+                if (track.UsesFileSource || track.SampleLength <= 0 || track.SampleRate <= 0)
                 {
                     var (rate, frames) = WaveformService.Probe(wav);
                     if (rate > 0 && frames > 0)
@@ -806,7 +806,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var refPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, refFile)
             ?? throw new InvalidOperationException($"reference RadioInfo not found: {refFile}");
         var refRadio = RadioInfo.Load(refPath);
-        ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
+        var (changedMeta, changedMarkers) = ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
 
         var (union, suspicious) = await ReadStationBankIdsAsync(station, refRadio);
         if (!suspicious && union.Count > 0)
@@ -828,7 +828,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 break;
             }
 
-            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious);
+            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers);
             savedXml += saved;
             dead += d;
         }
@@ -838,7 +838,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private (int Saved, int Dead) SaveLocalizedXml(
         string lf, StationInfo station, string bankName, IReadOnlyList<AddedSample> addedSamples,
-        RadioStationEditor refStation, HashSet<ulong> union, bool suspicious)
+        RadioStationEditor refStation, HashSet<ulong> union, bool suspicious,
+        IReadOnlyDictionary<string, (string? DisplayName, string? Artist)> changedMeta,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers)
     {
         var xmlPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, lf);
         if (xmlPath is null)
@@ -873,6 +875,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ed.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist);
         }
 
+        foreach (var (sn, meta) in changedMeta)
+        {
+            ed.SetSampleMeta(sn, meta.DisplayName, meta.Artist);
+        }
+
+        foreach (var (sn, mk) in changedMarkers)
+        {
+            ed.SetMarkers(sn, mk);
+        }
+
         var dead = 0;
         if (!suspicious && union.Count > 0)
         {
@@ -882,6 +894,35 @@ public sealed partial class MainWindowViewModel : ObservableObject
         SaveXmlWithBackup(localized, xmlPath);
         Log.Line($"RadioInfo saved: {lf}");
         return (1, dead);
+    }
+
+    private static Dictionary<string, (string? DisplayName, string? Artist)> ApplySampleMeta(
+        RadioStationEditor editor, IReadOnlyList<BuildItem> items)
+    {
+        var changed = new Dictionary<string, (string?, string?)>();
+        foreach (var it in items)
+        {
+            if (editor.GetSampleMeta(it.SoundName) is not { } cur)
+            {
+                continue;
+            }
+
+            var nameChanged =
+                it.DisplayName is not null
+                && !string.Equals(cur.DisplayName, it.DisplayName, StringComparison.Ordinal)
+                && !(cur.DisplayName is null && string.Equals(it.DisplayName, it.SoundName, StringComparison.Ordinal));
+
+            var artistChanged =
+                it.Artist is not null
+                && !string.Equals(cur.Artist, it.Artist, StringComparison.Ordinal);
+
+            if (nameChanged || artistChanged)
+            {
+                editor.SetSampleMeta(it.SoundName, it.DisplayName, it.Artist);
+                changed[it.SoundName] = (it.DisplayName, it.Artist);
+            }
+        }
+        return changed;
     }
 
     private static async Task<(IReadOnlyList<AddedSample> Added, long Written)> BuildAndWriteBankAsync(
@@ -960,8 +1001,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private static void ApplyRadioInfo(RadioInfo radio, StationInfo station, string bankName,
-                                       IReadOnlyList<AddedSample> added, List<BuildItem> items)
+    private static (Dictionary<string, (string? DisplayName, string? Artist)> Meta,
+                     Dictionary<string, IReadOnlyDictionary<string, long>> Markers) ApplyRadioInfo(
+        RadioInfo radio, StationInfo station, string bankName,
+        IReadOnlyList<AddedSample> added, List<BuildItem> items)
     {
         var editor = radio.StationByNumber(station.Number)
             ?? throw new InvalidOperationException($"station #{station.Number} not found in RadioInfo");
@@ -981,27 +1024,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
         }
         
-        foreach (var it in items)
-        {
-            if (editor.GetSampleMeta(it.SoundName) is not { } cur)
-            {
-                continue;
-            }
-
-            var nameChanged =
-                it.DisplayName is not null
-                && !string.Equals(cur.DisplayName, it.DisplayName, StringComparison.Ordinal)
-                && !(cur.DisplayName is null && string.Equals(it.DisplayName, it.SoundName, StringComparison.Ordinal));
-
-            var artistChanged =
-                it.Artist is not null
-                && !string.Equals(cur.Artist, it.Artist, StringComparison.Ordinal);
-
-            if (nameChanged || artistChanged)
-            {
-                editor.SetSampleMeta(it.SoundName, it.DisplayName, it.Artist);
-            }
-        }
+        var changed = ApplySampleMeta(editor, items);
+        var changedMarkers = new Dictionary<string, IReadOnlyDictionary<string, long>>();
 
         foreach (var it in items)
         {
@@ -1013,15 +1037,36 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             editor.RemoveCustom(sn);
         }
-        
+
         editor.FixCustomMarkers();
 
         foreach (var it in items)
         {
             if (it.Markers is { } mk)
             {
+                if (!MarkersEqual(editor.GetMarkers(it.SoundName), mk))
+                {
+                    changedMarkers[it.SoundName] = mk;
+                }
                 editor.SetMarkers(it.SoundName, mk);
             }
         }
+
+        return (changed, changedMarkers);
+    }
+
+    private static bool MarkersEqual(IReadOnlyDictionary<string, long>? a, IReadOnlyDictionary<string, long>? b)
+    {
+        // a = new markers (from UI, may include auto-filled entries); b = original (EN).
+        // Unchanged iff every original marker still exists with the same position.
+        // Extra auto-filled markers in `a` don't count as a change.
+        if (b is null || b.Count == 0) return true;
+        if (a is null) return false;
+        foreach (var (k, v) in b)
+        {
+            if (v < 0) continue;
+            if (!a.TryGetValue(k, out var av) || av != v) return false;
+        }
+        return true;
     }
 }

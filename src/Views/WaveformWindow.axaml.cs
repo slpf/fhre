@@ -299,18 +299,18 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        MarkerField? postDrop = null;
-        if (start.Name == "PostRaceLoopStart")
-        {
-            foreach (var m in Vm.AllMarkers)
-            {
-                if (m.Name == "PostDrop")
-                {
-                    postDrop = m;
-                    break;
-                }
-            }
-        }
+        // MarkerField? postDrop = null;
+        // if (start.Name == "PostRaceLoopStart")
+        // {
+        //     foreach (var m in Vm.AllMarkers)
+        //     {
+        //         if (m.Name == "PostDrop")
+        //         {
+        //             postDrop = m;
+        //             break;
+        //         }
+        //     }
+        // }
 
         var rate = Vm.SampleRate;
         var auto = Vm.Settings?.LoopAutoTune ?? true;
@@ -462,12 +462,12 @@ public partial class WaveformWindow : Window
 
                 var captureStart = start;
                 var captureEnd = end;
-                var capturePostDrop = postDrop;
+                // var capturePostDrop = postDrop;
                 btn.Click += (_, _) =>
                 {
                     captureStart.Position = ss;
                     captureEnd.Position = es;
-                    capturePostDrop?.Position = ss;
+                    // capturePostDrop?.Position = ss;
                     StartLoop(ss / (double) rate, es / (double) rate);
                     Wave.Focus();
                     flyout.Hide();

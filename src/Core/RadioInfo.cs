@@ -336,6 +336,12 @@ public sealed class RadioStationEditor(XElement station)
         return true;
     }
 
+    public IReadOnlyDictionary<string, long>? GetMarkers(string soundName)
+    {
+        var s = FindSample(soundName);
+        return s is null ? null : ReadMarkers(s);
+    }
+
     public bool ResetMarkersAuto(string soundName, long sampleLength)
     {
         var s = FindSample(soundName);
@@ -385,7 +391,8 @@ public sealed class RadioStationEditor(XElement station)
 
     private static void ApplyCustomMarkers(XElement sample, long sampleLength)
     {
-        var pos = ComputeAutoMarkers(sampleLength);
+        var rate = int.TryParse((string?) sample.Attribute("SampleRate"), out var r) && r > 0 ? r : 48000;
+        var pos = ComputeAutoMarkers(sampleLength, rate);
         ApplyXmlMarkerRules(pos, sampleLength);
         var markerElems = sample.Elements("Marker").ToList();
         
