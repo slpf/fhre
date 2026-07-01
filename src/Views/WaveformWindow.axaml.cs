@@ -25,6 +25,7 @@ public partial class WaveformWindow : Window
     private bool _looping;
     private double _loopStart;
     private double _loopEnd;
+    private double _dropStartSec = -1;
     private readonly HashSet<Key> _down = [];
     private MarkerField? _hoverField;
     private bool _shiftHeld;
@@ -156,6 +157,7 @@ public partial class WaveformWindow : Window
     private void StopPlayback()
     {
         _looping = false;
+        _dropStartSec = -1;
         _player.Stop();
         _headSec = _startSec;
         UpdateUi();
@@ -216,6 +218,19 @@ public partial class WaveformWindow : Window
         _loopStart = startSec;
         _loopEnd = endSec;
         StartPlayback(startSec, loop: true);
+    }
+
+    private void StartLoopWithReturnTo(double dropSec, double endSec, double loopStartSec)
+    {
+        if (endSec <= dropSec)
+        {
+            return;
+        }
+
+        _loopStart = loopStartSec;
+        _loopEnd = endSec;
+        _dropStartSec = dropSec;
+        StartPlayback(dropSec, loop: false);
     }
 
     private void LoopToggle()
@@ -314,9 +329,10 @@ public partial class WaveformWindow : Window
 
         var rate = Vm.SampleRate;
         var auto = Vm.Settings?.LoopAutoTune ?? true;
-        var role = start.Name == "PostRaceLoopStart" ? LoopRole.Post
-            : start.Name == "TrackLoopStart" ? LoopRole.Track
-            : LoopRole.Generic;
+        // var role = start.Name == "PostRaceLoopStart" ? LoopRole.Post
+        //     : start.Name == "TrackLoopStart" ? LoopRole.Track
+        //     : LoopRole.Generic;
+        var role = LoopRole.Generic;
         var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.80);
 
         List<LoopPair> pairs;
@@ -499,29 +515,68 @@ public partial class WaveformWindow : Window
 
     private void OnPlayMarkerLoop(object? sender, RoutedEventArgs e)
     {
-        if (sender is not Control { Tag: MarkerField start } || start.LoopEndName is null || Vm.SampleRate <= 0)
+        if (sender is not Control { Tag: MarkerField start } || Vm.SampleRate <= 0)
         {
             return;
         }
 
-        MarkerField? end = null;
-
-        foreach (var m in Vm.AllMarkers)
-        {
-            if (m.Name == start.LoopEndName)
-            {
-                end = m;
-                break;
-            }
-        }
+        var end = start.LoopEndName is { } endName ? FindMarker(endName) : null;
+        var loopReturnTo = start.LoopReturnToName is { } rName ? FindMarker(rName) : null;
 
         if (end is null || start.Position < 0 || end.Position < 0)
         {
             return;
         }
 
-        StartLoop((double) start.Position / Vm.SampleRate, (double) end.Position / Vm.SampleRate);
+        var startSec = (double) start.Position / Vm.SampleRate;
+        var endSec = (double) end.Position / Vm.SampleRate;
+
+        if (loopReturnTo is { Position: < 0 })
+        {
+            loopReturnTo = null;
+        }
+
+        if (loopReturnTo is not null)
+        {
+            if (start.Position > end.Position)
+            {
+                SafeAsync.Run(() => ShowDropAfterLoopAsync(start.Name, end.Name), "drop after loop", this);
+                return;
+            }
+
+            StartLoopWithReturnTo(startSec, endSec, (double) loopReturnTo.Position / Vm.SampleRate);
+        }
+        else
+        {
+            StartLoop(startSec, endSec);
+        }
+
         Wave.Focus();
+    }
+
+    private MarkerField? FindMarker(string name)
+    {
+        foreach (var m in Vm.AllMarkers)
+        {
+            if (m.Name == name)
+            {
+                return m;
+            }
+        }
+
+        return null;
+    }
+
+    private async Task ShowDropAfterLoopAsync(string startName, string endName)
+    {
+        var (title, body) = (startName, endName) switch
+        {
+            ("TrackDrop", "TrackLoopEnd") => (Str.DlgTrackDropAfterLoopTitle, Str.DlgTrackDropAfterLoopBody),
+            ("PostDrop", "PostRaceLoopEnd") => (Str.DlgPostDropAfterLoopTitle, Str.DlgPostDropAfterLoopBody),
+            _ => (Str.TitleNotice, $"{startName} must not be later than {endName}."),
+        };
+
+        await MessageDialog.ShowAsync(this, title, body);
     }
 
     private void OnPlay(object? sender, RoutedEventArgs e)
@@ -669,6 +724,11 @@ public partial class WaveformWindow : Window
 
         _headSec = target;
 
+        if (_dropStartSec >= 0 && (target < _dropStartSec || target > _loopEnd))
+        {
+            _dropStartSec = -1;
+        }
+
         if (_looping && (target < _loopStart || target >= _loopEnd))
         {
             _looping = false;
@@ -720,6 +780,11 @@ public partial class WaveformWindow : Window
         var target = Math.Clamp(fraction * total, RegionStartSec, EffectiveEndSec(total));
         _headSec = target;
 
+        if (_dropStartSec >= 0 && (target < _dropStartSec || target > _loopEnd))
+        {
+            _dropStartSec = -1;
+        }
+
         if (_looping && (target < _loopStart || target >= _loopEnd))
         {
             _looping = false;
@@ -738,7 +803,15 @@ public partial class WaveformWindow : Window
     {
         if (_player.HasMedia && _player.IsPlaying)
         {
-            if (!_looping && _player.Position.TotalSeconds >= RegionEndSec)
+            var currentPos = _player.Position.TotalSeconds;
+
+            if (_dropStartSec >= 0 && currentPos >= _loopEnd)
+            {
+                _dropStartSec = -1;
+                _looping = true;
+                _player.SetLoop(_loopStart, _loopEnd);
+            }
+            else if (!_looping && currentPos >= RegionEndSec)
             {
                 StopPlayback();
             }

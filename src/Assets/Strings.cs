@@ -52,6 +52,10 @@ public static class Str
     public const string MenuNoLoops = "No good loops found";
     public const string StatusSuggesting = "Searching for loops…";
     public const string TipPlayMarkerLoop = "Play current marker as loop";
+    public const string TipPlayTDLSLoop = "Play TrackDrop/TrackLoopEnd/TrackLoopStart as loop";
+    public const string TipPlayTLSLoop = "Play TrackLoopStart/TrackLoopEnd as loop";
+    public const string TipPlayPDLSLoop = "Play PostDrop/PostRaceLoopEnd/PostRaceLoopStart as loop";
+    public const string TipPlayPLSLoop = "Play PostRaceLoopStart/PostRaceLoopEnd as loop";
     public const string TipDelete = "Delete track";
     public const string TipReplaceAudio = "Replace track";
     public const string TipMarkers = "Markers";
@@ -167,6 +171,10 @@ public static class Str
     public const string MkTrackLoopEnd = "Events: where the track stops during an event; after it, playback loops between TrackLoopStart and TrackLoopEnd.";
     public const string MkPostRaceLoopStart = "Events: start of the section that loops while results are tallied. Best on an outro.";
     public const string MkPostRaceLoopEnd = "Events: end of the section that loops while results are tallied.";
+    public const string DlgTrackDropAfterLoopTitle = "TrackDrop is past TrackLoopEnd";
+    public const string DlgTrackDropAfterLoopBody = "TrackDrop must not be later than TrackLoopEnd.\n\nMove TrackDrop earlier or push TrackLoopEnd past it.";
+    public const string DlgPostDropAfterLoopTitle = "PostDrop is past PostRaceLoopEnd";
+    public const string DlgPostDropAfterLoopBody = "PostDrop must not be later than PostRaceLoopEnd.\n\nMove PostDrop earlier or push PostRaceLoopEnd past it.";
     
     public const string LangAll = "All languages";
     

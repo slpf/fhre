@@ -130,6 +130,7 @@
                                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,10,0"
                                                             IsVisible="{Binding CanLoop}">
                                                     <Button Classes="mbutton" Width="18" Height="18" Margin="0,0,6,0"
+                                                            IsVisible="{Binding CanSuggest}"
                                                             Click="OnSuggestLoops" Tag="{Binding}"
                                                             ToolTip.Tip="{x:Static assets:Str.TipSuggestLoops}">
                                                         <Image Classes="loop" Width="18" Height="18"
@@ -137,7 +138,7 @@
                                                     </Button>
                                                     <Button Classes="mbutton" Width="18" Height="18"
                                                             Click="OnPlayMarkerLoop" Tag="{Binding}"
-                                                            ToolTip.Tip="{x:Static assets:Str.TipPlayMarkerLoop}">
+                                                            ToolTip.Tip="{Binding PlayLoopTip}">
                                                         <Image Classes="play" Width="18" Height="18"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                     </Button>

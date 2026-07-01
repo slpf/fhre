@@ -22,7 +22,17 @@ public sealed partial class MarkerField : ObservableObject
     public long SampleLength { get; init; }
     public long InitialPosition { get; init; }
     public string? LoopEndName { get; init; }
-    public bool CanLoop => LoopEndName is not null;
+    public string? LoopReturnToName { get; init; }
+    public bool CanLoop => LoopEndName is not null || LoopReturnToName is not null;
+    public bool CanSuggest => LoopEndName is not null && LoopReturnToName is null;
+    public string PlayLoopTip => Name switch
+    {
+        "TrackDrop" => Str.TipPlayTDLSLoop,
+        "TrackLoopStart" => Str.TipPlayTLSLoop,
+        "PostDrop" => Str.TipPlayPDLSLoop,
+        "PostRaceLoopStart" => Str.TipPlayPLSLoop,
+        _ => Str.TipPlayMarkerLoop,
+    };
 
     [ObservableProperty] private long _position;
     [ObservableProperty] private bool _highlighted;
@@ -247,7 +257,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
                 }
 
                 grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position,
-                    LoopEndName = name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", _ => null } });
+                    LoopEndName = name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", "TrackDrop" => "TrackLoopEnd", "PostDrop" => "PostRaceLoopEnd", _ => null },
+                    LoopReturnToName = name switch { "TrackDrop" => "TrackLoopStart", "PostDrop" => "PostRaceLoopStart", _ => null } });
             }
 
             Groups.Add(grp);
