@@ -179,12 +179,20 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     public void RestoreBackups()
     {
-        var (restored, failed) = BackupService.Restore(GamePath, Log.Line);
-        BackupLine = failed == 0
-            ? string.Format(Str.EditRestoredFmt, restored)
-            : string.Format(Str.EditRestoredFailedFmt, restored, failed);
-        CanRestore = false;
-        Restored = true;
+        try
+        {
+            var (restored, failed) = BackupService.Restore(GamePath, Log.Line);
+            BackupLine = failed == 0
+                ? string.Format(Str.EditRestoredFmt, restored)
+                : string.Format(Str.EditRestoredFailedFmt, restored, failed);
+            CanRestore = false;
+            Restored = true;
+        }
+        catch (Exception ex)
+        {
+            Log.Line("restore failed: " + ex.Message);
+            BackupLine = ex.Message;
+        }
     }
 
     public void ResetSettings()

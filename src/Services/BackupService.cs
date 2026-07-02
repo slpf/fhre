@@ -74,8 +74,7 @@ public static class BackupService
 
     public static (int Banks, int Langs) RestoreStation(string gamePath, StationInfo station, Action<string>? log = null)
     {
-        var banks = 0;
-        var langs = 0;
+        var bankTargets = new List<(string Dst, string Bak, string Name)>();
 
         foreach (var variant in station.Variants)
         {
@@ -96,17 +95,10 @@ public static class BackupService
                 continue;
             }
 
-            try
-            {
-                Atomic.Copy(bak, dst);
-                banks++;
-                log?.Invoke($"restored bank {bankName}");
-            }
-            catch (Exception ex)
-            {
-                log?.Invoke($"restore bank FAILED {bankName}: {ex.Message}");
-            }
+            bankTargets.Add((dst, bak, bankName));
         }
+
+        var xmlTargets = new List<(string Path, string Bak)>();
 
         foreach (var langFile in GameScanner.LanguageFiles(gamePath))
         {
@@ -124,6 +116,32 @@ public static class BackupService
                 continue;
             }
 
+            xmlTargets.Add((path, bak));
+        }
+
+        FileGuard.EnsureWritable(bankTargets.Select(t => t.Dst).Concat(xmlTargets.Select(t => t.Path)));
+
+        var banks = 0;
+        var langs = 0;
+        var failed = new List<string>();
+
+        foreach (var (dst, bak, name) in bankTargets)
+        {
+            try
+            {
+                Atomic.Copy(bak, dst);
+                banks++;
+                log?.Invoke($"restored bank {name}");
+            }
+            catch (Exception ex)
+            {
+                failed.Add(name);
+                log?.Invoke($"restore bank FAILED {name}: {ex.Message}");
+            }
+        }
+
+        foreach (var (path, bak) in xmlTargets)
+        {
             try
             {
                 var original = RadioInfo.Load(bak);
@@ -153,8 +171,14 @@ public static class BackupService
             }
             catch (Exception ex)
             {
+                failed.Add(Path.GetFileName(path));
                 log?.Invoke($"restore xml FAILED: {ex.Message}");
             }
+        }
+
+        if (failed.Count > 0)
+        {
+            throw new InvalidOperationException("partial restore: " + string.Join(", ", failed));
         }
 
         return (banks, langs);
@@ -162,13 +186,17 @@ public static class BackupService
 
     public static (int Restored, int Failed) Restore(string gamePath, Action<string>? log = null)
     {
+        var baks = Find(gamePath);
+
+        FileGuard.EnsureWritable(baks.Select(b => b[..^4]));
+
         var restored = 0;
         var failed = 0;
 
-        foreach (var bak in Find(gamePath))
+        foreach (var bak in baks)
         {
             var original = bak[..^4];
-            
+
             try
             {
                 Atomic.Copy(bak, original);

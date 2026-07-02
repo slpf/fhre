@@ -33,18 +33,20 @@ public partial class App : Application
 
             desktop.MainWindow = window;
 
-            window.Opened += async (_, _) => await CheckRequiredToolsAsync(window);
+            window.Opened += async (_, _) =>
+            {
+                await CheckRequiredToolsAsync(window);
+                if (!GameScanner.IsValid(settings.GamePath))
+                {
+                    await window.ShowSettingsAsync(firstRun: true);
+                }
+            };
 
             desktop.Exit += (_, _) =>
             {
                 (window.DataContext as MainWindowViewModel)?.Shutdown();
                 AudioDecoder.ClearAll();
             };
-
-            if (!GameScanner.IsValid(settings.GamePath))
-            {
-                window.Opened += async (_, _) => await window.ShowSettingsAsync(firstRun: true);
-            }
         }
 
         base.OnFrameworkInitializationCompleted();

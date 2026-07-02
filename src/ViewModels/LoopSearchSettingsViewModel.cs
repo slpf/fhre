@@ -7,6 +7,7 @@ namespace FH6RB.ViewModels;
 public sealed partial class LoopSearchSettingsViewModel : ObservableObject
 {
     private readonly AppSettings _settings;
+    private LoopStage _stages;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ManualEnabled))]
@@ -50,21 +51,21 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
     [ObservableProperty] private bool _useHarmonicChroma;
     [ObservableProperty] private bool _requireOnsetAlignment;
 
-    public bool StageBorderFilter { get => (_settings.LoopStages & LoopStage.BorderFilter) != 0; set => UpdateStage(LoopStage.BorderFilter, value); }
-    public bool StageSmoothnessFilter { get => (_settings.LoopStages & LoopStage.SmoothnessFilter) != 0; set => UpdateStage(LoopStage.SmoothnessFilter, value); }
-    public bool StageFluxFilter { get => (_settings.LoopStages & LoopStage.FluxFilter) != 0; set => UpdateStage(LoopStage.FluxFilter, value); }
-    public bool StageXCorr { get => (_settings.LoopStages & LoopStage.XCorr) != 0; set => UpdateStage(LoopStage.XCorr, value); }
-    public bool StageZeroCrossingSnap { get => (_settings.LoopStages & LoopStage.ZeroCrossingSnap) != 0; set => UpdateStage(LoopStage.ZeroCrossingSnap, value); }
-    public bool StageCyclicity { get => (_settings.LoopStages & LoopStage.Cyclicity) != 0; set => UpdateStage(LoopStage.Cyclicity, value); }
-    public bool StagePhase { get => (_settings.LoopStages & LoopStage.Phase) != 0; set => UpdateStage(LoopStage.Phase, value); }
-    public bool StageBarSnap { get => (_settings.LoopStages & LoopStage.BarSnap) != 0; set => UpdateStage(LoopStage.BarSnap, value); }
-    public bool StagePhraseSnap { get => (_settings.LoopStages & LoopStage.PhraseSnap) != 0; set => UpdateStage(LoopStage.PhraseSnap, value); }
+    public bool StageBorderFilter { get => (_stages & LoopStage.BorderFilter) != 0; set => UpdateStage(LoopStage.BorderFilter, value); }
+    public bool StageSmoothnessFilter { get => (_stages & LoopStage.SmoothnessFilter) != 0; set => UpdateStage(LoopStage.SmoothnessFilter, value); }
+    public bool StageFluxFilter { get => (_stages & LoopStage.FluxFilter) != 0; set => UpdateStage(LoopStage.FluxFilter, value); }
+    public bool StageXCorr { get => (_stages & LoopStage.XCorr) != 0; set => UpdateStage(LoopStage.XCorr, value); }
+    public bool StageZeroCrossingSnap { get => (_stages & LoopStage.ZeroCrossingSnap) != 0; set => UpdateStage(LoopStage.ZeroCrossingSnap, value); }
+    public bool StageCyclicity { get => (_stages & LoopStage.Cyclicity) != 0; set => UpdateStage(LoopStage.Cyclicity, value); }
+    public bool StagePhase { get => (_stages & LoopStage.Phase) != 0; set => UpdateStage(LoopStage.Phase, value); }
+    public bool StageBarSnap { get => (_stages & LoopStage.BarSnap) != 0; set => UpdateStage(LoopStage.BarSnap, value); }
+    public bool StagePhraseSnap { get => (_stages & LoopStage.PhraseSnap) != 0; set => UpdateStage(LoopStage.PhraseSnap, value); }
 
     private bool UpdateStage(LoopStage f, bool value, [System.Runtime.CompilerServices.CallerMemberName] string? prop = null)
     {
-        var nv = value ? _settings.LoopStages | f : _settings.LoopStages & ~f;
-        if (nv == _settings.LoopStages) return false;
-        _settings.LoopStages = nv;
+        var nv = value ? _stages | f : _stages & ~f;
+        if (nv == _stages) return false;
+        _stages = nv;
         OnPropertyChanged(prop);
         return true;
     }
@@ -74,6 +75,7 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
     public LoopSearchSettingsViewModel(AppSettings settings)
     {
         _settings = settings;
+        _stages = settings.LoopStages;
         _autoTune = settings.LoopAutoTune;
         _noteDeviation = settings.LoopNoteDeviation;
         _minMatch = settings.LoopMinMatch;
@@ -100,7 +102,7 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
         _settings.LoopPreEmphasis = PreEmphasis;
         _settings.LoopMultiResolution = MultiResolution;
         _settings.LoopDisablePruning = DisablePruning;
-        // LoopMinSeconds is no longer exposed in the UI; persisted value (if any) is ignored.
+        _settings.LoopStages = _stages;
         SettingsService.Save(_settings);
         Saved = true;
     }

@@ -6,27 +6,21 @@ public static class Naming
 
     public static string MakeSoundName(int seq) => $"{CustomPrefix}{seq}";
 
-    public static List<(int Seq, ulong Hash, string SoundName)> ScanCustomTracks(IReadOnlySet<ulong> stblIds, int maxGap = 128)
+    public static List<(int Seq, ulong Hash, string SoundName)> ScanCustomTracks(IReadOnlySet<ulong> stblIds, int ceiling = 100000)
     {
         var found = new List<(int, ulong, string)>();
-        var miss = 0;
-        
-        for (var seq = 0; miss < maxGap; seq++)
+
+        for (var seq = 0; seq <= ceiling; seq++)
         {
             var name = MakeSoundName(seq);
             var h = Lookup.SoundNameToId(name);
-            
+
             if (stblIds.Contains(h))
             {
-                found.Add((seq, h, name)); 
-                miss = 0;
-            }
-            else
-            {
-                miss++;
+                found.Add((seq, h, name));
             }
         }
-        
+
         return found;
     }
     

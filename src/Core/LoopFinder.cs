@@ -484,6 +484,7 @@ public static class LoopFinder
                     var srcCount = ((srcBits & 1) != 0 ? 1 : 0) + ((srcBits & 2) != 0 ? 1 : 0) + ((srcBits & 4) != 0 ? 1 : 0);
                     if (srcCount > 1) quality += 0.04 * (srcCount - 1);
 
+                    quality += c.XcorrBonus;
                     c.Score = Math.Clamp(quality, 0.0, 1.0);
                 }
     
@@ -776,6 +777,7 @@ public static class LoopFinder
         public double NoteDistance;
         public double LoudnessDifference;
         public double Score;
+        public double XcorrBonus;
         public bool FrameAdjusted;
         public int Sources = SrcChroma;
     }
@@ -1658,7 +1660,7 @@ public static class LoopFinder
                 c.FrameAdjusted = moved;
                 if (moved)
                 {
-                    c.Score = Math.Min(1.0, c.Score + 0.05 * bestCorr);
+                    c.XcorrBonus = 0.05 * bestCorr;
                 }
             }
         }

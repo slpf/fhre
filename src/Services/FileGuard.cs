@@ -26,4 +26,14 @@ public static class FileGuard
 
     public static IReadOnlyList<string> Locked(IEnumerable<string?> paths) =>
         paths.Where(IsLocked).Select(p => p!).Distinct().ToList();
+
+    public static void EnsureWritable(IEnumerable<string?> paths)
+    {
+        var locked = Locked(paths);
+
+        if (locked.Count > 0)
+        {
+            throw new InvalidOperationException("files in use: " + string.Join(", ", locked.Select(Path.GetFileName)));
+        }
+    }
 }

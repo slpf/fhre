@@ -171,8 +171,7 @@ public static class StationBackupService
 
     public static (int Banks, int Langs) Restore(BackupEntry e, string gamePath, Action<string>? log = null)
     {
-        var banks = 0;
-        var langs = 0;
+        var bankTargets = new List<(string Dst, string Src, string Name)>();
 
         foreach (var v in e.Manifest.Variants)
         {
@@ -185,18 +184,10 @@ public static class StationBackupService
                 continue;
             }
 
-            try
-            {
-                EnsureOriginal(dst);
-                Atomic.Copy(src, dst);
-                banks++;
-                log?.Invoke($"restored bank {v.BankName}");
-            }
-            catch (Exception ex)
-            {
-                log?.Invoke($"restore bank FAILED {v.BankName}: {ex.Message}");
-            }
+            bankTargets.Add((dst, src, v.BankName));
         }
+
+        var xmlTargets = new List<(string Path, string Stored, string Lang)>();
 
         foreach (var langFile in GameScanner.LanguageFiles(gamePath))
         {
@@ -214,6 +205,33 @@ public static class StationBackupService
                 continue;
             }
 
+            xmlTargets.Add((path, stored, LangCode(langFile)));
+        }
+
+        FileGuard.EnsureWritable(bankTargets.Select(t => t.Dst).Concat(xmlTargets.Select(t => t.Path)));
+
+        var banks = 0;
+        var langs = 0;
+        var failed = new List<string>();
+
+        foreach (var (dst, src, name) in bankTargets)
+        {
+            try
+            {
+                EnsureOriginal(dst);
+                Atomic.Copy(src, dst);
+                banks++;
+                log?.Invoke($"restored bank {name}");
+            }
+            catch (Exception ex)
+            {
+                failed.Add(name);
+                log?.Invoke($"restore bank FAILED {name}: {ex.Message}");
+            }
+        }
+
+        foreach (var (path, stored, lang) in xmlTargets)
+        {
             try
             {
                 var radio = RadioInfo.Load(path);
@@ -222,7 +240,7 @@ public static class StationBackupService
 
                 if (live is null)
                 {
-                    log?.Invoke($"restore xml: station not found ({LangCode(langFile)})");
+                    log?.Invoke($"restore xml: station not found ({lang})");
                     continue;
                 }
 
@@ -230,12 +248,18 @@ public static class StationBackupService
                 EnsureOriginal(path);
                 radio.Save(path);
                 langs++;
-                log?.Invoke($"restored xml {LangCode(langFile)}");
+                log?.Invoke($"restored xml {lang}");
             }
             catch (Exception ex)
             {
-                log?.Invoke($"restore xml FAILED {LangCode(langFile)}: {ex.Message}");
+                failed.Add(lang);
+                log?.Invoke($"restore xml FAILED {lang}: {ex.Message}");
             }
+        }
+
+        if (failed.Count > 0)
+        {
+            throw new InvalidOperationException("partial restore: " + string.Join(", ", failed));
         }
 
         return (banks, langs);

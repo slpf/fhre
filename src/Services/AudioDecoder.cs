@@ -77,9 +77,19 @@ public static class AudioDecoder
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
-        Run(Tools.FfmpegPath,
-            $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
-            $"-af {Loudnorm.Filter(source, s)} \"{outWav}\"", ct);
+        var part = outWav + ".part";
+        try
+        {
+            Run(Tools.FfmpegPath,
+                $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
+                $"-af {Loudnorm.Filter(source, s)} \"{part}\"", ct);
+            File.Move(part, outWav, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(part); } catch { }
+            throw;
+        }
 
         return outWav;
     }
@@ -96,7 +106,18 @@ public static class AudioDecoder
 
         Directory.CreateDirectory(Dir);
         PurgeStale();
-        Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{outWav}\" \"{bankPath}\"", ct);
+
+        var part = outWav + ".part";
+        try
+        {
+            Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{part}\" \"{bankPath}\"", ct);
+            File.Move(part, outWav, overwrite: true);
+        }
+        catch
+        {
+            try { File.Delete(part); } catch { }
+            throw;
+        }
 
         return outWav;
     }

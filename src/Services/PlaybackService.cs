@@ -125,7 +125,7 @@ public sealed class PlaybackService : IDisposable
 
     private void OnStopped(object? sender, StoppedEventArgs e)
     {
-        if (!_stopping)
+        if (!_stopping && ReferenceEquals(sender, _out))
         {
             Ended?.Invoke();
         }

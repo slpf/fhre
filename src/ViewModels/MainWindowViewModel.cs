@@ -1032,12 +1032,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
             editor.SetEnabled(it.SoundName, it.Enabled);
         }
 
-        var listNames = items.Select(i => i.SoundName).ToHashSet();
-        foreach (var sn in editor.CustomSoundNames().Where(sn => !listNames.Contains(sn)).ToList())
-        {
-            editor.RemoveCustom(sn);
-        }
-
         editor.FixCustomMarkers();
 
         foreach (var it in items)
