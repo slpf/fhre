@@ -240,7 +240,7 @@ public static class BankBuildService
             }
         }
 
-        if (outHeaders.Count == 0)
+        if (outHeaders.Count == 0 && items.Count > 0)
         {
             throw new InvalidOperationException("nothing to build (no matching samples)");
         }

@@ -168,6 +168,100 @@ public sealed class FevBank
         return ids;
     }
     
+    public static int ReadStblCountFromFile(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+
+            if (fs.Length < 12)
+            {
+                return -1;
+            }
+
+            var head = new byte[12];
+
+            if (fs.Read(head, 0, 12) < 12 || Cc(head, 0) != "RIFF" || Cc(head, 8) != "FEV ")
+            {
+                return -1;
+            }
+
+            var hdr = new byte[8];
+
+            while (fs.Position + 8 <= fs.Length)
+            {
+                if (fs.Read(hdr, 0, 8) < 8)
+                {
+                    break;
+                }
+
+                var id = Cc(hdr, 0);
+                var size = (int) U32(hdr, 4);
+
+                if (id == "LIST")
+                {
+                    if (size < 0 || size > fs.Length - fs.Position)
+                    {
+                        return -1;
+                    }
+
+                    var list = new byte[size];
+
+                    if (fs.Read(list, 0, size) != size)
+                    {
+                        return -1;
+                    }
+
+                    return StblCountInList(list);
+                }
+
+                if (id == "SND ")
+                {
+                    break;
+                }
+
+                fs.Seek(size, SeekOrigin.Current);
+            }
+
+            return -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private static int StblCountInList(byte[] list)
+    {
+        var p = 4;
+
+        while (p + 8 <= list.Length)
+        {
+            var id = Cc(list, p);
+            var size = (int) U32(list, p + 4);
+            var pay = p + 8;
+
+            if (id == "STBL")
+            {
+                if (size < 10 || pay + 10 > list.Length)
+                {
+                    return -1;
+                }
+
+                return U16(list, pay + 8);
+            }
+
+            p = pay + size;
+
+            if ((p & 1) != 0)
+            {
+                p++;
+            }
+        }
+
+        return -1;
+    }
+
     private static void ParseStblIds(byte[] list, HashSet<ulong> ids)
     {
         var p = 4;

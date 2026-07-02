@@ -336,7 +336,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             foreach (var p in paths)
             {
                 var part = FevBank.ReadStblIdsFromFile(p);
-                if (part.Count == 0 && new FileInfo(p).Length > 506)
+                var declared = FevBank.ReadStblCountFromFile(p);
+
+                if (part.Count == 0 && declared != 0 && new FileInfo(p).Length > 506)
                 {
                     susp = true;
                 }
