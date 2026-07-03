@@ -77,7 +77,7 @@ public static class AudioDecoder
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
-        var part = outWav + ".part";
+        var part = Path.Combine(Dir, key + ".part.wav");
         try
         {
             Run(Tools.FfmpegPath,
@@ -107,7 +107,7 @@ public static class AudioDecoder
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
-        var part = outWav + ".part";
+        var part = Path.Combine(Dir, key + ".part.wav");
         try
         {
             Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{part}\" \"{bankPath}\"", ct);
