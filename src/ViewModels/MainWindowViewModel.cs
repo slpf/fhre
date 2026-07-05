@@ -822,6 +822,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Log.Line($"RadioInfo saved (reference): {refFile}");
 
         var refStation = refRadio.StationByNumber(station.Number);
+        var enabled = items.ToDictionary(i => i.SoundName, i => i.Enabled);
 
         foreach (var lf in otherFiles)
         {
@@ -830,7 +831,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 break;
             }
 
-            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers);
+            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers, enabled);
             savedXml += saved;
             dead += d;
         }
@@ -842,7 +843,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         string lf, StationInfo station, string bankName, IReadOnlyList<AddedSample> addedSamples,
         RadioStationEditor refStation, HashSet<ulong> union, bool suspicious,
         IReadOnlyDictionary<string, (string? DisplayName, string? Artist)> changedMeta,
-        IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers)
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers,
+        IReadOnlyDictionary<string, bool> enabled)
     {
         var xmlPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, lf);
         if (xmlPath is null)
@@ -870,6 +872,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         ed.RegisterBank(bankName);
         ed.SyncCustomsFrom(refStation);
+
+        foreach (var (sn, isEnabled) in enabled)
+        {
+            ed.SetEnabled(sn, isEnabled);
+        }
 
         foreach (var a in addedSamples.Where(a => a.IsReplacement))
         {

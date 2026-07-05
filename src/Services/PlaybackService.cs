@@ -47,7 +47,7 @@ public sealed class PlaybackService : IDisposable
         };
         
         _loop = new LoopSampleProvider(_reader);
-        _out = new WaveOutEvent { DesiredLatency = 200, NumberOfBuffers = 4 };
+        _out = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 2 };
         _out.PlaybackStopped += OnStopped;
         _out.Init(_loop);
         _out.Play();

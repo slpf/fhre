@@ -27,10 +27,10 @@ public sealed partial class MarkerField : ObservableObject
     public bool CanSuggest => LoopEndName is not null && LoopReturnToName is null;
     public string PlayLoopTip => Name switch
     {
-        "TrackDrop" => Str.TipPlayTDLSLoop,
-        "TrackLoopStart" => Str.TipPlayTLSLoop,
-        "PostDrop" => Str.TipPlayPDLSLoop,
-        "PostRaceLoopStart" => Str.TipPlayPLSLoop,
+        "TrackDrop" => Str.TipPlayTdlsLoop,
+        "TrackLoopStart" => Str.TipPlayTlsLoop,
+        "PostDrop" => Str.TipPlayPdlsLoop,
+        "PostRaceLoopStart" => Str.TipPlayPlsLoop,
         _ => Str.TipPlayMarkerLoop,
     };
 
@@ -191,7 +191,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
     private static readonly (string Group, string[] Names)[] Schema =
     [
         (Str.GrpCore, ["TrackStart", "End"]),
-        (Str.GrpDjDrops, ["DJStart", "DJDrop", "DJSegment", "TrackDrop"]),
+        (Str.GrpDjDrops, ["DJDrop", "DJStart", "DJSegment", "TrackDrop"]),
         (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostDrop", "PostRaceLoopStart", "PostRaceLoopEnd"]),
     ];
 
