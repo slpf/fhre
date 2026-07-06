@@ -495,11 +495,14 @@ public partial class MainWindow : Window
 
         var (fTitle, fArtist) = ParseName(System.IO.Path.GetFileNameWithoutExtension(path));
 
+        var resetMarkers = await MessageDialog.ShowAsync(this, Str.DlgReplaceResetMarkersTitle, Str.DlgReplaceResetMarkersBody,
+            Str.BtnYes, Str.BtnNo);
+
         track.ReplacementPath = path;
         track.Title = mTitle ?? fTitle;
         track.Artist = mArtist ?? fArtist;
 
-        if (!track.IsCustom)
+        if (resetMarkers)
         {
             track.Markers = null;
         }

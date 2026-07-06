@@ -64,9 +64,10 @@ public static class AudioDecoder
 
     public static string DecodeAdded(string source, AppSettings s, CancellationToken ct = default)
     {
+        var norm = s.LoudnessNormalize;
         var i = s.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var key = Key($"add|{source}|{Stamp(source)}|{i}|{tp}");
+        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{i}|{tp}");
         var outWav = Path.Combine(Dir, key + ".wav");
 
         if (File.Exists(outWav))
@@ -77,12 +78,14 @@ public static class AudioDecoder
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
+        var filter = norm ? Loudnorm.Filter(source, s) : "";
+        var af = filter.Length > 0 ? $"-af {filter} " : "";
+
         var part = Path.Combine(Dir, key + ".part.wav");
         try
         {
             Run(Tools.FfmpegPath,
-                $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le " +
-                $"-af {Loudnorm.Filter(source, s)} \"{part}\"", ct);
+                $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{part}\"", ct);
             File.Move(part, outWav, overwrite: true);
         }
         catch

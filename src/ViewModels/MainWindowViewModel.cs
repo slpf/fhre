@@ -707,9 +707,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         
         var items = Tracks.Select(t =>
         {
-            var newCustom = t.IsCustom && t.SourcePath is not null;
+            var customReplacing = t.IsCustom && t.ReplacementPath is not null;
+            var newCustom = (t.IsCustom && t.SourcePath is not null) || customReplacing;
             var replacing = !t.IsCustom && t.ReplacementPath is not null;
-            var encodeSrc = newCustom ? t.SourcePath : replacing ? t.ReplacementPath : null;
+            var encodeSrc = customReplacing ? t.ReplacementPath
+                : newCustom ? t.SourcePath
+                : replacing ? t.ReplacementPath
+                : null;
             return new BuildItem(
                 t.SoundName, newCustom, encodeSrc, t.Title, t.Artist, t.GainDb, t.Enabled,
                 t.Markers, replacing);

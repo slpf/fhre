@@ -1,4 +1,5 @@
 using System.Reflection;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FH6RB.Assets;
 using FH6RB.Core;
@@ -13,8 +14,18 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public string AppVersion => $"v{Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0"}";
 
     [ObservableProperty] private string _gamePath;
-    [ObservableProperty] private bool _isValid;
-    [ObservableProperty] private bool _scanning;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowError))]
+    private bool _isValid;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowError))]
+    private bool _scanning;
+
+    [ObservableProperty] private string _scanningText = "";
+
+    public bool ShowError => !IsValid && !Scanning;
     [ObservableProperty] private string _exeLine = "";
     [ObservableProperty] private string _langLine = "";
     [ObservableProperty] private string _bankLine = "";
@@ -25,6 +36,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private double _targetLufs;
 
     public string TargetLufsText => $"{TargetLufs:0} LUFS";
+
+    [ObservableProperty] private bool _loudnessNormalize;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(EncodeParallelismText))]
@@ -57,6 +70,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings = settings;
         _gamePath = settings.GamePath;
         _targetLufs = settings.TargetLufs;
+        _loudnessNormalize = settings.LoudnessNormalize;
         _encodeParallelism = settings.EncodeParallelism > 0
             ? Math.Min(settings.EncodeParallelism, MaxThreads)
             : AppSettings.RecommendedParallelism;
@@ -64,6 +78,38 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     }
 
     partial void OnGamePathChanged(string value) => _ = ValidateAsync();
+
+    private DispatcherTimer? _dotsTimer;
+    private int _dots;
+    private bool _dotsWired;
+
+    partial void OnScanningChanged(bool value)
+    {
+        if (value)
+        {
+            _dots = 0;
+            ScanningText = "Scanning";
+            _dotsTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+
+            if (!_dotsWired)
+            {
+                _dotsTimer.Tick += OnDotsTick;
+                _dotsWired = true;
+            }
+
+            _dotsTimer.Start();
+        }
+        else
+        {
+            _dotsTimer?.Stop();
+        }
+    }
+
+    private void OnDotsTick(object? sender, EventArgs e)
+    {
+        _dots = (_dots + 1) % 4;
+        ScanningText = "Scanning" + new string('.', _dots);
+    }
 
     public void Validate() => _ = ValidateAsync();
 
@@ -206,6 +252,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.TargetTruePeak = d.TargetTruePeak;
         _settings.VorbisQuality = d.VorbisQuality;
         _settings.EncodeParallelism = d.EncodeParallelism;
+        _settings.LoudnessNormalize = d.LoudnessNormalize;
         _settings.MarkerDefaults = new();
         _settings.WaveformLabelRows = new();
         _settings.LoopAutoTune = d.LoopAutoTune;
@@ -223,6 +270,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
         TargetLufs = _settings.TargetLufs;
         EncodeParallelism = AppSettings.RecommendedParallelism;
+        LoudnessNormalize = _settings.LoudnessNormalize;
 
         Saved = true;
     }
@@ -232,6 +280,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.GamePath = GamePath;
         _settings.TargetLufs = Math.Round(TargetLufs);
         _settings.EncodeParallelism = EncodeParallelism;
+        _settings.LoudnessNormalize = LoudnessNormalize;
         SettingsService.Save(_settings);
         Saved = true;
     }

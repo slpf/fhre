@@ -195,9 +195,32 @@ public sealed class RadioStationEditor(XElement station)
             throw new InvalidOperationException($"AddCustom expects a custom SoundName ('{Naming.CustomPrefix}...')");
         }
         
-        if (FindSample(soundName) is not null)
+        var existing = FindSample(soundName);
+        if (existing is not null)
         {
-            throw new InvalidOperationException($"{soundName} already exists");
+            existing.SetAttributeValue("SampleLength", sampleLength);
+            existing.SetAttributeValue("SampleRate", sampleRate);
+
+            if (displayName is not null)
+            {
+                existing.SetAttributeValue("DisplayName", displayName);
+            }
+
+            if (artist is not null)
+            {
+                existing.SetAttributeValue("Artist", artist);
+            }
+
+            existing.SetAttributeValue("Replaced", null);
+            ApplyCustomMarkers(existing, sampleLength);
+            existing.Elements("BPM").Remove();
+
+            return new RadioTrack
+            {
+                SoundName = soundName, Origin = TrackOrigin.Custom, Enabled = true,
+                DisplayName = displayName ?? soundName, Artist = artist,
+                SampleLength = sampleLength, SampleRate = sampleRate,
+            };
         }
         
         var template = TrackList.Elements("Sample").FirstOrDefault() 

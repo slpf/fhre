@@ -864,39 +864,7 @@ public partial class WaveformWindow : Window
         {
             DataContext = new LoopSearchSettingsViewModel(settings),
         };
-        dlg.RunTestsRequested += OnRunTestsRequested;
-        dlg.Closed += (_, _) => dlg.RunTestsRequested -= OnRunTestsRequested;
         await dlg.ShowDialog(this);
-    }
-
-    private async void OnRunTestsRequested(object? sender, EventArgs e)
-    {
-#if DEBUG
-        if (Vm.IsSuggesting)
-        {
-            return;
-        }
-
-        Vm.IsSuggesting = true;
-        try
-        {
-            var testsDir = LoopFinderTester.ResolveTestsDir();
-            var resultsDir = LoopFinderTester.ResolveResultsDir();
-            var settings = Vm.Settings ?? new AppSettings();
-            _suggestCts?.Cancel();
-            _suggestCts = new CancellationTokenSource();
-            await Task.Run(() => LoopFinderTester.RunAsync(
-                testsDir, resultsDir, settings, progress: null, _suggestCts.Token));
-        }
-        catch (Exception ex)
-        {
-            Log.Line($"LoopFinder tests failed: {ex.Message}");
-        }
-        finally
-        {
-            Vm.IsSuggesting = false;
-        }
-#endif
     }
 
     private void OnSavePreset(object? sender, RoutedEventArgs e)

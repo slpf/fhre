@@ -22,19 +22,21 @@ public static class Str
     public const string LblVolumeCompensation = "VOLUME COMPENSATION";
     public const string LblTargetLoudness = "Target loudness";
     public const string LblEncodingThreads = "Encoding threads";
+    public const string LblLoudnessNormalize = "Normalize loudness";
     
     public const string BtnCancel = "Cancel";
     public const string BtnSave = "Save";
     public const string BtnOk = "OK";
     public const string BtnClose = "Close";
     public const string BtnBrowse = "Browse";
-    public const string BtnRunTests = "Run LoopFinder tests";
-    public const string StatusRunningTests = "Running LoopFinder tests...";
-    public const string StatusTestsDone = "LoopFinder tests done. Results in /tests/result/";
-    public const string StatusTestsFailed = "LoopFinder tests failed: {0}";
     public const string BtnLoad = "Load";
     public const string BtnDelete = "Delete";
     public const string BtnRestore = "Restore";
+
+    public const string BtnYes = "Yes";
+    public const string BtnNo = "No";
+    public const string DlgReplaceResetMarkersTitle = "Reset markers?";
+    public const string DlgReplaceResetMarkersBody = "The audio is being replaced — reset marker positions to auto for the new audio?";
     
     public const string BadgeNew = "NEW";
     public const string BadgeReplaced = "RPL";
@@ -68,6 +70,7 @@ public static class Str
     public const string TipSetPlayhead = "Set this marker to start";
     public const string TipRevertToSaved = "Restore the last saved value";
     public const string TipBackupRestore = "Reverts files to their pre-build state.";
+    public const string TipLoudnessNormalize = "When off, added tracks keep their original loudness and encoding is faster (skips the two-pass loudness measurement).";
     
     public const string Loading = "Loading…";
     public const string WatermarkOff = "off";

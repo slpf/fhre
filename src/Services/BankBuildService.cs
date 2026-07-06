@@ -338,15 +338,21 @@ public static class BankBuildService
             return;
         }
 
-        var filter = await Loudnorm.FilterAsync(item.SourcePath, settings).ConfigureAwait(false);
+        var filter = settings.LoudnessNormalize
+            ? await Loudnorm.FilterAsync(item.SourcePath, settings).ConfigureAwait(false)
+            : "";
 
         if (item.GainDb is { } g && Math.Abs(g) > 0.01)
         {
-            filter += $",volume={g.ToString("0.0", CultureInfo.InvariantCulture)}dB";
+            filter = filter.Length > 0
+                ? filter + $",volume={g.ToString("0.0", CultureInfo.InvariantCulture)}dB"
+                : $"volume={g.ToString("0.0", CultureInfo.InvariantCulture)}dB";
         }
 
+        var af = filter.Length > 0 ? $"-af {filter} " : "";
+
         await RunAsync(Tools.FfmpegPath,
-            $"-y -hide_banner -loglevel error -i \"{item.SourcePath}\" -ar 48000 -ac 2 -c:a pcm_s16le -af {filter} \"{wav}\"",
+            $"-y -hide_banner -loglevel error -i \"{item.SourcePath}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{wav}\"",
             log).ConfigureAwait(false);
     }
 }

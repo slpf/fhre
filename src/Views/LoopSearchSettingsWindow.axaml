@@ -225,7 +225,6 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
                 <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
                 <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnSave}"/>
-                <Button x:Name="RunTestsButton" Classes="big" Click="OnRunTests" Content="{x:Static assets:Str.BtnRunTests}"/>
             </StackPanel>
         </Border>
     </Grid>

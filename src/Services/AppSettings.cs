@@ -11,6 +11,7 @@ public sealed class AppSettings
     
     public double TargetLufs { get; set; } = -23.0;
     public double TargetTruePeak { get; set; } = -1.0;
+    public bool LoudnessNormalize { get; set; } = true;
     public int VorbisQuality { get; set; } = 70;
 
 
