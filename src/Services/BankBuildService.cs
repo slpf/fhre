@@ -111,6 +111,16 @@ public static class BankBuildService
             progress?.Invoke("Assembling bank…");
 
             var combined = templateFsb.Build(addedSamples);
+
+            if (combined.Length > int.MaxValue)
+            {
+                throw new BankTooLargeException(
+                    $"Resulting bank is {combined.Length / 1073741824.0:0.00} GB, over the 2 GB limit the game can load. " +
+                    "Use fewer tracks or place them in a different bank.");
+            }
+
+            log?.Invoke($"projected audio: {BankSize.Mb(combined.Length)} ({newCustoms.Count} new samples)");
+
             var entries = newCustoms.Select((c, i) => (Lookup.SoundNameToId(c.SoundName), i)).ToList();
             var emptyStbl = FevBank.BuildStbl(entries);
 
@@ -243,6 +253,39 @@ public static class BankBuildService
         if (outHeaders.Count == 0 && items.Count > 0)
         {
             throw new InvalidOperationException("nothing to build (no matching samples)");
+        }
+
+        long baseBankSize;
+        try { baseBankSize = new FileInfo(sourcePath).Length; } catch { baseBankSize = 0; }
+
+        long removed = 0;
+        foreach (var it in items)
+        {
+            if (!it.IsNewCustom && !it.IsReplacement) continue;
+            var hash = Lookup.SoundNameToId(it.SoundName);
+            if (!hashToIndex.TryGetValue(hash, out var idx) || idx < 0 || idx >= srcLayout.Count) continue;
+            var sl = srcLayout[idx];
+            var dl = sl.DataLen;
+            removed += sl.Header.Length + dl + ((0x20 - (dl % 0x20)) % 0x20);
+        }
+
+        long newAudio = 0;
+        foreach (var h in custHeaders) newAudio += h.Length;
+        foreach (var r in custRefs)
+        {
+            var l = r.Length;
+            newAudio += l + ((0x20 - (l % 0x20)) % 0x20);
+        }
+
+        var totalAudio = baseBankSize - removed + newAudio;
+
+        log?.Invoke($"projected audio: {BankSize.Mb(totalAudio)} total = base {BankSize.Mb(baseBankSize)} - {BankSize.Mb(removed)} removed + {BankSize.Mb(newAudio)} new ({encoded.Count} sample(s))");
+
+        if (totalAudio > int.MaxValue)
+        {
+            throw new BankTooLargeException(
+                $"Resulting bank is {totalAudio / 1073741824.0:0.00} GB, over the 2 GB limit the game can load. " +
+                "Use fewer tracks or place them in a different bank.");
         }
 
         progress?.Invoke("Assembling bank…");

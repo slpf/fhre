@@ -71,6 +71,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly PlaybackService _player = new();
     private TrackItemViewModel? _nowPlaying;
     private string? _loadedBankPath;
+    private long _baseBankSize;
+    private int _baseBankMode = 15;
+    private long _projectedTotalBytes;
     private DispatcherTimer? _tick;
     private int _playGen;
     private bool _suppressSeek;
@@ -280,9 +283,29 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var path = GameScanner.BankPath(Settings.GamePath, bank);
         _loadedBankPath = path;
 
-        var result = path is null
-            ? new BankReadResult([], "bank file not found")
-            : await Task.Run(() => BankReader.ReadTracks(path, radio, station.Number));
+        BankReadResult result;
+        long baseSize = 0;
+        var baseMode = 15;
+
+        if (path is null)
+        {
+            result = new BankReadResult([], "bank file not found");
+        }
+        else
+        {
+            var (r, sz, md) = await Task.Run(() =>
+            {
+                var res = BankReader.ReadTracks(path, radio, station.Number);
+                long size = 0;
+                var mode = 15;
+                try { size = new FileInfo(path).Length; } catch { }
+                try { mode = FevBank.ReadSkeleton(path).Mode; if (mode == 0) mode = 15; } catch { }
+                return (res, size, mode);
+            });
+            result = r;
+            baseSize = sz;
+            baseMode = md;
+        }
 
         if (gen != _loadGen)
         {
@@ -300,6 +323,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
             IsLoading = false;
+            _baseBankSize = baseSize;
+            _baseBankMode = baseMode;
+            _projectedTotalBytes = baseSize;
             Recount();
             HasUnsavedChanges = false;
 
@@ -371,7 +397,38 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var total = Tracks.Count;
         var custom = Tracks.Count(t => t.IsCustom);
         var on = Tracks.Count(t => t.Enabled);
-        CountText = $"{total} tracks · {custom} custom · {on} in playlist";
+        CountText = $"{total} tracks · {custom} custom · {on} in playlist · {BankSize.Mb(_projectedTotalBytes)}";
+    }
+
+    public void RecalcProjectedSize()
+    {
+        long added = 0;
+        var n = 0;
+
+        foreach (var t in Tracks)
+        {
+            if (!IsProjectedNew(t)) continue;
+            var dur = TrackDurationSeconds(t);
+            if (dur <= 0) continue;
+            added += BankSize.EncodedBytes(dur, _baseBankMode);
+            n++;
+        }
+
+        _projectedTotalBytes = _baseBankSize + added;
+        Log.Line($"projected bank size: {BankSize.Mb(_projectedTotalBytes)} total = base {BankSize.Mb(_baseBankSize)} + {BankSize.Mb(added)} over {n} new track(s)");
+        Recount();
+    }
+
+    private static bool IsProjectedNew(TrackItemViewModel t)
+    {
+        if (t.IsReplacing) return false;
+        return t.IsCustom && t.SourcePath is not null;
+    }
+
+    private static double TrackDurationSeconds(TrackItemViewModel t)
+    {
+        if (t.PendingDurationSeconds is { } pd && pd > 0) return pd;
+        return t.SampleRate > 0 && t.SampleLength > 0 ? t.SampleLength / (double)t.SampleRate : 0;
     }
 
     public void ResetAllCustomMarkers()
@@ -626,6 +683,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Status = string.Format(Str.StatusDeletedFmt, track.SoundName);
         HasUnsavedChanges = true;
         Recount();
+        RecalcProjectedSize();
     }
 
     public TrackItemViewModel CreateCustomStub(string sourcePath, string? title = null, string? artist = null,

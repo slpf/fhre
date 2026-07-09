@@ -425,6 +425,7 @@ public partial class MainWindow : Window
         }
 
         Vm.Recount();
+        Vm.RecalcProjectedSize();
         Vm.Status = added == 1 ? string.Format(Str.StatusAddedOneFmt, Vm.Tracks[^1].SoundName) : string.Format(Str.StatusAddedManyFmt, added);
     }
 
