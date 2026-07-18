@@ -1,13 +1,14 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.BackupsWindow"
         x:DataType="vm:BackupsViewModel"
-        Width="560" Height="560"
-        MinWidth="440" MinHeight="320"
+        Width="560" Height="527"
+        MinWidth="560" MinHeight="527"
+        MaxWidth="560" MaxHeight="527"
         WindowStartupLocation="CenterOwner"
+        CanResize="False"
         Background="{DynamicResource Bg1}"
         Title="{x:Static assets:Str.TitleBackups}">
 
@@ -17,13 +18,13 @@
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        Foreground="{DynamicResource TxtMute}" FontSize="13"/>
 
-            <ScrollViewer Margin="16" IsVisible="{Binding HasItems}"
+            <ScrollViewer Margin="16, 16,0,16" IsVisible="{Binding HasItems}"
                           HorizontalScrollBarVisibility="Disabled">
                 <ItemsControl ItemsSource="{Binding Items}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:BackupRow">
                             <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                                    BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                                    BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,16,10">
                                 <Grid ColumnDefinitions="*,Auto">
                                     <StackPanel Grid.Column="0" Spacing="3" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
@@ -36,11 +37,17 @@
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                                 VerticalAlignment="Center" Margin="12,0,0,0">
-                                        <Button Classes="big" Click="OnRestore" Tag="{Binding}"
-                                                IsVisible="{Binding CanRestore}"
-                                                Content="{x:Static assets:Str.BtnRestore}"/>
-                                        <Button Classes="big" Click="OnDelete" Tag="{Binding}"
-                                                Content="{x:Static assets:Str.BtnDelete}"/>
+                                        <Button Classes="act" Click="OnRestore" Tag="{Binding}"
+                                                ToolTip.Tip="{x:Static assets:Str.BtnRestore}"
+                                                IsVisible="{Binding CanRestore}">
+                                            <Image Source="avares://FH6RB/Assets/icons/icon_m_load2.png"
+                                                   Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                        <Button Classes="act" Click="OnDelete" Tag="{Binding}"
+                                                ToolTip.Tip="{x:Static assets:Str.BtnDelete}">
+                                            <Image Source="avares://FH6RB/Assets/icons/icon_delete.png"
+                                                   Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Border>

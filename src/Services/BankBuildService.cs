@@ -14,7 +14,8 @@ public sealed record BuildItem(
     double? GainDb,
     bool Enabled,
     IReadOnlyDictionary<string, long>? Markers = null,
-    bool IsReplacement = false);
+    bool IsReplacement = false,
+    bool RestoreFromBak = false);
 
 public sealed record AddedSample(string SoundName, long Frames, int SampleRate, string? DisplayName, string? Artist, bool Enabled, bool IsReplacement = false);
 
@@ -58,17 +59,33 @@ public static class BankBuildService
             {
                 var item = newCustoms[i];
 
-                var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
-                await EncodeAsync(item, wav, settings, log).ConfigureAwait(false);
+                if (IsFsbSource(item.SourcePath) && FsbMode(item.SourcePath!) == mode)
+                {
+                    var pf = Fsb5.Parse(File.ReadAllBytes(item.SourcePath!));
+                    if (pf.Samples.Count < 1) throw new InvalidOperationException($"imported .fsb has no subsounds for {item.SoundName}");
 
-                var n = Interlocked.Increment(ref done);
-                progress?.Invoke($"Encoding…\t{n}/{newCustoms.Count}");
+                    parsed[i] = pf;
+                    samples[i] = pf.Samples[0];
+                    added[i] = new AddedSample(item.SoundName, pf.Samples[0].Frames, pf.Samples[0].SampleRate,
+                        item.DisplayName, item.Artist, item.Enabled, item.IsReplacement);
+                    log?.Invoke($"  passthrough {item.SoundName} ({BankSize.Mb(pf.Samples[0].Data.Length)})");
+                    Done();
+                    return;
+                }
+
+                var encodeItem = IsFsbSource(item.SourcePath)
+                    ? item with { SourcePath = AudioDecoder.DecodeBank(item.SourcePath!, 0) }
+                    : item;
+
+                var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
+                await EncodeAsync(encodeItem, wav, settings, log).ConfigureAwait(false);
 
                 var fsb = Path.Combine(WorkDirs.FsbDir, $"add_{i}.fsb");
+                try { if (File.Exists(fsb)) File.Delete(fsb); } catch { }
                 await RunAsync(Tools.FsbankclPath, $"{fmtArgs} -o \"{fsb}\" \"{wav}\"", log).ConfigureAwait(false);
                 if (!File.Exists(fsb)) throw new InvalidOperationException($"fsbankcl produced no output for {item.SoundName}");
 
-                try { File.Delete(wav); } catch { /* ignored */ }
+                try { File.Delete(wav); } catch { }
 
                 var p = Fsb5.Parse(File.ReadAllBytes(fsb));
                 if (p.Samples.Count < 1) throw new InvalidOperationException($"fsbankcl FSB5 has no subsounds for {item.SoundName}");
@@ -77,10 +94,17 @@ public static class BankBuildService
                 samples[i] = p.Samples[0];
                 added[i] = new AddedSample(item.SoundName, p.Samples[0].Frames, p.Samples[0].SampleRate,
                     item.DisplayName, item.Artist, item.Enabled, item.IsReplacement);
+                Done();
             }
             finally
             {
                 sema.Release();
+            }
+
+            void Done()
+            {
+                var n = Interlocked.Increment(ref done);
+                progress?.Invoke($"Encoding…\t{n}/{newCustoms.Count}");
             }
         }
 
@@ -95,11 +119,19 @@ public static class BankBuildService
     {
         var skel = FevBank.ReadSkeleton(sourcePath);
 
+        WorkDirs.Clean();
+        WorkDirs.Ensure();
+
         if (skel.Empty)
         {
             log?.Invoke("target: EMPTY skeleton -> in-memory fill");
 
             var newCustoms = items.Where(i => i.IsNewCustom).ToList();
+            var dropped = items.Where(i => !i.IsNewCustom).ToList();
+            if (dropped.Count > 0)
+            {
+                log?.Invoke($"  WARN: target bank empty, {dropped.Count} replacement/default track(s) cannot be restored and were dropped");
+            }
             if (newCustoms.Count == 0)
             {
                 throw new InvalidOperationException("Empty bank: nothing to build (no new tracks).");
@@ -169,7 +201,7 @@ public static class BankBuildService
         }
 
         using var sema = new SemaphoreSlim(parallelism);
-        var startedCount = 0;
+        var doneCount = 0;
 
         async Task EncodeOneAsync(int i)
         {
@@ -178,17 +210,30 @@ public static class BankBuildService
             {
                 var item = encoded[i];
 
-                var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
-                await EncodeAsync(item, wav, settings, log).ConfigureAwait(false);
+                if (TryPassthrough(item.SourcePath, skel.Mode) is { } pt)
+                {
+                    custHeaders[i] = pt.Header;
+                    custRefs[i] = pt.Ref;
+                    added[i] = new AddedSample(item.SoundName, pt.Frames, pt.SampleRate,
+                        item.DisplayName, item.Artist, item.Enabled, item.IsReplacement);
+                    log?.Invoke($"  passthrough {item.SoundName} ({BankSize.Mb(pt.Ref.Length)})");
+                    Done();
+                    return;
+                }
 
-                var n = Interlocked.Increment(ref startedCount);
-                progress?.Invoke($"Encoding…\t{n}/{encoded.Count}");
+                var encodeItem = IsFsbSource(item.SourcePath)
+                    ? item with { SourcePath = AudioDecoder.DecodeBank(item.SourcePath!, 0) }
+                    : item;
+
+                var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
+                await EncodeAsync(encodeItem, wav, settings, log).ConfigureAwait(false);
 
                 var fsb = Path.Combine(WorkDirs.FsbDir, $"add_{i}.fsb");
+                try { if (File.Exists(fsb)) File.Delete(fsb); } catch { }
                 await RunAsync(Tools.FsbankclPath, $"{fmtArgs} -o \"{fsb}\" \"{wav}\"", log).ConfigureAwait(false);
                 if (!File.Exists(fsb)) throw new InvalidOperationException($"fsbankcl produced no output for {item.SoundName}");
 
-                try { File.Delete(wav); } catch { /* ignored */ }
+                try { File.Delete(wav); } catch { }
 
                 var region = ReadFsb5HeaderRegion(fsb);
                 var (_, clay) = Fsb5.ReadLayout(region);
@@ -201,10 +246,17 @@ public static class BankBuildService
                 custHeaders[i] = c.Header;
                 custRefs[i] = new FevBank.DataRef(fsb, 60 + shs + ns + c.DataOff, c.DataLen);
                 added[i] = new AddedSample(item.SoundName, c.Frames, c.SampleRate, item.DisplayName, item.Artist, item.Enabled, item.IsReplacement);
+                Done();
             }
             finally
             {
                 sema.Release();
+            }
+
+            void Done()
+            {
+                var n = Interlocked.Increment(ref doneCount);
+                progress?.Invoke($"Encoding…\t{n}/{encoded.Count}");
             }
         }
 
@@ -216,6 +268,42 @@ public static class BankBuildService
         var seen = new HashSet<ulong>();
         var k = 0;
         var newIndex = 0;
+
+        string? bakPath = null;
+        List<Fsb5.SampleLayout>? bakLayout = null;
+        Dictionary<ulong, int>? bakHashToIndex = null;
+        long bakDataStart = 0;
+
+        if (items.Any(i => i.RestoreFromBak))
+        {
+            bakPath = sourcePath + ".bak";
+
+            if (File.Exists(bakPath))
+            {
+                var bakSkel = FevBank.ReadSkeleton(bakPath);
+
+                if (!bakSkel.Empty)
+                {
+                    bakDataStart = bakSkel.DataStartAbs;
+                    var (_, clay) = Fsb5.ReadLayout(bakSkel.Fsb5HeaderRegion);
+                    bakLayout = clay;
+                    bakHashToIndex = new Dictionary<ulong, int>();
+
+                    foreach (var (id, idx) in bakSkel.Stbl)
+                    {
+                        bakHashToIndex[id] = idx;
+                    }
+                }
+                else
+                {
+                    log?.Invoke($"  WARN: .bak skeleton empty, restore falls back to current bank");
+                }
+            }
+            else
+            {
+                log?.Invoke($"  WARN: .bak not found for restore: {Path.GetFileName(bakPath)}");
+            }
+        }
 
         foreach (var it in items)
         {
@@ -238,9 +326,25 @@ public static class BankBuildService
                     throw new InvalidOperationException($"duplicate STBL id in plan: {it.SoundName}");
                 }
 
-                var sl = srcLayout[idx];
-                outHeaders.Add(sl.Header);
-                outData.Add(new FevBank.DataRef(sourcePath, skel.DataStartAbs + sl.DataOff, sl.DataLen));
+                if (it.RestoreFromBak && bakLayout is not null
+                    && bakHashToIndex!.TryGetValue(hash, out var bidx) && bidx >= 0 && bidx < bakLayout.Count)
+                {
+                    var bsl = bakLayout[bidx];
+                    outHeaders.Add(bsl.Header);
+                    outData.Add(new FevBank.DataRef(bakPath!, bakDataStart + bsl.DataOff, bsl.DataLen));
+                }
+                else
+                {
+                    if (it.RestoreFromBak)
+                    {
+                        log?.Invoke($"  WARN: {it.SoundName} not found in .bak, kept from current bank");
+                    }
+
+                    var sl = srcLayout[idx];
+                    outHeaders.Add(sl.Header);
+                    outData.Add(new FevBank.DataRef(sourcePath, skel.DataStartAbs + sl.DataOff, sl.DataLen));
+                }
+
                 stbl.Add((hash, newIndex));
                 newIndex++;
             }
@@ -258,12 +362,20 @@ public static class BankBuildService
         long baseBankSize;
         try { baseBankSize = new FileInfo(sourcePath).Length; } catch { baseBankSize = 0; }
 
-        long removed = 0;
+        var keptExisting = new HashSet<ulong>();
         foreach (var it in items)
         {
-            if (!it.IsNewCustom && !it.IsReplacement) continue;
-            var hash = Lookup.SoundNameToId(it.SoundName);
-            if (!hashToIndex.TryGetValue(hash, out var idx) || idx < 0 || idx >= srcLayout.Count) continue;
+            if (!it.IsNewCustom && !it.IsReplacement)
+            {
+                keptExisting.Add(Lookup.SoundNameToId(it.SoundName));
+            }
+        }
+
+        long removed = 0;
+        foreach (var (id, idx) in skel.Stbl)
+        {
+            if (idx < 0 || idx >= srcLayout.Count) continue;
+            if (keptExisting.Contains(id)) continue;
             var sl = srcLayout[idx];
             var dl = sl.DataLen;
             removed += sl.Header.Length + dl + ((0x20 - (dl % 0x20)) % 0x20);
@@ -327,6 +439,47 @@ public static class BankBuildService
         }
 
         return region;
+    }
+
+    private static bool IsFsbSource(string? path)
+        => path is not null && path.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase) && File.Exists(path);
+
+    private static int FsbMode(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            Span<byte> h = stackalloc byte[28];
+            if (fs.Read(h) < 28) return -1;
+            if (h[0] != (byte) 'F' || h[1] != (byte) 'S' || h[2] != (byte) 'B' || h[3] != (byte) '5') return -1;
+            var mode = (int) BinaryPrimitives.ReadUInt32LittleEndian(h.Slice(0x18));
+            return mode == 15 || mode == 16 ? mode : -1;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private static (byte[] Header, FevBank.DataRef Ref, long Frames, int SampleRate)? TryPassthrough(string? src, int targetMode)
+    {
+        if (!IsFsbSource(src) || FsbMode(src!) != targetMode)
+        {
+            return null;
+        }
+
+        var region = ReadFsb5HeaderRegion(src!);
+        var (_, clay) = Fsb5.ReadLayout(region);
+        if (clay.Count < 1)
+        {
+            throw new InvalidOperationException($"imported .fsb has no subsounds for passthrough");
+        }
+
+        var c = clay[0];
+        var shs = (int) BinaryPrimitives.ReadUInt32LittleEndian(region.AsSpan(12));
+        var ns = (int) BinaryPrimitives.ReadUInt32LittleEndian(region.AsSpan(16));
+
+        return (c.Header, new FevBank.DataRef(src!, 60 + shs + ns + c.DataOff, c.DataLen), c.Frames, c.SampleRate);
     }
 
 

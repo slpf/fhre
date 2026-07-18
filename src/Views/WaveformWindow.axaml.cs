@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.Data;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using FH6RB;
 using FH6RB.Assets;
@@ -26,6 +27,9 @@ public partial class WaveformWindow : Window
     private double _loopStart;
     private double _loopEnd;
     private double _dropStartSec = -1;
+    private double _anchorSec;
+    private long _anchorTicks;
+    private bool _clockRunning;
     private readonly HashSet<Key> _down = [];
     private MarkerField? _hoverField;
     private bool _shiftHeld;
@@ -46,7 +50,7 @@ public partial class WaveformWindow : Window
     {
         InitializeComponent();
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(20) };
         _timer.Tick += OnTick;
 
         Wave.SeekRequested += OnSeek;
@@ -115,6 +119,23 @@ public partial class WaveformWindow : Window
 
     private double EffectiveEndSec(double total) => RegionEndSec >= total ? total : RegionEndSec;
 
+    private void SetClockAnchor(double sec, bool running)
+    {
+        _anchorSec = sec;
+        _anchorTicks = Stopwatch.GetTimestamp();
+        _clockRunning = running;
+    }
+
+    private double ElapsedSinceAnchor()
+    {
+        if (!_clockRunning)
+        {
+            return _anchorSec;
+        }
+
+        return _anchorSec + (Stopwatch.GetTimestamp() - _anchorTicks) / (double) Stopwatch.Frequency;
+    }
+
     private void OnSetFromPlayhead(object? sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: MarkerField field } || field.SampleRate <= 0)
@@ -138,8 +159,7 @@ public partial class WaveformWindow : Window
         }
 
         _looping = loop;
-        _player.Play(wav, 0);
-        _player.Position = TimeSpan.FromSeconds(Math.Max(0, fromSec));
+        _player.Play(wav, 0, Math.Max(0, fromSec));
         if (loop)
         {
             _player.SetLoop(_loopStart, _loopEnd);
@@ -150,6 +170,7 @@ public partial class WaveformWindow : Window
         }
 
         _headSec = fromSec;
+        SetClockAnchor(fromSec, running: true);
         _timer.Start();
         UpdateUi();
     }
@@ -160,6 +181,7 @@ public partial class WaveformWindow : Window
         _dropStartSec = -1;
         _player.Stop();
         _headSec = _startSec;
+        SetClockAnchor(_startSec, running: false);
         UpdateUi();
     }
 
@@ -169,6 +191,7 @@ public partial class WaveformWindow : Window
 
         if (_player.IsPlaying)
         {
+            SetClockAnchor(_headSec, running: true);
             _timer.Start();
         }
 
@@ -182,11 +205,17 @@ public partial class WaveformWindow : Window
             return;
         }
 
+        var wasPlaying = _player.IsPlaying;
         _player.TogglePause();
 
         if (_player.IsPlaying)
         {
+            SetClockAnchor(_headSec, running: true);
             _timer.Start();
+        }
+        else if (wasPlaying)
+        {
+            SetClockAnchor(ElapsedSinceAnchor(), running: false);
         }
 
         UpdateUi();
@@ -314,24 +343,8 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        // MarkerField? postDrop = null;
-        // if (start.Name == "PostRaceLoopStart")
-        // {
-        //     foreach (var m in Vm.AllMarkers)
-        //     {
-        //         if (m.Name == "PostDrop")
-        //         {
-        //             postDrop = m;
-        //             break;
-        //         }
-        //     }
-        // }
-
         var rate = Vm.SampleRate;
         var auto = Vm.Settings?.LoopAutoTune ?? true;
-        // var role = start.Name == "PostRaceLoopStart" ? LoopRole.Post
-        //     : start.Name == "TrackLoopStart" ? LoopRole.Track
-        //     : LoopRole.Generic;
         var role = LoopRole.Generic;
         var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.80);
 
@@ -740,6 +753,7 @@ public partial class WaveformWindow : Window
             _player.Position = TimeSpan.FromSeconds(target);
         }
 
+        SetClockAnchor(target, _player.IsPlaying);
         UpdateUi();
     }
 
@@ -796,6 +810,7 @@ public partial class WaveformWindow : Window
             _player.Position = TimeSpan.FromSeconds(target);
         }
 
+        SetClockAnchor(target, _player.IsPlaying);
         UpdateUi();
     }
 
@@ -803,13 +818,19 @@ public partial class WaveformWindow : Window
     {
         if (_player.HasMedia && _player.IsPlaying)
         {
-            var currentPos = _player.Position.TotalSeconds;
+            var currentPos = ElapsedSinceAnchor();
 
             if (_dropStartSec >= 0 && currentPos >= _loopEnd)
             {
                 _dropStartSec = -1;
                 _looping = true;
                 _player.SetLoop(_loopStart, _loopEnd);
+                SetClockAnchor(_loopStart, running: true);
+            }
+            else if (_looping && _loopEnd > _loopStart && currentPos >= _loopEnd)
+            {
+                var span = _loopEnd - _loopStart;
+                SetClockAnchor(_loopStart + ((currentPos - _loopStart) % span), running: true);
             }
             else if (!_looping && currentPos >= RegionEndSec)
             {
@@ -831,7 +852,7 @@ public partial class WaveformWindow : Window
 
         if (_player.HasMedia)
         {
-            _headSec = _player.Position.TotalSeconds;
+            _headSec = ElapsedSinceAnchor();
             var dur = _player.Duration.TotalSeconds;
 
             if (dur > 0)
@@ -910,14 +931,14 @@ public partial class WaveformWindow : Window
             FH6RB.Services.Log.Line("Preset load: no markers to apply (CanEditMarkers=false)");
             return;
         }
-        var name = await MarkerPresetLoadDialog.ShowAsync(this);
-        if (string.IsNullOrWhiteSpace(name)) return;
+        var rel = await MarkerPresetLoadDialog.ShowAsync(this);
+        if (string.IsNullOrWhiteSpace(rel)) return;
 
-        var preset = MarkerPresetService.Load(name!);
+        var preset = MarkerPresetService.LoadByPath(rel!);
         if (preset is null) return;
 
-        var hits = Vm.ApplyMarkerPositions(preset.Markers);
-        FH6RB.Services.Log.Line($"Preset loaded: {name} ({hits} markers updated)");
+        var hits = Vm.ApplyMarkerPositions(preset.Markers, preset.SampleRate);
+        FH6RB.Services.Log.Line($"Preset loaded: {rel} ({hits} markers updated)");
     }
 
     private TextBox? _ctxField;
@@ -1037,8 +1058,15 @@ public partial class WaveformWindow : Window
         }
     }
 
-    private void OnSave(object? sender, RoutedEventArgs e)
+    private async void OnSave(object? sender, RoutedEventArgs e)
     {
+        var errors = Vm.ValidateMarkers();
+        if (errors.Count > 0)
+        {
+            await MessageDialog.ShowAsync(this, Str.DlgMarkerValidationTitle, string.Join("\n", errors));
+            return;
+        }
+
         Saved = true;
         Close();
     }

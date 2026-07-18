@@ -1,0 +1,67 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
+        x:Class="FH6RB.Views.ExportSelectionWindow"
+        x:DataType="vm:ExportSelectionWindowViewModel"
+        Width="580" MaxHeight="760"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        Title="{x:Static assets:Str.TitleExport}"
+        SizeToContent="Height">
+
+    <Grid RowDefinitions="*,Auto">
+        <StackPanel Margin="16" Spacing="10">
+            <TextBlock Classes="lbl" Text="{x:Static assets:Str.LblExportName}" VerticalAlignment="Center" Margin="12,0"/>
+            <TextBox Classes="field" Text="{Binding FileName}" Margin="0" />
+            
+            <TextBlock Text="{x:Static assets:Str.DlgExportIntro}" Foreground="{DynamicResource TxtMute}"
+                       FontSize="12.5" TextWrapping="Wrap" Margin="12,8, 0, 0"/>
+
+            <Grid ColumnDefinitions="Auto,*">
+                <CheckBox IsThreeState="True" Margin="12,0" Padding="16, 0 ,0, 0"
+                          IsChecked="{Binding SelectAllState, Mode=OneWay}"
+                          Click="OnToggleAll" Content="{x:Static assets:Str.DlgExportSelectAll}"/>
+            
+                <TextBlock Grid.Column="1" Text="{Binding SelectedCount, StringFormat='{}{0} selected'}"
+                           HorizontalAlignment="Right" Foreground="{DynamicResource TxtMute}" 
+                           FontSize="12.5" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            </Grid>
+            
+            <Border Background="{DynamicResource BgInput}" Padding="12, 10, 0, 12"
+                    BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+                <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Rows}" Margin="0,2,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="vm:ExportRow">
+                                <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="0,8" Margin="0, 0 , 12,0">
+                                    <Grid ColumnDefinitions="Auto, Auto, Auto, Auto">
+                                        <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" VerticalAlignment="Center"/>
+                                        <Border Grid.Column="1" Width="1" Height="16" Margin="0,0,8,0" Background="{DynamicResource Line}"/>
+                                        <TextBlock Grid.Column="2" Text="{Binding Track.Title}" FontSize="13" VerticalAlignment="Center"
+                                                   TextAlignment="Left" MaxWidth="290" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                        <TextBlock Grid.Column="3" Text="{Binding Track.Artist}" FontSize="11.5" VerticalAlignment="Center"
+                                                   TextAlignment="Left" Foreground="{DynamicResource TxtMute}" IsVisible="{Binding Track.HasArtist}"
+                                                   MaxWidth="180" TextTrimming="CharacterEllipsis"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+        </StackPanel>
+
+        <Border Grid.Row="1" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}" MinWidth="85"/>
+                    <Button Classes="big primary" Click="OnExport" Content="{x:Static assets:Str.BtnExport}"
+                            IsEnabled="{Binding HasAny}" MinWidth="85"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -299,4 +299,26 @@ public sealed class Fsb5
 
         return outBuf;
     }
+
+    public static byte[] BuildSingleSample(byte[] header60, Fsb5Sample sample)
+    {
+        var headersLen = sample.Header.Length;
+        var pad = (0x20 - (sample.Data.Length % 0x20)) % 0x20;
+        var dataLen = sample.Data.Length + pad;
+        var total = checked((int)(HeaderSize + headersLen + dataLen));
+
+        var outBuf = new byte[total];
+        header60.AsSpan(0, HeaderSize).CopyTo(outBuf);
+        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(8), 1u);
+        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(12), (uint) headersLen);
+        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(16), 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(20), (uint) dataLen);
+
+        var hPos = HeaderSize;
+        var dPos = HeaderSize + headersLen;
+        RebaseOffsetInto(sample.Header, 0, outBuf.AsSpan(hPos, sample.Header.Length));
+        sample.Data.CopyTo(outBuf.AsSpan(dPos));
+
+        return outBuf;
+    }
 }

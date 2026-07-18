@@ -1,16 +1,15 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.SettingsWindow"
         x:DataType="vm:SettingsWindowViewModel"
-        Width="520" Height="430"
+        Width="520"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
+        SizeToContent="Height"
         Background="{DynamicResource Bg1}"
-        Title="{x:Static assets:Str.TitleSettings}"
-        SizeToContent="Height">
+        Title="{x:Static assets:Str.TitleSettings}">
 
     <Grid RowDefinitions="*,Auto">
         <StackPanel MaxWidth="480" HorizontalAlignment="Stretch" Margin="16">
@@ -66,6 +65,22 @@
                     </StackPanel>
                 </Border>
 
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecQuality}" Margin="12,24,0,8"/>
+                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                        BorderThickness="1" CornerRadius="8" Padding="12">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblVorbisQuality}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding VorbisQualityText}" Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="30" Maximum="100" Value="{Binding VorbisQuality}"
+                                TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
+                        <TextBlock Text="{x:Static assets:Str.HintQuality}"
+                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
                 <TextBlock Classes="sect" Text="{x:Static assets:Str.SecEncoding}" Margin="12,24,0,8"/>
                 <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
                         BorderThickness="1" CornerRadius="8" Padding="12">
@@ -81,21 +96,6 @@
                                    Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
-
-                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecBackups}" Margin="12,24,0,8"/>
-                
-                
-                <TextBlock Text="{x:Static assets:Str.NoBackups}" Foreground="{DynamicResource TxtFaint}" Margin="12 0 0 0"
-                           FontSize="12" FontStyle="Italic" IsVisible="{Binding !CardVisible}"/>
-                
-                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding CardVisible}">
-                    <Border Grid.Column="0" Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                                           BorderThickness="1" CornerRadius="8" Padding="12">
-                        <TextBlock Text="{Binding BackupLine}" Foreground="{DynamicResource TxtMute}" FontSize="12" TextWrapping="Wrap"/>
-                    </Border>
-                    <Button Grid.Column="1" Classes="big" Width="90" Click="OnRestore" Content="{x:Static assets:Str.BtnRestore}" Margin="8, 0, 0, 0"
-                            IsVisible="{Binding CanRestore}" ToolTip.Tip="{x:Static assets:Str.TipBackupRestore}" HorizontalContentAlignment="Center"/>
-                </Grid>
             </StackPanel>
         </StackPanel>
 

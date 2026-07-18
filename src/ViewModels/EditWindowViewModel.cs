@@ -195,6 +195,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
         (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostDrop", "PostRaceLoopStart", "PostRaceLoopEnd"]),
     ];
 
+    public static readonly HashSet<string> EditorMarkerNames = new(Schema.SelectMany(s => s.Names));
+
     private static readonly Dictionary<string, string> Descriptions = new()
     {
         ["TrackStart"] = Str.MkTrackStart,
@@ -280,17 +282,20 @@ public sealed partial class EditWindowViewModel : ObservableObject
         }
     }
 
-    public int ApplyMarkerPositions(IReadOnlyDictionary<string, long> positions)
+    public int ApplyMarkerPositions(IReadOnlyDictionary<string, long> positions, int presetSampleRate = 0)
     {
         if (!CanEditMarkers) return 0;
-        var max = SampleLength;
+        var max = SampleLength - 1;
         var hits = 0;
+        var scale = presetSampleRate > 0 && presetSampleRate != SampleRate
+            ? (double)SampleRate / presetSampleRate
+            : 1.0;
         foreach (var f in AllMarkers)
         {
             if (positions.TryGetValue(f.Name, out var p))
             {
-                var clamped = Math.Max(0, Math.Min(p, max));
-                f.Position = clamped;
+                var scaled = scale != 1.0 ? (long)Math.Round(p * scale) : p;
+                f.Position = Math.Max(0, Math.Min(scaled, max));
                 hits++;
             }
         }
@@ -310,6 +315,40 @@ public sealed partial class EditWindowViewModel : ObservableObject
     public string GainText => $"{(GainDb > 0 ? "+" : "")}{GainDb:0.0} dB";
 
     partial void OnGainDbChanged(double value) => OnPropertyChanged(nameof(GainText));
+
+    public IReadOnlyList<string> ValidateMarkers()
+    {
+        var errors = new List<string>();
+        long Pos(string name) => AllMarkers.FirstOrDefault(f => f.Name == name)?.Position ?? -1;
+
+        var tls = Pos("TrackLoopStart");
+        var tle = Pos("TrackLoopEnd");
+        if (tls >= 0 && tle >= 0 && tls >= tle)
+        {
+            errors.Add(Str.ErrTrackLoopOrder);
+        }
+
+        var prls = Pos("PostRaceLoopStart");
+        var prle = Pos("PostRaceLoopEnd");
+        if (prls >= 0 && prle >= 0 && prls >= prle)
+        {
+            errors.Add(Str.ErrPostRaceLoopOrder);
+        }
+
+        var td = Pos("TrackDrop");
+        if (td >= 0 && tle >= 0 && td > tle)
+        {
+            errors.Add(Str.ErrTrackDropAfterLoop);
+        }
+
+        var pd = Pos("PostDrop");
+        if (pd >= 0 && prle >= 0 && pd > prle)
+        {
+            errors.Add(Str.ErrPostDropAfterLoop);
+        }
+
+        return errors;
+    }
 
     public void Apply(TrackItemViewModel track)
     {

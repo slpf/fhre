@@ -20,9 +20,12 @@
     <Setter Property="Padding" Value="18,10"/>
     <Setter Property="FontWeight" Value="SemiBold"/>
     <Setter Property="FontSize" Value="13.5"/>
-    <Setter Property="VerticalAlignment" Value="Center"></Setter>
-    <Setter Property="HorizontalAlignment" Value="Center"></Setter>
+    <Setter Property="VerticalAlignment" Value="Center"/>
+    <Setter Property="HorizontalAlignment" Value="Center"/>
+    <Setter Property="MinWidth" Value="85"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
   </Style>
+  
   <Style Selector="Button.big:pointerover /template/ ContentPresenter">
     <Setter Property="Background" Value="{DynamicResource BgHover}"/>
   </Style>
@@ -127,7 +130,7 @@
     <Setter Property="BorderThickness" Value="1"/>
     <Setter Property="CornerRadius" Value="6"/>
     <Setter Property="Padding" Value="12,10"/>
-    <Setter Property="Margin" Value="0,0,0,4"/>
+    <Setter Property="Margin" Value="0,0,8,4"/>
   </Style>
   
   <Style Selector="TextBlock.sect">
@@ -212,27 +215,50 @@
     <Setter Property="Background" Value="Transparent"/>
   </Style>
   
-  <!-- <Style Selector="ScrollBar:vertical[IsExpanded=true] /template/ Thumb"> -->
-  <!--   <Setter Property="RenderTransform" -->
-  <!--           Value="{DynamicResource VerticalSmallScrollThumbScaleTransform}"/> -->
-  <!--   <Setter Property="Background" -->
-  <!--           Value="{DynamicResource ScrollBarPanningThumbBackground}"/> -->
-  <!-- </Style> -->
-  <!-- <Style Selector="ScrollBar:horizontal[IsExpanded=true] /template/ Thumb"> -->
-  <!--   <Setter Property="RenderTransform" -->
-  <!--           Value="{DynamicResource HorizontalSmallScrollThumbScaleTransform}"/> -->
-  <!--   <Setter Property="Background" -->
-  <!--           Value="{DynamicResource ScrollBarPanningThumbBackground}"/> -->
-  <!-- </Style> -->
-  <!-- <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect"> -->
-  <!--   <Setter Property="Opacity" Value="0"/> -->
-  <!-- </Style> -->
-  <!-- <Style Selector="ScrollBar[IsExpanded=true] /template/ RepeatButton"> -->
-  <!--   <Setter Property="Opacity" Value="0"/> -->
-  <!-- </Style> -->
-  <!-- <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root"> -->
-  <!--   <Setter Property="Background" Value="Transparent"/> -->
-  <!-- </Style> -->
+  <Style Selector="ScrollBar">
+    <Style.Resources>
+      <SolidColorBrush x:Key="ScrollBarBackground" Color="Transparent"/>
+      <SolidColorBrush x:Key="ScrollBarBackgroundPointerOver" Color="Transparent"/>
+      <SolidColorBrush x:Key="ScrollBarTrackFill" Color="Transparent"/>
+      <SolidColorBrush x:Key="ScrollBarTrackFillPointerOver" Color="Transparent"/>
+      <SolidColorBrush x:Key="ScrollBarThumbBackgroundColor" Color="#3a3d44"/>
+      <SolidColorBrush x:Key="ScrollBarPanningThumbBackground" Color="#3a3d44"/>
+      <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#5a5f68"/>
+      <SolidColorBrush x:Key="ScrollBarThumbFillPressed" Color="#f5356c"/>
+      <x:Double x:Key="ScrollBarSize">12</x:Double>
+    </Style.Resources>
+  </Style>
+
+  <Style Selector="ScrollBar /template/ Grid#Root">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ScrollBar /template/ Rectangle#TrackRect">
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+  <Style Selector="ScrollBar /template/ RepeatButton#PART_LineUpButton">
+    <Setter Property="IsHitTestVisible" Value="False"/>
+  </Style>
+  <Style Selector="ScrollBar /template/ RepeatButton#PART_LineDownButton">
+    <Setter Property="IsHitTestVisible" Value="False"/>
+  </Style>
+
+  <Style Selector="ScrollBar:vertical /template/ Thumb">
+    <Setter Property="Width" Value="4"/>
+    <Setter Property="CornerRadius" Value="2"/>
+    <Setter Property="RenderTransform">
+      <TranslateTransform X="-1" Y="0"/>
+    </Setter>
+  </Style>
+
+  <Style Selector="ScrollBar[IsExpanded=true] /template/ RepeatButton">
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+  <Style Selector="ScrollBar[IsExpanded=true] /template/ Rectangle#TrackRect">
+    <Setter Property="Opacity" Value="0"/>
+  </Style>
+  <Style Selector="ScrollBar[IsExpanded=true] /template/ Grid#Root">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
   
   <Style Selector=":is(Control).spin">
     <Setter Property="RenderTransformOrigin" Value="50%,50%"/>
@@ -358,10 +384,7 @@
   <Style Selector="Slider.loudness:pressed /template/ Thumb">
     <Setter Property="Background" Value="{DynamicResource AccentLo}"/>
   </Style>
-
-  <!-- Disabled state for controls inside gated Manual cards. Without these, the
-       custom template still renders at full opacity and accent color, making it
-       hard to see that the controls are blocked behind the Auto toggle. -->
+  
   <Style Selector="Slider.loudness:disabled">
     <Setter Property="Opacity" Value="0.4"/>
   </Style>
@@ -377,8 +400,107 @@
     <Setter Property="Opacity" Value="0.4"/>
   </Style>
 
-  <!-- Dim text labels inside disabled cards (hints, captions, value chips). -->
+  <Style Selector="ToggleSwitch">
+    <Style.Resources>
+      <SolidColorBrush x:Key="ToggleSwitchFillOn" Color="#f5356c"/>
+      <SolidColorBrush x:Key="ToggleSwitchFillOnPointerOver" Color="#cf2057"/>
+      <SolidColorBrush x:Key="ToggleSwitchFillOnPressed" Color="#cf2057"/>
+      <SolidColorBrush x:Key="ToggleSwitchFillOnDisabled" Color="#f5356c"/>
+      <SolidColorBrush x:Key="ToggleSwitchStrokeOn" Color="#f5356c"/>
+      <SolidColorBrush x:Key="ToggleSwitchStrokeOnPointerOver" Color="#cf2057"/>
+      <SolidColorBrush x:Key="ToggleSwitchStrokeOnPressed" Color="#cf2057"/>
+      <SolidColorBrush x:Key="ToggleSwitchStrokeOnDisabled" Color="#f5356c"/>
+    </Style.Resources>
+  </Style>
+
   <Style Selector="Border[IsEnabled=False] TextBlock">
     <Setter Property="Foreground" Value="{DynamicResource TxtFaint}"/>
+  </Style>
+
+  <Style Selector="CheckBox">
+    <Style.Resources>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillChecked" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPointerOver" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedPressed" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillCheckedDisabled" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPointerOver" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedPressed" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeCheckedDisabled" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundChecked" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPointerOver" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedPressed" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundCheckedDisabled" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillIndeterminate" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillIndeterminatePointerOver" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillIndeterminatePressed" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundFillIndeterminateDisabled" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminate" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePointerOver" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminatePressed" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckBackgroundStrokeIndeterminateDisabled" Color="#f5356c"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminate" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminatePointerOver" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminatePressed" Color="White"/>
+      <SolidColorBrush x:Key="CheckBoxCheckGlyphForegroundIndeterminateDisabled" Color="White"/>
+    </Style.Resources>
+  </Style>
+  
+  <Style Selector="ComboBox /template/ Popup#PART_Popup">
+    <Setter Property="Placement" Value="AnchorAndGravity"/>
+    <Setter Property="PlacementAnchor" Value="BottomRight"/>
+    <Setter Property="PlacementGravity" Value="BottomLeft"/>
+    <Setter Property="VerticalOffset" Value="4"/>
+  </Style>
+
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+  </Style>
+
+  <Style Selector="ListBoxItem">
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Margin" Value="0"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Cursor" Value="Arrow"/>
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+
+  <Style Selector="ListBoxItem:pointerover">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:pressed">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected:pointerover">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selectedunfocused">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+
+  <Style Selector="ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderBrush" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+  </Style>
+  <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:pressed /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selected:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
+  </Style>
+  <Style Selector="ListBoxItem:selectedunfocused /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="Transparent"/>
   </Style>
 </Styles>

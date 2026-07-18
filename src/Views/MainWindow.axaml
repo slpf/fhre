@@ -3,6 +3,7 @@
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:svc="using:FH6RB.Services"
         xmlns:cv="using:FH6RB.Converters"
+        xmlns:controls="using:FH6RB.Controls"
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
@@ -42,47 +43,46 @@
                     <ComboBox Width="100" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}"/>
                 </StackPanel>
                 
-                <Grid Grid.Column="3" ColumnDefinitions="Auto, Auto, *, Auto, Auto, Auto" VerticalAlignment="Bottom">
-                    <Button Grid.Column="0" Classes="act" Click="OnSaveBackup" ToolTip.Tip="{x:Static assets:Str.TipSaveBackup}"
-                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_save.png" Width="17" Height="17"
+                <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Bottom" Spacing="6">
+                    <controls:SearchBox VerticalAlignment="Center"
+                                        SearchText="{Binding SearchText}"/>
+
+                    <Button Classes="act" Width="32" Height="32" VerticalAlignment="Center"
+                            Background="{DynamicResource BgInput}"
+                            ToolTip.Tip="{x:Static assets:Str.TipMenu}">
+                        <Image Source="avares://FH6RB/Assets/icons/icon_more.png" Width="16" Height="16"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        <Button.Flyout>
+                            <MenuFlyout VerticalOffset="4" Placement="BottomEdgeAlignedRight">
+                                <MenuItem Header="{x:Static assets:Str.MenuRestoreStation}" Click="OnRestoreStation"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuRestoreAll}" Click="OnRestoreAllStations"
+                                          IsEnabled="{Binding CanRestoreAll}"/>
+                                <Separator/>
+                                <MenuItem Header="{x:Static assets:Str.MenuSaveBackup}" Click="OnSaveBackup"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuLoadBackup}" Click="OnBackups"/>
+                                <Separator/>
+                                <MenuItem Header="{x:Static assets:Str.MenuExport}" Click="OnExport"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuImport}" Click="OnImport"/>
+                                <Separator/>
+                                <MenuItem Header="{x:Static assets:Str.MenuSaveAllMarkers}" Click="OnSaveAllMarkers"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuResetMarkers}" Click="OnResetAllMarkers"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuMarkerSettings}" Click="OnMarkerDefaults"/>
+                                <Separator/>
+                                <MenuItem Header="{x:Static assets:Str.MenuSettings}" Click="OnSettings"/>
+                            </MenuFlyout>
+                        </Button.Flyout>
                     </Button>
-                    <Button Grid.Column="1" Classes="act" Click="OnBackups" ToolTip.Tip="{x:Static assets:Str.TipBackups}"
-                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_backups.png" Width="20" Height="20"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Button>
-                    <Button Grid.Column="2" HorizontalAlignment="Left" Classes="act" Click="OnRestoreStation"
-                            ToolTip.Tip="{x:Static assets:Str.TipRestoreStation}"
-                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_revert.png" Width="28" Height="28"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Button>
-                    <Button Grid.Column="3" Classes="act" Click="OnResetAllMarkers" ToolTip.Tip="{x:Static assets:Str.TipResetAllMarkers}"
-                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_pin_reset.png" Width="18" Height="18"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Button>
-                    <Button Grid.Column="4" Classes="act" Click="OnMarkerDefaults" ToolTip.Tip="{x:Static assets:Str.TipMarkerDefaults}"
-                            Width="32" Height="32" Background="{DynamicResource BgInput}" Margin="0,0,6,0">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_pin_settings.png" Width="18" Height="18"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Button>
-                    <Button Grid.Column="5" Classes="act" Click="OnSettings" ToolTip.Tip="{x:Static assets:Str.TipSettings}"
-                            Width="32" Height="32" Background="{DynamicResource BgInput}">
-                        <Image Source="avares://FH6RB/Assets/icons/icon_settings.png" Width="28" Height="28"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Button>
-                </Grid>
+                </StackPanel>
             </Grid>
         </Border>
         
         <Grid Grid.Row="1" ClipToBounds="True">
-            <ScrollViewer ClipToBounds="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <Border Padding="10,10,14,6">
-                    <ItemsControl ItemsSource="{Binding Tracks}">
-                        <ItemsControl.ItemTemplate>
+            <Border Padding="10,10,0,6">
+                <ListBox ItemsSource="{Binding FilteredTracks}" Background="Transparent"
+                         SelectionMode="Single" SelectionChanged="OnTracksSelectionChanged"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:TrackItemViewModel">
                                 <Border Classes="row">
                                     <Grid ColumnDefinitions="Auto,*,Auto">
@@ -155,6 +155,12 @@
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center"/>
                                             </Button>
+                                            <Button Classes="act" IsVisible="{Binding CanRestoreDefault}"
+                                                    ToolTip.Tip="{x:Static assets:Str.TipRestoreTrack}"
+                                                    Click="OnRestoreDefault" Tag="{Binding}">
+                                                <Image Source="avares://FH6RB/Assets/icons/icon_revert.png" Width="26" Height="26"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Button>
                                             <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipReplaceAudio}" Click="OnReplace" Tag="{Binding}"
                                                     IsVisible="{Binding CanReplace}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="24" Height="24"
@@ -186,11 +192,10 @@
                                     </Grid>
                                 </Border>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </Border>
-            </ScrollViewer>
-            
+
             <Border IsVisible="{Binding IsLoading}" Background="{DynamicResource Bg1}">
                 <TextBlock Text="{x:Static assets:Str.Loading}" Foreground="{DynamicResource TxtMute}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
@@ -212,7 +217,7 @@
                       VerticalAlignment="Center" IsVisible="{Binding TransportVisible}" 
                       MaxWidth="550" Width="550" Height="48" MaxHeight="48">
 
-                    <Button Grid.Column="0" Classes="big" Width="48" Height="48" VerticalAlignment="Center"
+                    <Button Grid.Column="0" Classes="big" Width="48" Height="48" MinWidth="48" VerticalAlignment="Center"
                             Command="{Binding TogglePlayCommand}" ToolTip.Tip="{x:Static assets:Str.TipPlayPause}"
                             Margin="0 0 16 0">
                         <Panel>
@@ -246,7 +251,7 @@
                         </Grid>
                     </StackPanel>
 
-                    <Button Grid.Column="2" Classes="big" Width="48" Height="48" VerticalAlignment="Center"
+                    <Button Grid.Column="2" Classes="big" Width="48" Height="48" MinWidth="48" VerticalAlignment="Center"
                             Click="OnTransportEdit" ToolTip.Tip="{x:Static assets:Str.TipEdit}" Margin="16 0 0 0">
                         <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
                                HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -283,7 +288,7 @@
                        HorizontalAlignment="Center" VerticalAlignment="Center"
                        RenderTransformOrigin="50%,50%" Classes.spin="{Binding IsBusy}"/>
                 <StackPanel Spacing="4">
-                    <TextBlock Text="{Binding Status}" Foreground="{DynamicResource Header}" FontSize="14"
+                    <TextBlock Text="{Binding BusyText}" Foreground="{DynamicResource Header}" FontSize="14"
                                HorizontalAlignment="Center" TextAlignment="Center"/>
                     <TextBlock Text="{Binding StatusDetail}" Foreground="{DynamicResource TxtMute}" FontSize="13"
                                FontFamily="{DynamicResource MonoFont}" HorizontalAlignment="Center" TextAlignment="Center"

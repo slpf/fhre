@@ -11,7 +11,7 @@ public static class MarkerDefaults
         ("TrackStart", "0%"),
         ("End", "100%"),
         ("DJStart", "-5"),
-        ("DJDrop", "0%"),
+        ("DJDrop", "15"),
         ("DJSegment", "60%"),
         ("TrackDrop", "0%"),
         ("TrackLoopStart", "0%"),

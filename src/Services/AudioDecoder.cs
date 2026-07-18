@@ -22,7 +22,6 @@ public static class AudioDecoder
         }
         catch
         {
-            // ignored
         }
     }
 
@@ -52,13 +51,11 @@ public static class AudioDecoder
                 }
                 catch
                 {
-                    // ignored
                 }
             }
         }
         catch
         {
-            // ignored
         }
     }
 
@@ -81,7 +78,7 @@ public static class AudioDecoder
         var filter = norm ? Loudnorm.Filter(source, s) : "";
         var af = filter.Length > 0 ? $"-af {filter} " : "";
 
-        var part = Path.Combine(Dir, key + ".part.wav");
+        var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
         try
         {
             Run(Tools.FfmpegPath,
@@ -110,7 +107,7 @@ public static class AudioDecoder
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
-        var part = Path.Combine(Dir, key + ".part.wav");
+        var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
         try
         {
             Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{part}\" \"{bankPath}\"", ct);

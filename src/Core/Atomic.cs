@@ -77,7 +77,6 @@ public static class Atomic
         }
         catch
         {
-            // ignore
         }
     }
 }

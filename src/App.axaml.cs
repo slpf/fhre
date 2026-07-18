@@ -11,12 +11,19 @@ namespace FH6RB;
 
 public partial class App : Application
 {
-    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+#if DEBUG
+        this.AttachDeveloperTools(); 
+#endif
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {
         WorkDirs.Clean();
         AudioDecoder.ClearAll();
+        TrackPack.CleanupImport();
         LoopFinder.ClearCache();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

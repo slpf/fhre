@@ -11,7 +11,7 @@ public partial class InputDialog : Window
         string? defaultValue = null)
     {
         var d = new InputDialog { Title = title };
-        d.Input.Watermark = watermark;
+        d.Input.PlaceholderText = watermark;
         if (!string.IsNullOrEmpty(defaultValue)) d.Input.Text = defaultValue;
         return await d.ShowDialog<string?>(owner);
     }

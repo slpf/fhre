@@ -17,39 +17,37 @@ public sealed class PlaybackService : IDisposable
 
     public TimeSpan Position
     {
-        get => _reader?.CurrentTime ?? TimeSpan.Zero;
+        get => _loop?.Position ?? TimeSpan.Zero;
         set
         {
-            if (_reader is null)
-            {
-                return;
-            }
-
-            if (_loop is null)
-            {
-                _reader.CurrentTime = value;
-                return;
-            }
-
-            _loop.ExecuteUnderLock(() => _reader.CurrentTime = value);
+            if (_loop is null || _reader is null) return;
+            _loop.RequestSeek((long)(value.TotalSeconds * _reader.WaveFormat.SampleRate));
         }
     }
 
     public TimeSpan Duration => _reader?.TotalTime ?? TimeSpan.Zero;
 
-    public void Play(string wavPath, double volumeDb)
+    public void Play(string wavPath, double volumeDb, double fromSec = 0)
     {
         Stop();
-        
+
         _reader = new AudioFileReader(wavPath)
         {
             Volume = Lin(volumeDb)
         };
-        
+
         _loop = new LoopSampleProvider(_reader);
-        _out = new WaveOutEvent { DesiredLatency = 100, NumberOfBuffers = 2 };
+        _out = new WaveOutEvent { DesiredLatency = 300, NumberOfBuffers = 3 };
         _out.PlaybackStopped += OnStopped;
         _out.Init(_loop);
+
+        if (fromSec > 0)
+        {
+            var wf = _reader.WaveFormat;
+            var block = wf.Channels * (wf.BitsPerSample / 8);
+            _reader.Position = Math.Clamp((long)(fromSec * wf.SampleRate) * block, 0, _reader.Length);
+        }
+
         _out.Play();
     }
 
@@ -72,12 +70,15 @@ public sealed class PlaybackService : IDisposable
 
     public void SetVolumeDb(double db)
     {
-        _reader?.Volume = Lin(db);
+        if (_reader is { } r)
+        {
+            r.Volume = Lin(db);
+        }
     }
 
     public void SetLoop(double startSec, double endSec)
     {
-        if (_reader is null || _loop is null)
+        if (_loop is null || _reader is null)
         {
             return;
         }
@@ -87,7 +88,7 @@ public sealed class PlaybackService : IDisposable
 
         long ToBytes(double sec)
         {
-            var frame = (long) Math.Round(sec * wf.SampleRate);
+            var frame = (long)Math.Round(sec * wf.SampleRate);
             return Math.Clamp(frame * block, 0, _reader.Length);
         }
 
@@ -105,16 +106,15 @@ public sealed class PlaybackService : IDisposable
 
         _stopping = true;
         _out.PlaybackStopped -= OnStopped;
-        
+
         try
         {
             _out.Stop();
         }
         catch
         {
-             // ignored
         }
-        
+
         _out.Dispose();
         _reader?.Dispose();
         _out = null;
@@ -131,32 +131,30 @@ public sealed class PlaybackService : IDisposable
         }
     }
 
+    private static float Lin(double db) => (float)Math.Pow(10, db / 20.0);
+
     private sealed class LoopSampleProvider : ISampleProvider
     {
         private readonly AudioFileReader _reader;
         private readonly object _gate = new();
         private bool _enabled;
-        private long _startBytes;
-        private long _endBytes;
-
-        public LoopSampleProvider(AudioFileReader reader) => _reader = reader;
+        private long _start;
+        private long _end;
+        private volatile bool _seekPending;
+        private long _seekPos;
 
         public WaveFormat WaveFormat => _reader.WaveFormat;
 
-        public void ExecuteUnderLock(Action action)
-        {
-            lock (_gate)
-            {
-                action();
-            }
-        }
+        public LoopSampleProvider(AudioFileReader reader) => _reader = reader;
+
+        public TimeSpan Position => _reader.CurrentTime;
 
         public void SetLoop(long startBytes, long endBytes)
         {
             lock (_gate)
             {
-                _startBytes = startBytes;
-                _endBytes = endBytes;
+                _start = startBytes;
+                _end = endBytes;
                 _enabled = endBytes > startBytes;
             }
         }
@@ -169,63 +167,65 @@ public sealed class PlaybackService : IDisposable
             }
         }
 
+        public void RequestSeek(long sampleFrame)
+        {
+            if (_reader.WaveFormat.SampleRate <= 0) return;
+            var block = _reader.WaveFormat.Channels * (_reader.WaveFormat.BitsPerSample / 8);
+            _seekPos = sampleFrame * block;
+            _seekPending = true;
+        }
+
         public int Read(float[] buffer, int offset, int count)
         {
+            if (_seekPending)
+            {
+                _reader.Position = Math.Clamp(_seekPos, 0, _reader.Length);
+                _seekPending = false;
+            }
+
+            bool enabled;
+            long start, end;
             lock (_gate)
             {
-                if (!_enabled)
-                {
-                    return _reader.Read(buffer, offset, count);
-                }
-
-                var bytesPerSample = _reader.WaveFormat.BitsPerSample / 8;
-                var read = 0;
-                var resets = 0;
-                while (read < count)
-                {
-                    if (_reader.Position >= _endBytes)
-                    {
-                        _reader.Position = _startBytes;
-                        if (++resets > 2)
-                        {
-                            break;
-                        }
-                    }
-
-                    var samplesToEnd = (int) ((_endBytes - _reader.Position) / bytesPerSample);
-                    if (samplesToEnd <= 0)
-                    {
-                        _reader.Position = _startBytes;
-                        if (++resets > 2)
-                        {
-                            break;
-                        }
-
-                        continue;
-                    }
-
-                    var toRead = Math.Min(count - read, samplesToEnd);
-                    var n = _reader.Read(buffer, offset + read, toRead);
-                    if (n == 0)
-                    {
-                        _reader.Position = _startBytes;
-                        if (++resets > 2)
-                        {
-                            break;
-                        }
-
-                        continue;
-                    }
-
-                    read += n;
-                }
-
-                return read;
+                enabled = _enabled;
+                start = _start;
+                end = _end;
             }
+
+            if (!enabled)
+            {
+                return _reader.Read(buffer, offset, count);
+            }
+
+            var bytesPerSample = _reader.WaveFormat.BitsPerSample / 8;
+            var read = 0;
+            while (read < count)
+            {
+                if (_reader.Position >= end)
+                {
+                    _reader.Position = start;
+                }
+
+                var samplesToEnd = (int)((end - _reader.Position) / bytesPerSample);
+                if (samplesToEnd <= 0)
+                {
+                    _reader.Position = start;
+                    continue;
+                }
+
+                var toRead = Math.Min(count - read, samplesToEnd);
+                var n = _reader.Read(buffer, offset + read, toRead);
+                if (n <= 0)
+                {
+                    break;
+                }
+
+                read += n;
+            }
+
+            return read;
         }
     }
-
-    private static float Lin(double db) => (float)Math.Pow(10, db / 20.0);
 
     public void Dispose() => Stop();
 }

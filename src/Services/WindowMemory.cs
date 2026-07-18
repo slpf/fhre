@@ -43,9 +43,9 @@ public static class WindowMemory
         {
             SettingsService.Save(settings);
         }
-        catch
+        catch (Exception ex)
         {
-            // ignored
+            Log.Line($"settings save failed (window memory '{key}'): {ex.Message}");
         }
     }
 }

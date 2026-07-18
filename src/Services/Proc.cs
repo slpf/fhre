@@ -56,7 +56,6 @@ public static class Proc
             }
             catch
             {
-                // ignore
             }
 
             ct.ThrowIfCancellationRequested();

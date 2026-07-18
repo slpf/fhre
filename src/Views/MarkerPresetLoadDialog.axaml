@@ -2,52 +2,116 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:assets="clr-namespace:FH6RB.Assets"
+        xmlns:controls="using:FH6RB.Controls"
         x:Class="FH6RB.Views.MarkerPresetLoadDialog"
         x:DataType="vm:MarkerPresetsViewModel"
-        Width="480" Height="480"
-        MinWidth="380" MinHeight="280"
+        Width="600" Height="614"
+        MinWidth="600" MinHeight="614"
+        MaxWidth="600" MaxHeight="614"
+        CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
-        Title="{x:Static assets:Str.PresetLoadTitle}">
+        Title="{x:Static assets:Str.MarkersLoadTitle}">
 
-    <Grid RowDefinitions="*,Auto">
-        <Panel Grid.Row="0">
-            <TextBlock Text="{x:Static assets:Str.PresetLoadEmpty}" IsVisible="{Binding !HasItems}"
+    <Grid RowDefinitions="Auto,*,Auto">
+        <Border Grid.Row="0" Background="{DynamicResource Bg2}" BorderBrush="{DynamicResource LineSoft}"
+                BorderThickness="0,0,0,1" Padding="12,10" Height="50" MaxHeight="50">
+            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                <Button Grid.Column="0" Classes="act" Width="32" Height="32" Margin="6,0,0,0"
+                        IsVisible="{Binding CanGoBack}" Click="OnBack"
+                        ToolTip.Tip="{x:Static assets:Str.MarkersBack}">
+                    <Image Source="avares://FH6RB/Assets/icons/icon_back.png" Width="18" Height="18"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Button>
+                <TextBlock Grid.Column="1" Text="{Binding CurrentFolder}" FontSize="14"
+                           FontWeight="SemiBold" Foreground="{DynamicResource Header}"
+                           VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="20, 0,0,0"/>
+                <controls:SearchBox Grid.Column="2" SearchText="{Binding Search, Mode=TwoWay}"
+                                    VerticalAlignment="Center" Margin="10,0,6,0"/>
+            </Grid>
+        </Border>
+
+        <Panel Grid.Row="1">
+            <TextBlock Text="{x:Static assets:Str.MarkersEmpty}" IsVisible="{Binding !HasItems}"
                        HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
                        TextWrapping="Wrap" MaxWidth="320"
                        Foreground="{DynamicResource TxtMute}" FontSize="13"/>
 
-            <ScrollViewer Margin="16" IsVisible="{Binding HasItems}"
+            <ScrollViewer Margin="16, 16, 0, 12" IsVisible="{Binding HasItems}"
                           HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding Items}">
+                <ItemsControl ItemsSource="{Binding Entries}">
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:MarkerPresetRow">
-                            <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                                    BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,10">
+                        <DataTemplate x:DataType="vm:MarkerEntry">
+                            <Panel>
+                            <Border Background="{DynamicResource Bg2}"
+                                    BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                                    CornerRadius="6" Padding="14,10" Margin="0,0,16,4"
+                                    PointerPressed="OnEntryPointerPressed"
+                                    Cursor="Hand" IsVisible="{Binding IsFolder}">
                                 <Grid ColumnDefinitions="*,Auto">
-                                    <StackPanel Grid.Column="0" Spacing="3" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource Header}" FontSize="14"
-                                                   TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding Meta}" Foreground="{DynamicResource TxtMute}"
-                                                   FontSize="11"/>
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10"
+                                                VerticalAlignment="Center">
+                                        <Image Source="avares://FH6RB/Assets/icons/icon_folder.png"
+                                               Width="16" Height="16" IsVisible="{Binding IsFolder}"
+                                               VerticalAlignment="Center"/>
+                                        <StackPanel Spacing="2" VerticalAlignment="Center"
+                                                    IsVisible="{Binding IsFolder}">
+                                            <TextBlock Text="{Binding Name}" FontSize="14"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource Header}"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
                                     </StackPanel>
+
+                                    <Button Grid.Column="1" Classes="act" Click="OnDeleteFolder" Tag="{Binding}"
+                                            IsVisible="{Binding IsFolder}" VerticalAlignment="Center"
+                                            ToolTip.Tip="{x:Static assets:Str.BtnDelete}">
+                                        <Image Source="avares://FH6RB/Assets/icons/icon_delete.png"
+                                               Width="20" Height="20"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <Border Background="{DynamicResource Bg2}"
+                                    BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                                    CornerRadius="6" Padding="14,10" Margin="0,0,16,4"
+                                    IsVisible="{Binding IsFile}">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource Header}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Meta}" FontSize="11"
+                                                   Foreground="{DynamicResource TxtMute}"/>
+                                    </StackPanel>
+
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                                                 VerticalAlignment="Center" Margin="12,0,0,0">
-                                        <Button Classes="big primary" Click="OnLoad" Tag="{Binding}"
-                                                Content="{x:Static assets:Str.BtnLoad}"/>
-                                        <Button Classes="big" Click="OnDelete" Tag="{Binding}"
-                                                Content="{x:Static assets:Str.BtnDelete}"/>
+                                        <Button Classes="act" Click="OnLoadFile" Tag="{Binding}"
+                                                ToolTip.Tip="{x:Static assets:Str.BtnLoad}">
+                                            <Image Source="avares://FH6RB/Assets/icons/icon_m_load2.png"
+                                                   Width="14" Height="14"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
+                                        <Button Classes="act" Click="OnDeleteFile" Tag="{Binding}"
+                                                ToolTip.Tip="{x:Static assets:Str.BtnDelete}">
+                                            <Image Source="avares://FH6RB/Assets/icons/icon_delete.png"
+                                                   Width="20" Height="20"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Button>
                                     </StackPanel>
                                 </Grid>
                             </Border>
+                            </Panel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </ScrollViewer>
         </Panel>
 
-        <Border Grid.Row="1" Background="{DynamicResource Bg2}" BorderBrush="{DynamicResource LineSoft}"
+        <Border Grid.Row="2" Background="{DynamicResource Bg2}" BorderBrush="{DynamicResource LineSoft}"
                 BorderThickness="0,1,0,0" Padding="20,13">
             <Button Classes="big" HorizontalAlignment="Right" Click="OnClose"
                     Content="{x:Static assets:Str.BtnClose}"/>

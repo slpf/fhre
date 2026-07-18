@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia.Threading;
 using FH6RB.Assets;
+using FH6RB.Collections;
 using FH6RB.Core;
 using FH6RB.Services;
 
@@ -12,6 +13,8 @@ public sealed record LangOption(string Code, string FileName)
 {
     public string Display => FileName == MainWindowViewModel.AllLanguagesFile ? Str.LangAll : FileName;
 }
+
+public enum RestoreResult { Ok, NoBackup, NotInBackup }
 
 public sealed partial class MainWindowViewModel : ObservableObject
 {
@@ -23,6 +26,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<StationInfo> Stations { get; } = [];
     public ObservableCollection<string> Variants { get; } = [];
     public ObservableCollection<TrackItemViewModel> Tracks { get; } = [];
+    public RangeObservableCollection<TrackItemViewModel> FilteredTracks { get; } = [];
 
     [ObservableProperty] private LangOption? _selectedLanguage;
     [ObservableProperty] private StationInfo? _selectedStation;
@@ -32,8 +36,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isAddingTracks;
     [ObservableProperty] private bool _isBackingUp;
     [ObservableProperty] private bool _isTesting;
+    [ObservableProperty] private bool _isExporting;
+    [ObservableProperty] private bool _isImporting;
 
-    public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting;
+    public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting || IsExporting || IsImporting;
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
 
@@ -49,10 +55,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
     partial void OnIsAddingTracksChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsBackingUpChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsTestingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsExportingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsImportingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(BusyText));
+    }
     public string? PendingErrorDialog { get; set; }
     public string? PendingDialogTitle { get; set; }
 
     [ObservableProperty] private string _status = "Ready.";
+
+    public string BusyText => IsImporting ? Str.Loading : Status;
+    partial void OnStatusChanged(string value) => OnPropertyChanged(nameof(BusyText));
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasStatusDetail))]
@@ -60,6 +75,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool HasStatusDetail => !string.IsNullOrEmpty(StatusDetail);
     [ObservableProperty] private string _countText = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSearch))]
+    [NotifyPropertyChangedFor(nameof(ShowClear))]
+    private string _searchText = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowClear))]
+    private bool _isSearchOpen;
+
+    public bool HasSearch => !string.IsNullOrWhiteSpace(SearchText);
+    public bool ShowClear => IsSearchOpen && HasSearch;
+
+    partial void OnSearchTextChanged(string value)
+    {
+        _searchDebounce.Stop();
+        _searchDebounce.Start();
+    }
 
     private RadioInfo? _radio;
     private string? _radioForFile;
@@ -71,14 +104,33 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly PlaybackService _player = new();
     private TrackItemViewModel? _nowPlaying;
     private string? _loadedBankPath;
+    public string? LoadedBankPath => _loadedBankPath;
+    public bool CanRestoreAll { get; private set; }
+    public long ProjectedTotalBytes => _projectedTotalBytes;
+
+    public async Task RefreshCanRestoreAllAsync()
+    {
+        var gamePath = Settings.GamePath;
+        var has = await Task.Run(() => GameScanner.IsValid(gamePath) && BackupService.Has(gamePath));
+        CanRestoreAll = has;
+        OnPropertyChanged(nameof(CanRestoreAll));
+    }
+
     private long _baseBankSize;
     private int _baseBankMode = 15;
     private long _projectedTotalBytes;
+    private bool _sizeIsApprox;
     private DispatcherTimer? _tick;
+    private readonly DispatcherTimer _searchDebounce;
+    private readonly DispatcherTimer _seekDebounce;
+    private double _pendingSeekSec;
     private int _playGen;
     private bool _suppressSeek;
 
     [ObservableProperty] private bool _transportVisible;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(TogglePlayCommand))]
+    private bool _isPreparingPlayback;
     [ObservableProperty] private bool _transportPlaying;
     [ObservableProperty] private string _nowTitle = "";
     [ObservableProperty] private string? _nowArtist;
@@ -102,6 +154,33 @@ public sealed partial class MainWindowViewModel : ObservableObject
             NowPositionText = Fmt(_player.Position);
             _suppressSeek = false;
         };
+
+        _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _searchDebounce.Tick += (_, _) => { _searchDebounce.Stop(); RefreshFilter(); };
+
+        Tracks.CollectionChanged += (_, _) => RefreshFilter();
+
+        _seekDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+        _seekDebounce.Tick += (_, _) =>
+        {
+            _seekDebounce.Stop();
+            if (_player.HasMedia)
+            {
+                _player.Position = TimeSpan.FromSeconds(_pendingSeekSec);
+            }
+        };
+
+        try
+        {
+            if (Directory.Exists(RestoreDir))
+            {
+                foreach (var f in Directory.EnumerateFiles(RestoreDir, "*.fsb"))
+                {
+                    try { File.Delete(f); } catch { }
+                }
+            }
+        }
+        catch { }
 
         ReloadFromGame();
     }
@@ -137,10 +216,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         SelectedLanguage = Languages.FirstOrDefault(l => l.FileName == Settings.LastLanguage)
-            ?? Languages.FirstOrDefault(l => l.FileName != AllLanguagesFile)
+            ?? Languages.FirstOrDefault(l => l.FileName == AllLanguagesFile)
             ?? Languages.FirstOrDefault();
 
         RebuildStations();
+        _ = RefreshCanRestoreAllAsync();
 
         SelectedStation = Stations.FirstOrDefault(s => s.Prefix == Settings.LastStationBank)
             ?? Stations.FirstOrDefault();
@@ -326,6 +406,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _baseBankSize = baseSize;
             _baseBankMode = baseMode;
             _projectedTotalBytes = baseSize;
+            _sizeIsApprox = false;
             Recount();
             HasUnsavedChanges = false;
 
@@ -397,7 +478,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var total = Tracks.Count;
         var custom = Tracks.Count(t => t.IsCustom);
         var on = Tracks.Count(t => t.Enabled);
-        CountText = $"{total} tracks · {custom} custom · {on} in playlist · {BankSize.Mb(_projectedTotalBytes)}";
+        var size = (_sizeIsApprox ? "~" : "") + BankSize.Mb(_projectedTotalBytes);
+        CountText = $"{total} tracks · {custom} custom · {on} in playlist · {size}";
     }
 
     public void RecalcProjectedSize()
@@ -410,18 +492,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (!IsProjectedNew(t)) continue;
             var dur = TrackDurationSeconds(t);
             if (dur <= 0) continue;
-            added += BankSize.EncodedBytes(dur, _baseBankMode);
+            added += BankSize.EncodedBytes(dur, _baseBankMode, Settings.VorbisQuality);
             n++;
         }
 
         _projectedTotalBytes = _baseBankSize + added;
+        _sizeIsApprox = n > 0;
         Log.Line($"projected bank size: {BankSize.Mb(_projectedTotalBytes)} total = base {BankSize.Mb(_baseBankSize)} + {BankSize.Mb(added)} over {n} new track(s)");
         Recount();
     }
 
     private static bool IsProjectedNew(TrackItemViewModel t)
     {
-        if (t.IsReplacing) return false;
         return t.IsCustom && t.SourcePath is not null;
     }
 
@@ -429,6 +511,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (t.PendingDurationSeconds is { } pd && pd > 0) return pd;
         return t.SampleRate > 0 && t.SampleLength > 0 ? t.SampleLength / (double)t.SampleRate : 0;
+    }
+
+    public void RefreshFilter()
+    {
+        var q = (SearchText ?? "").Trim();
+        FilteredTracks.Reset(q.Length == 0 ? Tracks : Tracks.Where(t => MatchesSearch(t, q)));
+    }
+
+    private static bool MatchesSearch(TrackItemViewModel t, string q)
+    {
+        if ((t.Title ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)) return true;
+        if ((t.Artist ?? "").Contains(q, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     public void ResetAllCustomMarkers()
@@ -469,6 +564,58 @@ public sealed partial class MainWindowViewModel : ObservableObject
             && Math.Abs(dj - ss - 1000) > 5000;
     }
 
+    public string? SaveAllMarkers()
+    {
+        if (SelectedStation is null || string.IsNullOrEmpty(SelectedVariant))
+        {
+            Status = Str.StatusMarkersNoBank;
+            return null;
+        }
+
+        var stamp = DateTime.Now.ToString("yyyy-MM-dd HHmmss");
+        var dir = $"{SelectedStation.Name} - {SelectedVariant} - {stamp}";
+        var saved = 0;
+
+        foreach (var t in Tracks)
+        {
+            if (t.Markers is not { Count: > 0 }) continue;
+
+            var filtered = new Dictionary<string, long>();
+            foreach (var kv in t.Markers)
+            {
+                if (kv.Value >= 0 && EditWindowViewModel.EditorMarkerNames.Contains(kv.Key))
+                {
+                    filtered[kv.Key] = kv.Value;
+                }
+            }
+
+            if (filtered.Count == 0) continue;
+
+            var fname = !string.IsNullOrWhiteSpace(t.Title) || !string.IsNullOrWhiteSpace(t.Artist)
+                ? $"{t.Title} - {t.Artist}"
+                : t.SoundName;
+
+            try
+            {
+                MarkerPresetService.SaveIn(dir, fname, t.SampleRate, filtered);
+                saved++;
+            }
+            catch (Exception ex)
+            {
+                Log.Line($"SaveAllMarkers: failed to save preset '{fname}': {ex.Message}");
+            }
+        }
+
+        if (saved == 0)
+        {
+            Status = Str.StatusMarkersNothingToSave;
+            return null;
+        }
+
+        Status = string.Format(Str.StatusMarkersSavedFmt, saved, dir);
+        return dir;
+    }
+
     public async Task<(float[]? Peaks, string? Wav)> LoadPeaksAsync(TrackItemViewModel track)
     {
         var bankPath = _loadedBankPath;
@@ -476,9 +623,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             try
             {
-                var wav = track.UsesFileSource
-                    ? AudioDecoder.DecodeAdded(track.FileSource!, Settings)
-                    : AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
+                string wav;
+                if (track.UsesFileSource)
+                {
+                    wav = track.IsFileSourceFsb
+                        ? AudioDecoder.DecodeBank(track.FileSource!, 0)
+                        : AudioDecoder.DecodeAdded(track.FileSource!, Settings);
+                }
+                else if (track.RestoreFsbPath is not null)
+                {
+                    wav = AudioDecoder.DecodeBank(track.RestoreFsbPath, 0);
+                }
+                else
+                {
+                    wav = AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
+                }
                 var peaks = WaveformService.Samples(wav);
 
                 if (track.UsesFileSource || track.SampleLength <= 0 || track.SampleRate <= 0)
@@ -517,7 +676,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         await StartAsync(track);
     }
 
-    [RelayCommand]
+    private bool CanTogglePlay => !IsPreparingPlayback;
+
+    [RelayCommand(CanExecute = nameof(CanTogglePlay))]
     private void TogglePlay()
     {
         if (_nowPlaying is null)
@@ -552,6 +713,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         _nowPlaying = track;
         track.PlayState = TrackPlayState.Loading;
+        IsPreparingPlayback = true;
         TransportVisible = true;
         TransportPlaying = false;
         NowTitle = track.Title;
@@ -563,16 +725,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var bankPath = _loadedBankPath;
-            var wav = await Task.Run(() => track.UsesFileSource
-                ? AudioDecoder.DecodeAdded(track.FileSource!, Settings)
-                : AudioDecoder.DecodeBank(bankPath!, track.SubIndex));
+            var wav = await Task.Run(() =>
+            {
+                if (track.UsesFileSource)
+                {
+                    return track.IsFileSourceFsb
+                        ? AudioDecoder.DecodeBank(track.FileSource!, 0)
+                        : AudioDecoder.DecodeAdded(track.FileSource!, Settings);
+                }
+                if (track.RestoreFsbPath is not null) return AudioDecoder.DecodeBank(track.RestoreFsbPath, 0);
+                return AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
+            });
 
             if (gen != _playGen)
             {
                 return;
             }
-            
-            var volDb = track.UsesFileSource ? track.GainDb ?? 0 : 0;
+
+            var volDb = track.UsesFileSource && !track.IsFileSourceFsb ? track.GainDb ?? 0 : 0;
             _player.Play(wav, volDb);
 
             track.PlayState = TrackPlayState.Playing;
@@ -591,6 +761,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 StopPlayback();
             }
         }
+        finally
+        {
+            if (gen == _playGen)
+            {
+                IsPreparingPlayback = false;
+            }
+        }
     }
 
     public void StopPlayback()
@@ -606,6 +783,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _nowPlaying = null;
         TransportVisible = false;
         TransportPlaying = false;
+        IsPreparingPlayback = false;
     }
     
     public void Shutdown()
@@ -624,8 +802,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         NowTitle = _nowPlaying.Title;
         NowArtist = _nowPlaying.Artist;
 
-        // живое обновление громкости плеера: усиление несобранного кастома применяется в рантайме,
-        // поэтому при правке громкости во время проигрывания сразу подхватываем новое значение
         if (_nowPlaying.IsUnbuilt)
         {
             _player.SetVolumeDb(_nowPlaying.GainDb ?? 0);
@@ -634,10 +810,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnPositionSecondsChanged(double value)
     {
+        NowPositionText = Fmt(TimeSpan.FromSeconds(value));
         if (!_suppressSeek && _player.HasMedia)
         {
-            _player.Position = TimeSpan.FromSeconds(value);
-            NowPositionText = Fmt(TimeSpan.FromSeconds(value));
+            _pendingSeekSec = value;
+            _seekDebounce.Stop();
+            _seekDebounce.Start();
         }
     }
 
@@ -686,6 +864,128 @@ public sealed partial class MainWindowViewModel : ObservableObject
         RecalcProjectedSize();
     }
 
+    private RadioStationEditor? LoadBakEditor(StationInfo station)
+    {
+        var refFile = ViewLanguageFile();
+        var refXml = refFile is not null ? GameScanner.RadioInfoPathByFile(Settings.GamePath, refFile) : null;
+
+        if (refXml is not null && File.Exists(refXml + ".bak"))
+        {
+            try { return RadioInfo.Load(refXml + ".bak").StationByNumber(station.Number); }
+            catch (Exception ex) { Log.Line($"LoadBakEditor: .bak load failed ({Path.GetFileName(refXml)}): {ex.Message}"); }
+        }
+
+        return _radio?.StationByNumber(station.Number);
+    }
+
+    private static readonly string RestoreDir = Path.Combine(AppContext.BaseDirectory, "restore");
+
+    private static string WriteRestoreFsb(byte[] header60, byte[] sampleHeader, byte[] data)
+    {
+        Directory.CreateDirectory(RestoreDir);
+        var fsb = Fsb5.BuildSingleSample(header60, new Fsb5Sample { Header = sampleHeader, Data = data });
+        var path = Path.Combine(RestoreDir, Guid.NewGuid().ToString("N") + ".fsb");
+        File.WriteAllBytes(path, fsb);
+        return path;
+    }
+
+    public RestoreResult RestoreDefault(TrackItemViewModel track)
+    {
+        var station = SelectedStation;
+
+        if (station is null || !track.CanRestoreDefault)
+        {
+            return RestoreResult.Ok;
+        }
+
+        if (track.Replaced)
+        {
+            var bankPath = LoadedBankPath;
+
+            if (string.IsNullOrEmpty(bankPath) || !File.Exists(bankPath + ".bak"))
+            {
+                return RestoreResult.NoBackup;
+            }
+
+            try
+            {
+                var bakPath = bankPath + ".bak";
+                var sk = FevBank.ReadSkeleton(bakPath);
+                var hash = Lookup.SoundNameToId(track.SoundName);
+                var bidx = -1;
+
+                foreach (var (id, index) in sk.Stbl)
+                {
+                    if (id == hash) { bidx = index; break; }
+                }
+
+                if (sk.Empty || bidx < 0)
+                {
+                    return RestoreResult.NotInBackup;
+                }
+
+                var (bakHeader60, bakLayout) = Fsb5.ReadLayout(sk.Fsb5HeaderRegion);
+                var bsl = bakLayout[bidx];
+
+                var data = new byte[bsl.DataLen];
+                using (var bfs = File.OpenRead(bakPath))
+                {
+                    bfs.Position = sk.DataStartAbs + bsl.DataOff;
+                    var read = 0;
+                    while (read < data.Length)
+                    {
+                        var n = bfs.Read(data, read, data.Length - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+                }
+
+                track.RestoreBakIndex = bidx;
+                track.RestoreFsbPath = WriteRestoreFsb(bakHeader60, bsl.Header, data);
+            }
+            catch
+            {
+                return RestoreResult.NotInBackup;
+            }
+        }
+
+        var editor = LoadBakEditor(station);
+
+        if (editor is not null)
+        {
+            if (editor.GetSampleMeta(track.SoundName) is { } mm)
+            {
+                track.Title = mm.DisplayName ?? track.SoundName;
+                track.Artist = mm.Artist;
+            }
+
+            var mk = editor.GetMarkers(track.SoundName);
+            track.Markers = mk is not null && mk.Count > 0 ? new Dictionary<string, long>(mk) : null;
+        }
+
+        if (track.Replaced)
+        {
+            track.RestoreFromBak = true;
+        }
+        else
+        {
+            track.SampleLength = track.BankSampleLength;
+            track.SampleRate = track.BankSampleRate;
+        }
+
+        track.PendingDurationSeconds = null;
+        track.ReplacementPath = null;
+        track.Replaced = false;
+
+        Status = string.Format(Str.StatusRestoreTrackFmt, track.SoundName);
+        HasUnsavedChanges = true;
+        RefreshNowPlaying();
+        Recount();
+        RecalcProjectedSize();
+        RefreshFilter();
+        return RestoreResult.Ok;
+    }
+
     public TrackItemViewModel CreateCustomStub(string sourcePath, string? title = null, string? artist = null,
                                                double durationSeconds = 0)
     {
@@ -709,14 +1009,122 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 _sourceLocks[sourcePath] = new FileStream(
                     sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             }
-            catch
+            catch (Exception ex)
             {
+                Log.Line($"CreateCustomStub: could not lock source '{Path.GetFileName(sourcePath)}': {ex.Message}");
             }
         }
 
         return new TrackItemViewModel(track, gainDb: null) { SourcePath = sourcePath };
     }
-    
+
+    public async Task ExportAsync(string outPath, IReadOnlyList<TrackItemViewModel> selected)
+    {
+        var items = selected
+            .Select(t => new ExportItem(
+                t.UsesFileSource ? t.FileSource : null,
+                t.SubIndex,
+                t.Title,
+                t.Artist,
+                t.SampleLength,
+                t.SampleRate,
+                t.GainDb,
+                t.Enabled,
+                ExportRole(t),
+                t.Markers))
+            .ToList();
+
+        if (items.Count == 0)
+        {
+            Status = Str.StatusExportEmpty;
+            return;
+        }
+
+        static string ExportRole(TrackItemViewModel t)
+        {
+            if (t.IsCustom) return "custom";
+            return t.Replaced || t.IsReplacing ? "replacement" : "default";
+        }
+
+        var bankName = SelectedStation?.BankName(SelectedVariant!);
+        var bankPath = LoadedBankPath;
+
+        IsExporting = true;
+        StopPlayback();
+        Status = Str.StatusExporting;
+
+        void Progress(string m) => Dispatcher.UIThread.Post(() => Status = m);
+
+        try
+        {
+            await Task.Run(() => TrackPack.ExportAsync(outPath, bankName, bankPath, items, Progress, Log.Line, default));
+            Status = string.Format(Str.StatusExportedFmt, items.Count, Path.GetFileName(outPath));
+        }
+        catch (Exception ex)
+        {
+            Log.Line("EXPORT ERROR: " + ex);
+            Status = string.Format(Str.StatusExportErrorFmt, ex.Message);
+        }
+        finally
+        {
+            IsExporting = false;
+        }
+    }
+
+    public TrackItemViewModel StageImportedAdd(ImportedPack pack, PackTrack e)
+    {
+        var audioPath = Path.Combine(pack.Dir, e.File);
+        var dur = e.SampleRate > 0 && e.SampleLength > 0 ? e.SampleLength / (double)e.SampleRate : 0;
+
+        var track = CreateCustomStub(audioPath, e.DisplayName, e.Artist, dur);
+        track.SampleLength = e.SampleLength;
+        track.SampleRate = e.SampleRate;
+        track.GainDb = e.GainDb;
+        track.Markers = e.Markers is { } m ? new Dictionary<string, long>(m) : null;
+        track.Enabled = e.Enabled;
+        track.PendingDurationSeconds = dur > 0 ? dur : null;
+        return track;
+    }
+
+    public void StageImportedReplace(TrackItemViewModel defaultTrack, ImportedPack pack, PackTrack e)
+    {
+        var audioPath = Path.Combine(pack.Dir, e.File);
+        var dur = e.SampleRate > 0 && e.SampleLength > 0 ? e.SampleLength / (double)e.SampleRate : 0;
+
+        defaultTrack.ReplacementPath = audioPath;
+        defaultTrack.Title = e.DisplayName ?? defaultTrack.Title;
+        defaultTrack.Artist = e.Artist;
+        defaultTrack.SampleLength = e.SampleLength;
+        defaultTrack.SampleRate = e.SampleRate;
+        defaultTrack.GainDb = e.GainDb;
+        defaultTrack.PendingDurationSeconds = dur > 0 ? dur : null;
+        defaultTrack.Markers = e.Markers is { } m ? new Dictionary<string, long>(m) : null;
+    }
+
+    public void ApplyImport(ImportedPack pack, IReadOnlyDictionary<string, string?> mapping)
+    {
+        var defaultByName = Tracks.Where(t => !t.IsCustom).ToDictionary(t => t.SoundName);
+
+        foreach (var e in pack.Manifest.Tracks)
+        {
+            mapping.TryGetValue(e.Id, out var defaultSoundName);
+
+            if (defaultSoundName is not null && defaultByName.TryGetValue(defaultSoundName, out var def))
+            {
+                StageImportedReplace(def, pack, e);
+            }
+            else
+            {
+                Tracks.Add(StageImportedAdd(pack, e));
+            }
+        }
+
+        MarkDirty();
+        Recount();
+        RecalcProjectedSize();
+        RefreshFilter();
+    }
+
     public async Task BuildAsync()
     {
         if (SelectedStation is null || SelectedLanguage is null || SelectedVariant is null)
@@ -774,7 +1182,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 : null;
             return new BuildItem(
                 t.SoundName, newCustom, encodeSrc, t.Title, t.Artist, t.GainDb, t.Enabled,
-                t.Markers, replacing);
+                t.Markers, replacing, t.RestoreFromBak);
         }).ToList();
         var settings = Settings;
 
@@ -837,6 +1245,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             StatusDetail = "";
             _radioForFile = null;
             WorkDirs.Clean();
+            _ = RefreshCanRestoreAllAsync();
 
             try
             {
@@ -885,6 +1294,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         var refStation = refRadio.StationByNumber(station.Number);
         var enabled = items.ToDictionary(i => i.SoundName, i => i.Enabled);
+        var restored = items.Where(i => i.RestoreFromBak).Select(i => i.SoundName).ToList();
 
         foreach (var lf in otherFiles)
         {
@@ -893,7 +1303,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 break;
             }
 
-            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers, enabled);
+            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers, enabled, restored);
             savedXml += saved;
             dead += d;
         }
@@ -906,7 +1316,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         RadioStationEditor refStation, HashSet<ulong> union, bool suspicious,
         IReadOnlyDictionary<string, (string? DisplayName, string? Artist)> changedMeta,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers,
-        IReadOnlyDictionary<string, bool> enabled)
+        IReadOnlyDictionary<string, bool> enabled,
+        IReadOnlyCollection<string> restoredNames)
     {
         var xmlPath = GameScanner.RadioInfoPathByFile(Settings.GamePath, lf);
         if (xmlPath is null)
@@ -944,6 +1355,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
             ed.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist);
+        }
+
+        foreach (var sn in restoredNames)
+        {
+            ed.ClearReplacement(sn);
         }
 
         foreach (var (sn, meta) in changedMeta)
@@ -1021,7 +1437,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             if (File.Exists(tmp))
             {
-                try { File.Delete(tmp); } catch { /* ignore */ }
+                try { File.Delete(tmp); } catch { }
             }
         }
     }
@@ -1064,7 +1480,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var text = File.ReadAllText(path);
-            return text.Contains(RadioInfo.XmlMarker) || text.Contains(Naming.CustomPrefix);
+            return text.Contains(RadioInfo.XmlMarker + " edited");
         }
         catch
         {
@@ -1094,7 +1510,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 editor.AddCustom(a.SoundName, a.Frames, a.SampleRate, a.DisplayName, a.Artist);
             }
         }
-        
+
+        foreach (var it in items.Where(i => i.RestoreFromBak))
+        {
+            editor.ClearReplacement(it.SoundName);
+        }
+
         var changed = ApplySampleMeta(editor, items);
         var changedMarkers = new Dictionary<string, IReadOnlyDictionary<string, long>>();
 
@@ -1122,9 +1543,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private static bool MarkersEqual(IReadOnlyDictionary<string, long>? a, IReadOnlyDictionary<string, long>? b)
     {
-        // a = new markers (from UI, may include auto-filled entries); b = original (EN).
-        // Unchanged iff every original marker still exists with the same position.
-        // Extra auto-filled markers in `a` don't count as a change.
         if (b is null || b.Count == 0) return true;
         if (a is null) return false;
         foreach (var (k, v) in b)

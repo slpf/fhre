@@ -40,22 +40,18 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty] private bool _loudnessNormalize;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VorbisQualityText))]
+    private int _vorbisQuality;
+
+    public string VorbisQualityText => $"{VorbisQuality}%";
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(EncodeParallelismText))]
     private int _encodeParallelism;
 
     public int MaxThreads => Environment.ProcessorCount;
     public string EncodeParallelismText => $"{EncodeParallelism} / {MaxThreads}";
-    
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CardVisible))]
-    private bool _canRestore;
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CardVisible))]
-    private string _backupLine = "";
-
-    public bool CardVisible => CanRestore || !string.IsNullOrWhiteSpace(BackupLine);
-    
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowAdvanced))]
     private bool _isFirstRun;
@@ -63,7 +59,6 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public bool ShowAdvanced => !IsFirstRun;
 
     public bool Saved { get; private set; }
-    public bool Restored { get; private set; }
 
     public SettingsWindowViewModel(AppSettings settings)
     {
@@ -71,6 +66,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _gamePath = settings.GamePath;
         _targetLufs = settings.TargetLufs;
         _loudnessNormalize = settings.LoudnessNormalize;
+        _vorbisQuality = settings.VorbisQuality;
         _encodeParallelism = settings.EncodeParallelism > 0
             ? Math.Min(settings.EncodeParallelism, MaxThreads)
             : AppSettings.RecommendedParallelism;
@@ -116,10 +112,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private CancellationTokenSource? _validateCts;
     
     private static GameScan? _gameScanCache;
-    // _gameScanCache is intentionally static: the settings dialog reuses the last scan while
-    // the user keeps the same path so the success lines don't flicker on every keystroke.
-    // The static lifetime means a stale transient result can persist across dialog opens
-    // until the path changes or the app restarts — that's an acceptable trade-off for now.
+    
     private sealed record GameScan(string Path, GameScanner.GameScanResult Result);
 
     public async Task ValidateAsync()
@@ -150,9 +143,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             var r = await Task.Run(() =>
             {
                 var scan = cachedGame?.Result ?? GameScanner.Scan(path);
-                var hasBackups = BackupService.Has(path);
-                var modified = hasBackups && BackupService.HasModified(path);
-                return (new GameScan(path, scan), hasBackups, modified);
+                return new GameScan(path, scan);
             }, token);
 
             if (token.IsCancellationRequested)
@@ -160,18 +151,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
                 return;
             }
 
-            _gameScanCache = r.Item1;
+            _gameScanCache = r;
 
             if (cachedGame is null)
             {
-                ApplyGameScan(r.Item1);
-            }
-
-            CanRestore = r.modified;
-
-            if (!Restored)
-            {
-                BackupLine = CanRestore ? Str.HintRestore : "";
+                ApplyGameScan(r);
             }
         }
         catch (OperationCanceledException)
@@ -223,24 +207,6 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         };
     }
 
-    public void RestoreBackups()
-    {
-        try
-        {
-            var (restored, failed) = BackupService.Restore(GamePath, Log.Line);
-            BackupLine = failed == 0
-                ? string.Format(Str.EditRestoredFmt, restored)
-                : string.Format(Str.EditRestoredFailedFmt, restored, failed);
-            CanRestore = false;
-            Restored = true;
-        }
-        catch (Exception ex)
-        {
-            Log.Line("restore failed: " + ex.Message);
-            BackupLine = ex.Message;
-        }
-    }
-
     public void ResetSettings()
     {
         var keepPath = _settings.GamePath;
@@ -271,6 +237,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         TargetLufs = _settings.TargetLufs;
         EncodeParallelism = AppSettings.RecommendedParallelism;
         LoudnessNormalize = _settings.LoudnessNormalize;
+        VorbisQuality = _settings.VorbisQuality;
 
         Saved = true;
     }
@@ -281,6 +248,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.TargetLufs = Math.Round(TargetLufs);
         _settings.EncodeParallelism = EncodeParallelism;
         _settings.LoudnessNormalize = LoudnessNormalize;
+        _settings.VorbisQuality = VorbisQuality;
         SettingsService.Save(_settings);
         Saved = true;
     }

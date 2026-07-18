@@ -1,0 +1,99 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FH6RB.ViewModels"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
+        x:Class="FH6RB.Views.ImportWindow"
+        x:DataType="vm:ImportWindowViewModel"
+        Width="580" Height="630"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        Title="{x:Static assets:Str.TitleImport}">
+
+    <Grid RowDefinitions="*,Auto">
+        <Grid Grid.Row="0">
+            <StackPanel IsVisible="{Binding IsStep1}" Margin="16,16,16,0" Spacing="10">
+                <TextBlock Text="{x:Static assets:Str.DlgImportReviewIntro}" Foreground="{DynamicResource TxtMute}"
+                           FontSize="12.5" TextWrapping="Wrap" Margin="12,0"/>
+
+                <Border Background="{DynamicResource BgInput}" Padding="12,8,0,8"
+                        BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+                    <ScrollViewer MaxHeight="490" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding ImportedTracks}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:ImportPreviewRow">
+                                    <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="0,8" Margin="0,0,12,0">
+                                        <Grid ColumnDefinitions="Auto,Auto">
+                                            <TextBlock Grid.Column="0" Text="{Binding Title}" FontSize="13"
+                                                       VerticalAlignment="Center" TextAlignment="Left" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Artist}" FontSize="11.5" 
+                                                       Foreground="{DynamicResource TxtMute}" IsVisible="{Binding HasArtist}"
+                                                       VerticalAlignment="Center" TextAlignment="Left" TextTrimming="CharacterEllipsis" Margin="12,0,0,0"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding IsStep2}" Margin="16,16,16,0" Spacing="10">
+                <TextBlock Text="{x:Static assets:Str.DlgImportIntro}" Foreground="{DynamicResource TxtMute}"
+                           FontSize="12.5" TextWrapping="Wrap" Margin="12,0"/>
+
+                <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding HasRows}">
+                    <CheckBox IsThreeState="True" Margin="12,0" Padding="16,0,0,0"
+                              IsChecked="{Binding SelectAllState, Mode=OneWay}"
+                              Click="OnToggleAll" Content="{x:Static assets:Str.BtnSelectAll}"/>
+
+                    <TextBlock Grid.Column="1" Text="{Binding SelectedCount, StringFormat='{}{0} selected'}"
+                               HorizontalAlignment="Right" Foreground="{DynamicResource TxtMute}"
+                               FontSize="12.5" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                </Grid>
+
+                <Border Background="{DynamicResource BgInput}" Padding="12,8,0,8"
+                        BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+                    <ScrollViewer MaxHeight="448" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Rows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="vm:ImportRow">
+                                    <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Padding="0,8" Margin="0,0,12,0">
+                                        <Grid ColumnDefinitions="Auto,Auto,Auto,Auto">
+                                            <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" VerticalAlignment="Center"/>
+                                            <Border Grid.Column="1" Width="1" Height="16" Margin="0,0,8,0" Background="{DynamicResource Line}"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding DefaultTrack.Title}" FontSize="13" VerticalAlignment="Center"
+                                                       TextAlignment="Left" MaxWidth="280" Margin="0,0,8,0" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding DefaultTrack.Artist}" FontSize="11.5" VerticalAlignment="Center" 
+                                                       Foreground="{DynamicResource TxtMute}" IsVisible="{Binding DefaultTrack.HasArtist}"
+                                                       TextAlignment="Left" MaxWidth="170" TextTrimming="CharacterEllipsis"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+
+                <TextBlock IsVisible="{Binding !HasRows}" Text="{x:Static assets:Str.DlgImportNoDefaults}"
+                           Foreground="{DynamicResource TxtMute}" FontSize="12.5" TextWrapping="Wrap" Margin="12,0"/>
+            </StackPanel>
+
+        </Grid>
+
+        <Border Grid.Row="1" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+                    <Button Classes="big" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
+                    <Button Classes="big" Click="OnBack" Content="{x:Static assets:Str.BtnBack}"
+                            IsVisible="{Binding ShowBack}"/>
+                    <Button Classes="big primary" Click="OnNext" Content="{x:Static assets:Str.BtnNext}"
+                            IsVisible="{Binding ShowNext}"/>
+                    <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnImport}"
+                            IsVisible="{Binding ShowImport}"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

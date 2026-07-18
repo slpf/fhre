@@ -88,10 +88,7 @@ public sealed class FevBank
         if ((e & 1) != 0) e++;
         return _src[e..(_listPay + _listSize)];
     }
-    
-    // public byte[] SourceBank => _src;
-    // public int Fsb5Offset => _fsbOff;
-    // public int Fsb5Size => _fsbSize;
+
     public int Fsb5Mode => _fsbOff > 0 && _fsbOff + 0x1C <= _src.Length ? (int) U32(_src, _fsbOff + 0x18) : 0;
     public byte[] ExtractFsb5()
     {
@@ -162,7 +159,6 @@ public sealed class FevBank
         }
         catch
         {
-            // ignored
         }
 
         return ids;

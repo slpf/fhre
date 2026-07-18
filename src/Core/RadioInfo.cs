@@ -299,26 +299,20 @@ public sealed class RadioStationEditor(XElement station)
     {
         var result = new Dictionary<string, long>();
 
-        var elems = sample.Elements("Marker").ToList();
-        if (elems.Count > 0)
+        foreach (var mk in sample.Elements("Marker"))
         {
-            foreach (var mk in elems)
+            var n = (string?) mk.Attribute("Name");
+            if (n is not null && long.TryParse((string?) mk.Attribute("Position"), out var p))
             {
-                var n = (string?) mk.Attribute("Name");
-                if (n is not null && long.TryParse((string?) mk.Attribute("Position"), out var p))
-                {
-                    result[n] = p;
-                }
+                result[n] = p;
             }
         }
-        else
+
+        foreach (var name in MarkerNames)
         {
-            foreach (var name in MarkerNames)
+            if (!result.ContainsKey(name) && long.TryParse((string?) sample.Attribute(name), out var p))
             {
-                if (long.TryParse((string?) sample.Attribute(name), out var p))
-                {
-                    result[name] = p;
-                }
+                result[name] = p;
             }
         }
 
@@ -333,15 +327,24 @@ public sealed class RadioStationEditor(XElement station)
         var m = new Dictionary<string, long>(markers);
         ApplyXmlMarkerRules(m, long.TryParse((string?) s.Attribute("SampleLength"), out var len) ? len : 0);
 
-        var elems = s.Elements("Marker").ToList();
-        if (elems.Count > 0)
+        var byName = new Dictionary<string, XElement>();
+        foreach (var mk in s.Elements("Marker").ToList())
         {
-            foreach (var mk in elems)
+            var n = (string?) mk.Attribute("Name");
+            if (n is not null) byName[n] = mk;
+        }
+
+        if (byName.Count > 0 || s.Elements("Marker").Any())
+        {
+            foreach (var (name, p) in m)
             {
-                var n = (string?) mk.Attribute("Name");
-                if (n is not null && m.TryGetValue(n, out var p))
+                if (byName.TryGetValue(name, out var mk))
                 {
                     mk.SetAttributeValue("Position", p);
+                }
+                else
+                {
+                    s.Add(new XElement("Marker", new XAttribute("Name", name), new XAttribute("Position", p)));
                 }
             }
         }
@@ -349,10 +352,7 @@ public sealed class RadioStationEditor(XElement station)
         {
             foreach (var (name, p) in m)
             {
-                if (s.Attribute(name) is not null)
-                {
-                    s.SetAttributeValue(name, p);
-                }
+                s.SetAttributeValue(name, p);
             }
         }
 
@@ -383,6 +383,14 @@ public sealed class RadioStationEditor(XElement station)
         s.SetAttributeValue("Replaced", "true");
         ApplyCustomMarkers(s, sampleLength);
         s.Elements("BPM").Remove();
+        return true;
+    }
+
+    public bool ClearReplacement(string soundName)
+    {
+        var s = FindSample(soundName);
+        if (s is null) return false;
+        s.SetAttributeValue("Replaced", null);
         return true;
     }
     
@@ -418,13 +426,15 @@ public sealed class RadioStationEditor(XElement station)
         var pos = ComputeAutoMarkers(sampleLength, rate);
         ApplyXmlMarkerRules(pos, sampleLength);
         var markerElems = sample.Elements("Marker").ToList();
-        
+
         if (markerElems.Count > 0)
         {
+            var existing = new HashSet<string>();
+
             foreach (var mk in markerElems)
             {
                 var n = (string?) mk.Attribute("Name");
-                
+
                 if (n is not null && pos.TryGetValue(n, out var p))
                 {
                     mk.SetAttributeValue("Position", p);
@@ -432,6 +442,16 @@ public sealed class RadioStationEditor(XElement station)
                 else
                 {
                     mk.SetAttributeValue("Position", -1);
+                }
+
+                if (n is not null) existing.Add(n);
+            }
+
+            foreach (var (name, p) in pos)
+            {
+                if (!existing.Contains(name))
+                {
+                    sample.Add(new XElement("Marker", new XAttribute("Name", name), new XAttribute("Position", p)));
                 }
             }
         }

@@ -1,40 +1,107 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
-using FH6RB.Assets;
 using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
 
-public sealed class MarkerPresetRow
+public sealed class MarkerEntry
 {
-    public required MarkerPreset Preset { get; init; }
+    public required string Name { get; init; }
+    public required bool IsFolder { get; init; }
+    public required string RelPath { get; init; }
+    public MarkerPreset? Preset { get; init; }
 
-    public string Name => Preset.Name;
+    public bool IsFile => !IsFolder;
 
-    public string Info => string.Format(Str.PresetInfoFmt, Preset.Markers.Count);
-
-    public string Meta => Preset.Modified == default
-        ? string.Empty
-        : Preset.Modified.ToString("yyyy-MM-dd HH:mm");
+    public string Meta
+    {
+        get
+        {
+            if (IsFolder) return "";
+            if (Preset is { Modified: var m } && m != default) return m.ToString("yyyy-MM-dd HH:mm");
+            return "";
+        }
+    }
 }
 
 public sealed partial class MarkerPresetsViewModel : ObservableObject
 {
-    public ObservableCollection<MarkerPresetRow> Items { get; } = [];
+    private string _relDir = "";
 
-    public bool HasItems => Items.Count > 0;
+    public ObservableCollection<MarkerEntry> Entries { get; } = [];
 
-    public MarkerPresetsViewModel() => Refresh();
+    public bool HasItems => Entries.Count > 0;
+
+    public bool CanGoBack => !string.IsNullOrEmpty(_relDir);
+
+    public string CurrentFolder
+    {
+        get
+        {
+            if (string.IsNullOrEmpty(_relDir)) return "Markers";
+            var parts = _relDir.Split('/');
+            return parts[^1];
+        }
+    }
+
+    public string RelDir => _relDir;
+
+    [ObservableProperty] private string _search = "";
+
+    partial void OnSearchChanged(string value) => Refresh();
+
+    public MarkerPresetsViewModel()
+    {
+        Refresh();
+    }
 
     public void Refresh()
     {
-        Items.Clear();
+        var q = (Search ?? "").Trim();
 
-        foreach (var p in MarkerPresetService.List())
+        Entries.Clear();
+
+        foreach (var d in MarkerPresetService.ListSubdirs(_relDir))
         {
-            Items.Add(new MarkerPresetRow { Preset = p });
+            if (q.Length > 0 && !d.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
+            Entries.Add(new MarkerEntry
+            {
+                Name = d,
+                IsFolder = true,
+                RelPath = CombineRel(_relDir, d),
+            });
+        }
+
+        foreach (var p in MarkerPresetService.ListIn(_relDir))
+        {
+            if (q.Length > 0 && !p.Name.Contains(q, StringComparison.OrdinalIgnoreCase)) continue;
+            Entries.Add(new MarkerEntry
+            {
+                Name = p.Name,
+                IsFolder = false,
+                RelPath = CombineRel(_relDir, p.Name + ".json"),
+                Preset = p,
+            });
         }
 
         OnPropertyChanged(nameof(HasItems));
+        OnPropertyChanged(nameof(CanGoBack));
+        OnPropertyChanged(nameof(CurrentFolder));
     }
+
+    public void Enter(string name)
+    {
+        _relDir = CombineRel(_relDir, name);
+        Refresh();
+    }
+
+    public void GoBack()
+    {
+        if (!CanGoBack) return;
+        _relDir = Path.GetDirectoryName(_relDir) ?? "";
+        Refresh();
+    }
+
+    private static string CombineRel(string parent, string child)
+        => string.IsNullOrEmpty(parent) ? child : parent + "/" + child;
 }

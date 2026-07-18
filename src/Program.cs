@@ -2,14 +2,15 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 using Avalonia;
+using FH6RB.Services;
 
 [assembly: AssemblyProduct("Forza Horizon Radio Extender")]
 [assembly: AssemblyTitle("Forza Horizon Radio Extender")]
 [assembly: AssemblyDescription("Forza Horizon Radio Extender")]
 [assembly: AssemblyCopyright("Chisou")]
-[assembly: AssemblyVersion("0.4.5")]
-[assembly: AssemblyFileVersion("0.4.5")]
-[assembly: AssemblyInformationalVersion("0.4.5")]
+[assembly: AssemblyVersion("0.5.1")]
+[assembly: AssemblyFileVersion("0.5.1")]
+[assembly: AssemblyInformationalVersion("0.5.1")]
 
 namespace FH6RB;
 
@@ -80,9 +81,9 @@ internal static class Program
             File.AppendAllText(CrashLogPath,
                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {source}: {ex}{Environment.NewLine}{Environment.NewLine}");
         }
-        catch
+        catch (Exception ioEx)
         {
-            // ignore
+            Log.Line($"crash log write failed ({source}): {ioEx.Message}");
         }
     }
 

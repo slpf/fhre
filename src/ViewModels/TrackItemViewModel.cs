@@ -13,15 +13,21 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public bool IsCustom => Origin == TrackOrigin.Custom;
     
     public bool CanDelete => IsCustom;
+    public bool CanRestoreDefault => !IsCustom && (IsReplacing || Replaced);
+    public bool RestoreFromBak { get; set; }
     
     public bool IsUnbuilt => IsCustom && SourcePath is not null;
 
     public long SampleLength { get; set; }
     public int SampleRate { get; set; }
+    public long BankSampleLength { get; set; }
+    public int BankSampleRate { get; set; }
     public int SubIndex { get; set; } = -1;
+    public int RestoreBakIndex { get; set; } = -1;
+    public string? RestoreFsbPath { get; set; }
     
     public bool CanPlay => UsesFileSource
-        ? Tools.HasFfmpeg
+        ? (IsFileSourceFsb ? Tools.HasVgmstream : Tools.HasFfmpeg)
         : SubIndex >= 0 && SampleLength > 0 && Tools.HasVgmstream;
 
     [ObservableProperty] private TrackPlayState _playState = TrackPlayState.Idle;
@@ -50,6 +56,8 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public bool CanReplace => true;
     public bool UsesFileSource => IsUnbuilt || IsReplacing;
     public string? FileSource => IsReplacing ? ReplacementPath : SourcePath;
+    public bool IsFileSourceFsb => UsesFileSource
+        && FileSource!.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase);
 
     partial void OnReplacementPathChanged(string? value)
     {
@@ -58,12 +66,15 @@ public sealed partial class TrackItemViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowCstBadge));
         OnPropertyChanged(nameof(UsesFileSource));
         OnPropertyChanged(nameof(FileSource));
+        OnPropertyChanged(nameof(IsFileSourceFsb));
         OnPropertyChanged(nameof(CanPlay));
+        OnPropertyChanged(nameof(CanRestoreDefault));
     }
 
     partial void OnReplacedChanged(bool value)
     {
         OnPropertyChanged(nameof(ShowCstBadge));
+        OnPropertyChanged(nameof(CanRestoreDefault));
     }
 
     public Dictionary<string, long>? Markers { get; set; }
@@ -81,6 +92,8 @@ public sealed partial class TrackItemViewModel : ObservableObject
         Origin = track.Origin;
         SampleLength = track.SampleLength;
         SampleRate = track.SampleRate;
+        BankSampleLength = track.SampleLength;
+        BankSampleRate = track.SampleRate;
         SubIndex = track.SubIndex;
         Replaced = track.Replaced;
         Markers = track.Markers is { } m ? new Dictionary<string, long>(m) : null;

@@ -33,14 +33,14 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia" Version="11.2.3" />
-        <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
-        <PackageReference Include="Avalonia.Diagnostics" Version="11.2.3" Condition="'$(Configuration)' == 'Debug'" />
-        <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
-        <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.3" />
-        <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+        <PackageReference Include="Avalonia" Version="12.1.0" />
+        <PackageReference Include="Avalonia.Desktop" Version="12.1.0" />
+        <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.0" />
+        <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.0" />
+        <PackageReference Include="AvaloniaUI.DiagnosticsSupport" Version="2.2.3" />
+        <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
         <PackageReference Include="NAudio" Version="2.3.0" />
-        <PackageReference Include="Tmds.DBus.Protocol" Version="0.21.3" />
+        <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.2" />
     </ItemGroup>
 
     <Target Name="RelocateDepsToLibs" AfterTargets="Build"
@@ -103,5 +103,13 @@
             Condition="Exists('$(PublishDir)$(TargetName).exe') And '$(TargetName)' != 'fhre'">
         <Move SourceFiles="$(PublishDir)$(TargetName).exe" DestinationFiles="$(PublishDir)fhre.exe"
               OverwriteReadOnlyFiles="true" />
+    </Target>
+
+    <Target Name="RemoveNativePdbPublish" AfterTargets="Publish"
+            Condition="'$(Configuration)' == 'Release' And '$(PublishSingleFile)' == 'true'">
+        <ItemGroup>
+            <_Pdb Include="$(PublishDir)*.pdb" />
+        </ItemGroup>
+        <Delete Files="@(_Pdb)" Condition="'@(_Pdb)' != ''" />
     </Target>
 </Project>

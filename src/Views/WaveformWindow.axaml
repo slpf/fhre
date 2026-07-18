@@ -1,6 +1,5 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:loc="using:FH6RB"
         xmlns:vm="using:FH6RB.ViewModels"
         xmlns:ctl="using:FH6RB.Controls"
         xmlns:assets="clr-namespace:FH6RB.Assets"
@@ -146,7 +145,7 @@
                                                 <TextBox Grid.Column="2" Classes="field2" Tag="{Binding}"
                                                          IsEnabled="{Binding Editable}"
                                                          Text="{Binding SecondsText, Mode=TwoWay}"
-                                                         Watermark="{x:Static assets:Str.WatermarkOff}"
+                                                         PlaceholderText="{x:Static assets:Str.WatermarkOff}"
                                                          ToolTip.Tip="{Binding ValueTip}"
                                                          ContextRequested="OnFieldContextRequested"
                                                          FontFamily="{DynamicResource MonoFont}" FontSize="12">

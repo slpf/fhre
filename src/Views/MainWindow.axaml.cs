@@ -52,6 +52,11 @@ public partial class MainWindow : Window
         AppleUniformTypeIdentifiers = ["public.audio"],
     };
 
+    private static readonly FilePickerFileType PackFiles = new(Str.FilterPackFiles)
+    {
+        Patterns = ["*.fhre"],
+    };
+
     private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".mp3", ".flac", ".wav", ".m4a", ".aac", ".ogg", ".oga",
@@ -135,7 +140,7 @@ public partial class MainWindow : Window
         
         await dialog.ShowDialog(this);
 
-        if (vm.Saved || vm.Restored)
+        if (vm.Saved)
         {
             Vm.ReloadFromGame();
         }
@@ -163,6 +168,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnSaveAllMarkers(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(SaveAllMarkersAsync, "save all markers", this);
+
+    private async Task SaveAllMarkersAsync()
+    {
+        var proceed = await MessageDialog.ShowAsync(this, Str.DlgSaveAllMarkersTitle, Str.DlgSaveAllMarkersBody,
+            okText: Str.DlgSaveAllMarkersOk, cancelText: Str.BtnCancel);
+
+        if (proceed)
+        {
+            Vm.SaveAllMarkers();
+        }
+    }
+
     private void OnMarkerDefaults(object? sender, RoutedEventArgs e)
         => SafeAsync.Run(MarkerDefaultsAsync, "marker defaults", this);
 
@@ -184,18 +203,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (Vm.HasUnbuiltTracks)
-        {
-            var proceed = await MessageDialog.ShowAsync(this, Str.DlgBackupUnbuiltTitle,
-                Str.DlgBackupUnbuiltBody,
-                okText: Str.DlgBackupUnbuiltOk, cancelText: Str.DlgBackupUnbuiltCancel);
-
-            if (!proceed)
-            {
-                return;
-            }
-        }
-
         var name = await InputDialog.ShowAsync(this, Str.BackupNameTitle, Str.BackupNameWatermark);
 
         if (name is null)
@@ -204,6 +211,14 @@ public partial class MainWindow : Window
         }
 
         var gamePath = Vm.Settings.GamePath;
+        var variant = Vm.SelectedVariant;
+        var sources = Vm.Tracks
+            .Select(t => new BackupTrackSource(
+                t.SoundName, t.IsCustom, t.IsReplacing, t.Replaced,
+                t.SourcePath, t.ReplacementPath, t.SubIndex,
+                t.Title, t.Artist, t.SampleLength, t.SampleRate,
+                t.GainDb, t.Enabled, t.Markers))
+            .ToList();
 
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
@@ -215,7 +230,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var entry = await Task.Run(() => StationBackupService.Create(name, gamePath, station, Log.Line));
+            var entry = await Task.Run(() => StationBackupService.Create(name, gamePath, station, variant!, sources, Log.Line));
             status = string.Format(Str.StatusBackupSavedFmt, entry.Manifest.Name);
         }
         catch (Exception ex)
@@ -230,6 +245,132 @@ public partial class MainWindow : Window
         });
     }
 
+    private void OnExport(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(ExportAsync, "export", this);
+
+    private async Task ExportAsync()
+    {
+        if (Vm.SelectedStation is null)
+        {
+            Vm.Status = Str.StatusBackupNoStation;
+            return;
+        }
+
+        if (Vm.Tracks.Count == 0)
+        {
+            Vm.Status = Str.StatusExportEmpty;
+            await MessageDialog.ShowAsync(this, Str.TitleNotice, Str.StatusExportEmpty);
+            return;
+        }
+
+        var stationName = Vm.SelectedStation?.Name ?? "bank";
+        var variant = Vm.SelectedVariant ?? "";
+        var defaultName = string.IsNullOrEmpty(variant) ? stationName : $"{stationName}.{variant}";
+
+        var selVm = new ExportSelectionWindowViewModel(Vm.Tracks.ToList(), defaultName);
+        var selWin = new ExportSelectionWindow { DataContext = selVm };
+        await selWin.ShowDialog(this);
+
+        if (!selVm.Saved)
+        {
+            return;
+        }
+
+        var selected = selVm.Selected;
+
+        if (selected.Count == 0)
+        {
+            Vm.Status = Str.StatusExportEmpty;
+            return;
+        }
+
+        var suggested = selVm.FileName;
+        if (string.IsNullOrWhiteSpace(suggested)) suggested = defaultName;
+
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = Str.PickExportFile,
+            SuggestedFileName = suggested,
+            DefaultExtension = "fhre",
+            FileTypeChoices = [PackFiles],
+        });
+
+        if (file?.TryGetLocalPath() is not { } path)
+        {
+            return;
+        }
+
+        if (!path.EndsWith(".fhre", StringComparison.OrdinalIgnoreCase))
+        {
+            path += ".fhre";
+        }
+
+        await Vm.ExportAsync(path, selected);
+    }
+
+    private void OnImport(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(ImportAsync, "import", this);
+
+    private async Task ImportAsync()
+    {
+        if (Vm.SelectedStation is null)
+        {
+            Vm.Status = Str.StatusBackupNoStation;
+            return;
+        }
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = Str.PickImportFile,
+            AllowMultiple = false,
+            FileTypeFilter = [PackFiles],
+        });
+
+        if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path)
+        {
+            return;
+        }
+
+        ImportedPack pack;
+        try
+        {
+            Vm.IsImporting = true;
+            pack = await Task.Run(() => TrackPack.Load(path));
+        }
+        catch (Exception ex)
+        {
+            Log.Line("IMPORT ERROR: " + ex);
+            await MessageDialog.ShowAsync(this, Str.DlgImportFailedTitle, string.Format(Str.StatusImportErrorFmt, ex.Message));
+            return;
+        }
+        finally
+        {
+            Vm.IsImporting = false;
+        }
+
+        if (pack.Manifest.Tracks.Count == 0)
+        {
+            Vm.Status = Str.StatusImportEmpty;
+            return;
+        }
+
+        var defaults = Vm.Tracks.Where(t => !t.IsCustom).ToList();
+        var vm = new ImportWindowViewModel(pack.Manifest.Tracks, defaults);
+        var w = new ImportWindow { DataContext = vm };
+        await w.ShowDialog(this);
+
+        if (!vm.Saved)
+        {
+            return;
+        }
+
+        var replaced = vm.Result.Count(kv => kv.Value is not null);
+        var added = vm.Result.Count - replaced;
+
+        Vm.ApplyImport(pack, vm.Result);
+        Vm.Status = string.Format(Str.StatusImportedFmt, vm.Result.Count, replaced, added);
+    }
+
     private void OnBackups(object? sender, RoutedEventArgs e)
         => SafeAsync.Run(BackupsAsync, "backups", this);
 
@@ -238,9 +379,7 @@ public partial class MainWindow : Window
         var gamePath = Vm.Settings.GamePath;
         var vm = new BackupsViewModel(gamePath, Vm.SelectedStation);
         var w = new BackupsWindow { DataContext = vm };
-        WindowMemory.Restore(w, Vm.Settings, "Backups");
         await w.ShowDialog(this);
-        WindowMemory.Save(w, Vm.Settings, "Backups");
 
         if (w.RestoreTarget is not { } target)
         {
@@ -253,16 +392,18 @@ public partial class MainWindow : Window
             Vm.Status = Str.StatusBackupRestoring;
         });
 
+        var settings = Vm.Settings;
         string status;
 
         try
         {
-            await Task.Run(() => StationBackupService.Restore(target, gamePath, Log.Line));
+            await Task.Run(async () => await StationBackupService.RestoreAsync(target, gamePath, settings, Log.Line));
             await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
             status = string.Format(Str.StatusBackupRestoredFmt, target.Manifest.Name);
         }
         catch (Exception ex)
         {
+            Log.Line("RESTORE FAILED: " + ex);
             status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
         }
 
@@ -340,13 +481,113 @@ public partial class MainWindow : Window
         });
     }
 
+    private void OnRestoreAllStations(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(RestoreAllStationsAsync, "restore all", this);
+
+    private async Task RestoreAllStationsAsync()
+    {
+        var gamePath = Vm.Settings.GamePath;
+
+        if (!GameScanner.IsValid(gamePath) || !BackupService.Has(gamePath))
+        {
+            return;
+        }
+
+        var running = await Task.Run(Vm.IsGameRunning);
+
+        if (running)
+        {
+            await MessageDialog.ShowAsync(this, Str.DlgGameRunningTitle, Str.DlgFilesInUseBody);
+            return;
+        }
+
+        var proceed = await MessageDialog.ShowAsync(this, Str.DlgRestoreAllTitle, Str.DlgRestoreAllBody,
+            okText: Str.DlgRestoreStationOk, cancelText: Str.DlgRestoreStationCancel);
+
+        if (!proceed)
+        {
+            return;
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Vm.IsBackingUp = true;
+            Vm.Status = Str.StatusBackupRestoring;
+        });
+
+        string status;
+
+        try
+        {
+            var (restored, failed) = await Task.Run(() => BackupService.Restore(gamePath, Log.Line));
+            await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
+            status = failed == 0
+                ? string.Format(Str.EditRestoredFmt, restored)
+                : string.Format(Str.EditRestoredFailedFmt, restored, failed);
+        }
+        catch (Exception ex)
+        {
+            status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
+        }
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            Vm.Status = status;
+            Vm.IsBackingUp = false;
+        });
+        await Vm.RefreshCanRestoreAllAsync();
+    }
+
     private void OnPreviewPressed(object? sender, PointerPressedEventArgs e) => _toggleMods = e.KeyModifiers;
+
+    private void OnRestoreDefault(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: TrackItemViewModel track })
+        {
+            SafeAsync.Run(() => RestoreDefaultAsync(track), "restore track", this);
+        }
+    }
+
+    private async Task RestoreDefaultAsync(TrackItemViewModel track)
+    {
+        if (ReferenceEquals(Vm.NowPlaying, track))
+        {
+            Vm.StopPlayback();
+        }
+
+        var confirm = await MessageDialog.ShowAsync(this, Str.DlgRestoreTrackTitle, Str.DlgRestoreTrackBody,
+            okText: Str.BtnYes, cancelText: Str.BtnNo);
+
+        if (!confirm)
+        {
+            return;
+        }
+
+        var r = Vm.RestoreDefault(track);
+
+        if (r == RestoreResult.NoBackup)
+        {
+            await MessageDialog.ShowAsync(this, Str.DlgRestoreNoBakTitle, Str.DlgRestoreNoBakBody);
+        }
+        else if (r == RestoreResult.NotInBackup)
+        {
+            await MessageDialog.ShowAsync(this, Str.DlgRestoreNotInBakTitle, Str.DlgRestoreNotInBakBody);
+        }
+    }
 
     private void OnToggle(object? sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: TrackItemViewModel track })
         {
             Vm.ToggleEnabled(track, _toggleMods.HasFlag(KeyModifiers.Shift), _toggleMods.HasFlag(KeyModifiers.Control));
+        }
+    }
+
+    private void OnTracksSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ListBox lb)
+        {
+            lb.SelectedIndex = -1;
         }
     }
 
@@ -530,10 +771,12 @@ public partial class MainWindow : Window
     private async Task EditMarkersAsync(TrackItemViewModel track)
     {
         Vm.StopPlayback();
+        Vm.Status = "";
 
         (float[]? Peaks, string? Wav) media;
         track.MarkersLoading = true;
-        
+        Vm.IsPreparingPlayback = true;
+
         try
         {
             media = await Vm.LoadPeaksAsync(track);
@@ -541,6 +784,7 @@ public partial class MainWindow : Window
         finally
         {
             track.MarkersLoading = false;
+            Vm.IsPreparingPlayback = false;
         }
 
         if (track.SampleLength <= 0 || track.SampleRate <= 0)
@@ -595,6 +839,17 @@ public partial class MainWindow : Window
 
     private async Task BuildAsync()
     {
+        if (Vm.ProjectedTotalBytes > int.MaxValue)
+        {
+            var proceed = await MessageDialog.ShowAsync(this, Str.DlgBankTooLargeWarnTitle,
+                Str.DlgBankTooLargeWarnBody, okText: Str.DlgBankTooLargeWarnOk, cancelText: Str.BtnCancel);
+
+            if (!proceed)
+            {
+                return;
+            }
+        }
+
         await Vm.BuildAsync();
 
         if (Vm.PendingErrorDialog is not { } msg)

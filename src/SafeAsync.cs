@@ -13,7 +13,6 @@ public static class SafeAsync
         }
         catch (OperationCanceledException)
         {
-            // ignore
         }
         catch (Exception ex)
         {
@@ -28,7 +27,6 @@ public static class SafeAsync
                 }
                 catch
                 {
-                    // ignore
                 }
             }
         }

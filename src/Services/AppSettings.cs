@@ -12,7 +12,7 @@ public sealed class AppSettings
     public double TargetLufs { get; set; } = -23.0;
     public double TargetTruePeak { get; set; } = -1.0;
     public bool LoudnessNormalize { get; set; } = true;
-    public int VorbisQuality { get; set; } = 70;
+    public int VorbisQuality { get; set; } = 90;
 
 
     public int EncodeParallelism { get; set; } = 0;
@@ -55,7 +55,7 @@ public static class SettingsService
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
-    public const int CurrentSettingsVersion = 5;
+    public const int CurrentSettingsVersion = 6;
 
     public static AppSettings Load()
     {
@@ -85,6 +85,10 @@ public static class SettingsService
         {
             s.LoopStages = LoopSearchDefaults.AutoStages;
         }
+        if (s.SettingsVersion < 6)
+        {
+            if (s.VorbisQuality == 70) s.VorbisQuality = 90;
+        }
         if (s.SettingsVersion < CurrentSettingsVersion)
         {
             s.SettingsVersion = CurrentSettingsVersion;
@@ -109,9 +113,9 @@ public static class SettingsService
                 File.Move(FilePath, FilePath + ".corrupt", overwrite: true);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // ignore
+            Log.Line($"settings: could not preserve corrupt settings file: {ex.Message}");
         }
     }
 }

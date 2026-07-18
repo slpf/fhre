@@ -29,7 +29,6 @@ public static class BackupService
             }
             catch
             {
-                // ignored
             }
         }
 
@@ -65,7 +64,6 @@ public static class BackupService
             }
             catch
             {
-                // ignored
             }
         }
 

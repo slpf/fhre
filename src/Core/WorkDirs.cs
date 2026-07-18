@@ -24,7 +24,6 @@ public static class WorkDirs
             }
             catch
             {
-                // ignored
             }
         }
     }

@@ -1,0 +1,83 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FH6RB.Controls.SearchBox"
+             Width="32" MaxWidth="300" Height="32" ClipToBounds="True">
+
+  <UserControl.Transitions>
+    <Transitions>
+      <DoubleTransition Property="Width" Duration="0:0:0.16">
+        <DoubleTransition.Easing>
+          <CubicEaseOut/>
+        </DoubleTransition.Easing>
+      </DoubleTransition>
+    </Transitions>
+  </UserControl.Transitions>
+
+  <UserControl.Styles>
+    <Style Selector="Border.shell">
+      <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="CornerRadius" Value="6"/>
+      <Setter Property="Padding" Value="0"/>
+    </Style>
+    <Style Selector="Border.shell:pointerover">
+      <Setter Property="Background" Value="{DynamicResource Bg1}"/>
+    </Style>
+    <Style Selector="Border.shell.open">
+      <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+    </Style>
+    <Style Selector="Border.shell.open:pointerover">
+      <Setter Property="Background" Value="{DynamicResource BgInput}"/>
+    </Style>
+
+    <Style Selector="Button.flat">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+    </Style>
+    <Style Selector="Button.flat:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+    <Style Selector="Button.flat:pressed /template/ ContentPresenter">
+      <Setter Property="Background" Value="Transparent"/>
+    </Style>
+
+    <Style Selector="TextBox.q /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="0"/>
+    </Style>
+    <Style Selector="TextBox.q:pointerover /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+    </Style>
+    <Style Selector="TextBox.q:focus /template/ Border#PART_BorderElement">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+    </Style>
+  </UserControl.Styles>
+
+  <Border x:Name="Shell" Classes="shell" Focusable="True">
+    <Grid>
+      <TextBox x:Name="Query" Classes="q"
+               Margin="8,0,32,0" Height="24" Padding="0"
+               VerticalAlignment="Center" VerticalContentAlignment="Center"
+               IsVisible="False"
+               TextChanged="OnQueryTextChanged"
+               KeyDown="OnQueryKeyDown" LostFocus="OnQueryLostFocus"/>
+
+      <Button Classes="flat" Click="OnButtonClick"
+              HorizontalAlignment="Right" VerticalAlignment="Center"
+              Width="32" Height="32" Focusable="False">
+        <Panel>
+          <Image x:Name="IconIdle" Source="avares://FH6RB/Assets/icons/icon_search.png"
+                 Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          <Image x:Name="IconActive" Source="avares://FH6RB/Assets/icons/icon_sclose.png"
+                 Width="14" Height="14" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="False"/>
+        </Panel>
+      </Button>
+    </Grid>
+  </Border>
+</UserControl>

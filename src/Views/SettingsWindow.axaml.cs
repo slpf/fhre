@@ -38,8 +38,6 @@ public partial class SettingsWindow : Window
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();
 
-    private void OnRestore(object? sender, RoutedEventArgs e) => Vm.RestoreBackups();
-
     private void OnResetSettings(object? sender, RoutedEventArgs e)
         => SafeAsync.Run(ResetSettingsAsync, "reset settings", this);
 

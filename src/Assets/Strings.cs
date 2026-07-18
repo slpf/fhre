@@ -59,6 +59,7 @@ public static class Str
     public const string TipPlayPdlsLoop = "Play PostDrop/PostRaceLoopEnd/PostRaceLoopStart";
     public const string TipPlayPlsLoop = "Play PostRaceLoopStart/PostRaceLoopEnd";
     public const string TipDelete = "Delete track";
+    public const string TipRestoreTrack = "Restore track to original";
     public const string TipReplaceAudio = "Replace track";
     public const string TipMarkers = "Markers";
     public const string TipEdit = "Edit";
@@ -78,6 +79,9 @@ public static class Str
     public const string NoBackups = "No backups to restore.";
     public const string HintLoudness = "Added tracks are normalized to this level. Originals sit around -23 LUFS.";
     public const string HintEncoding = "Parallel jobs while building. Higher is faster but uses more CPU, RAM and disk.";
+    public const string SecQuality = "QUALITY";
+    public const string LblVorbisQuality = "Vorbis quality";
+    public const string HintQuality = "Higher = better audio, larger bank. Game defaults sit around 90-95%.";
     public const string HintRestore = "Reverts banks and RadioInfo to their pre-build state.";
     
     public const string PickAddAudio = "Select audio files to add";
@@ -93,8 +97,15 @@ public static class Str
     public const string StatusPlayingFmt = "Playing {0}";
     public const string StatusPlaybackErrorFmt = "Playback error: {0}";
     public const string StatusDeletedFmt = "Deleted: {0}";
+    public const string StatusRestoreTrackFmt = "Restored: {0}";
+    public const string DlgRestoreTrackTitle = "Restore track";
+    public const string DlgRestoreTrackBody = "Restore this track to its original audio and metadata from the backup? Build to apply.";
+    public const string DlgRestoreNoBakTitle = "No backup";
+    public const string DlgRestoreNoBakBody = "No original backup (.bak) exists for this bank. Build at least once first, or use Restore station.";
+    public const string DlgRestoreNotInBakTitle = "Track not in backup";
+    public const string DlgRestoreNotInBakBody = "This track was not found in the original backup (.bak), so its audio can't be restored.";
     public const string StatusReplacingFmt = "Replacing {0}…";
-    public const string StatusReplaceStagedFmt = "Replacement staged for {0} — build to apply";
+    public const string StatusReplaceStagedFmt = "Replaced: {0}";
     public const string StatusDecodeFailed = "Couldn't decode this track for marker editing.";
     public const string StatusMarkersUpdatedFmt = "Markers updated: {0}";
     public const string StatusSavedFmt = "Saved: {0}";
@@ -109,6 +120,9 @@ public static class Str
     public const string StatusBuiltCleanedFmt = ", cleaned {0} dead";
     public const string StatusBuildTooLarge = "Build stopped: bank exceeds the 2 GB limit";
     public const string StatusBuildErrorFmt = "Build error: {0}";
+    public const string DlgBankTooLargeWarnTitle = "Bank may be too large";
+    public const string DlgBankTooLargeWarnBody = "The projected bank size is over 2 GB. The game may fail to load it, and the build itself can fail. Continue anyway?";
+    public const string DlgBankTooLargeWarnOk = "Build anyway";
     
     public const string FoundFmt = "Found {0}";
     public const string LocalizationsFmt = "Localizations: {0}";
@@ -135,14 +149,14 @@ public static class Str
     public const string DlgUnsavedTitle = "Unsaved changes";
     public const string DlgUnsavedBody =
         "You have changes that haven't been built into the bank yet " +
-        "(added, edited, replaced or toggled tracks). Build to keep them. Quit without building?";
+        "(added, edited, replaced or toggled tracks). Build to keep them.\n\nQuit without building?";
     public const string DlgUnsavedOk = "Quit anyway";
     public const string DlgUnsavedCancel = "Keep editing";
 
     public const string DlgBuildProgressTitle = "Build in progress";
     public const string DlgBuildProgressBody =
         "A build is still running. Quitting now may leave the bank half-written " +
-        "(a .bak backup exists to restore from). Quit anyway?";
+        "(a .bak backup exists to restore from).\n\nQuit anyway?";
     public const string DlgBuildProgressOk = "Quit";
     public const string DlgBuildProgressCancel = "Keep building";
     
@@ -178,6 +192,12 @@ public static class Str
     public const string DlgTrackDropAfterLoopBody = "TrackDrop must not be later than TrackLoopEnd.\n\nMove TrackDrop earlier or push TrackLoopEnd past it.";
     public const string DlgPostDropAfterLoopTitle = "PostDrop is past PostRaceLoopEnd";
     public const string DlgPostDropAfterLoopBody = "PostDrop must not be later than PostRaceLoopEnd.\n\nMove PostDrop earlier or push PostRaceLoopEnd past it.";
+
+    public const string DlgMarkerValidationTitle = "Marker validation";
+    public const string ErrTrackLoopOrder = "TrackLoopStart must be earlier than TrackLoopEnd.";
+    public const string ErrPostRaceLoopOrder = "PostRaceLoopStart must be earlier than PostRaceLoopEnd.";
+    public const string ErrTrackDropAfterLoop = "TrackDrop is past TrackLoopEnd.";
+    public const string ErrPostDropAfterLoop = "PostDrop is past PostRaceLoopEnd.";
     
     public const string LangAll = "All languages";
     
@@ -239,6 +259,23 @@ public static class Str
     public const string DlgRestoreStationBody = "Replace \"{0}\" with the original game banks and metadata? Any custom tracks and edits on this station will be lost. Other stations are not affected.";
     public const string DlgRestoreStationOk = "Restore";
     public const string DlgRestoreStationCancel = "Cancel";
+    public const string DlgRestoreAllTitle = "Restore all stations";
+    public const string DlgRestoreAllBody = "Restore all banks and metadata to their original (pre-build) state? Any custom tracks and edits across all stations will be lost.";
+
+    public const string TipMenu = "Menu";
+    public const string MenuRestoreStation = "Restore this station";
+    public const string MenuRestoreAll = "Restore all stations";
+    public const string MenuSaveBackup = "Backup this station";
+    public const string MenuLoadBackup = "Load from backup";
+    public const string MenuExport = "Export tracks";
+    public const string MenuImport = "Import tracks";
+    public const string DlgSaveAllMarkersTitle = "Save all markers";
+    public const string MenuResetMarkers = "Reset markers";
+    public const string MenuMarkerSettings = "Marker settings";
+    public const string MenuSettings = "Settings";
+
+    public const string TipSearch = "Search tracks";
+    public const string SearchWatermark = "Search…";
     public const string StatusBackupRestoredFmt = "Backup restored: {0}";
 
     public const string TitleLoopSearch = "Loop search settings";
@@ -313,4 +350,49 @@ public static class Str
     public const string LblLoopAuto = "Auto";
     public const string LblLoopManual = "Manual";
     public const string HintLoopAuto = "Auto picks the best parameters per track. Turn off to tune them manually.";
+
+    public const string BtnExport = "Export";
+    public const string BtnImport = "Import";
+    public const string TipExport = "Export custom and replaced tracks to a file";
+    public const string TipImport = "Import tracks from an export file";
+    public const string PickExportFile = "Save export file";
+    public const string PickImportFile = "Select an export file";
+    public const string FilterPackFiles = "FH6RB export";
+    public const string TitleImport = "Import tracks";
+    public const string TitleExport = "Export tracks";
+    public const string DlgExportIntro = "Pick which tracks from this bank go into the export file.";
+    public const string DlgExportSelectAll = "Select all";
+    public const string LblExportName = "EXPORT NAME";
+    public const string BtnSelectAll = "Select all";
+    public const string BtnSelectNone = "None";
+    public const string BadgeDefault = "DEF";
+    public const string DlgImportIntro = "Select which default tracks to replace. Imported tracks replace them in order.";
+    public const string DlgImportReviewIntro = "Review the tracks in the archive.";
+    public const string DlgImportNoDefaults = "This bank has no default tracks to replace.";
+    public const string DlgImportFailedTitle = "Import failed";
+    public const string BtnNext = "Next";
+    public const string BtnBack = "Back";
+    public const string StatusExportEmpty = "Nothing to export.";
+    public const string StatusExportNoVgmstream = "Export needs vgmstream to read built-in tracks. Put it next to the program.";
+    public const string StatusExporting = "Exporting…";
+    public const string StatusExportedFmt = "Exported {0} track(s) to {1}";
+    public const string StatusExportErrorFmt = "Export failed: {0}";
+    public const string StatusImporting = "Importing…";
+    public const string StatusImportEmpty = "Import file has no tracks.";
+    public const string StatusImportedFmt = "Imported {0} track(s): {1} replaced, {2} added";
+    public const string StatusImportErrorFmt = "Import failed: {0}";
+
+    public const string MenuSaveAllMarkers = "Save all markers";
+    public const string StatusMarkersSavedFmt = "Saved markers for {0} track(s) to {1}";
+    public const string MarkersLoadTitle = "Load markers";
+    public const string MarkersBack = "Back";
+    public const string MarkersEmpty = "No marker files in this folder.";
+    public const string BtnOpen = "Open";
+    public const string MarkersDeleteFolderTitle = "Delete folder";
+    public const string MarkersDeleteFolderBody = "Delete this folder and all marker files inside?";
+    public const string StatusMarkersNoBank = "Select a station and bank first.";
+    public const string StatusMarkersNothingToSave = "No tracks with markers to save.";
+    public const string DlgSaveAllMarkersBody = "Save markers for all tracks in the current bank to a new folder?";
+    public const string DlgSaveAllMarkersOk = "Save";
 }
+

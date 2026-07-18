@@ -51,6 +51,8 @@ Write-Host "[2/5] Moving build output to $Dist ..."
 Move-Item -Path $BuildOut -Destination $Dist
 if (-not (Test-Path $Dist)) { Fail "move to $Dist failed." }
 
+Get-ChildItem -Path $Dist -Filter *.pdb -File | ForEach-Object { Remove-Item -Force $_.FullName }
+
 # --- [3/5] copy tools into publish ---
 Write-Host ''
 Write-Host "[3/5] Copying $Tools into $Dist ..."
