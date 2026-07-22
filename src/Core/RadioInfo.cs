@@ -467,27 +467,6 @@ public sealed class RadioStationEditor(XElement station)
             }
         }
     }
-
-    public int FixCustomMarkers()
-    {
-        var fixedCount = 0;
-        
-        foreach (var s in TrackList.Elements("Sample"))
-        {
-            var sn = (string?) s.Attribute("SoundName");
-            
-            if (sn is null || !sn.StartsWith(Naming.CustomPrefix))
-            {
-                continue;
-            }
-
-            if (!long.TryParse((string?)s.Attribute("SampleLength"), out var len) || len <= 0) continue;
-            ApplyCustomMarkers(s, len);
-            fixedCount++;
-        }
-
-        return fixedCount;
-    }
     
     public void RemoveCustom(string soundName)
     {

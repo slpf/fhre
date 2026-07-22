@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia.Threading;
@@ -126,6 +127,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private double _pendingSeekSec;
     private int _playGen;
     private bool _suppressSeek;
+    private double _anchorSec;
+    private long _anchorTicks;
+    private bool _clockRunning;
+
+    private void SetClockAnchor(double sec, bool running)
+    {
+        _anchorSec = sec;
+        _anchorTicks = Stopwatch.GetTimestamp();
+        _clockRunning = running;
+    }
+
+    private double ElapsedSinceAnchor()
+    {
+        if (!_clockRunning) return _anchorSec;
+        return _anchorSec + (Stopwatch.GetTimestamp() - _anchorTicks) / (double) Stopwatch.Frequency;
+    }
 
     [ObservableProperty] private bool _transportVisible;
     [ObservableProperty]
@@ -146,12 +163,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Settings = settings;
 
         _player.Ended += () => Dispatcher.UIThread.Post(StopPlayback);
-        _tick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _tick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _tick.Tick += (_, _) =>
         {
+            if (_seekDebounce!.IsEnabled) return;
             _suppressSeek = true;
-            PositionSeconds = _player.Position.TotalSeconds;
-            NowPositionText = Fmt(_player.Position);
+            var pos = ElapsedSinceAnchor();
+            if (pos >= 0 && pos <= DurationSeconds)
+            {
+                PositionSeconds = pos;
+                NowPositionText = Fmt(TimeSpan.FromSeconds(pos));
+            }
             _suppressSeek = false;
         };
 
@@ -167,6 +189,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (_player.HasMedia)
             {
                 _player.Position = TimeSpan.FromSeconds(_pendingSeekSec);
+                SetClockAnchor(_pendingSeekSec, _clockRunning);
             }
         };
 
@@ -725,10 +748,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         if (_player.IsPlaying)
         {
+            SetClockAnchor(ElapsedSinceAnchor(), true);
             _tick?.Start();
         }
         else
         {
+            SetClockAnchor(ElapsedSinceAnchor(), false);
             _tick?.Stop();
         }
     }
@@ -783,6 +808,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             DurationSeconds = Math.Max(0.1, _player.Duration.TotalSeconds);
             NowDurationText = Fmt(_player.Duration);
             Status = string.Format(Str.StatusPlayingFmt, track.Title);
+            SetClockAnchor(0, true);
             _tick?.Start();
         }
         catch (Exception ex)
@@ -807,6 +833,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         _playGen++;
         _tick?.Stop();
+        SetClockAnchor(0, false);
         _player.Stop();
         if (_nowPlaying is not null)
         {
@@ -1556,8 +1583,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             editor.SetEnabled(it.SoundName, it.Enabled);
         }
-
-        editor.FixCustomMarkers();
 
         foreach (var it in items)
         {
