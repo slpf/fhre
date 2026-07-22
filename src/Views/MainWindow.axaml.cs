@@ -135,12 +135,13 @@ public partial class MainWindow : Window
 
     public async Task ShowSettingsAsync(bool firstRun = false)
     {
+        var prevPath = Vm.Settings.GamePath;
         var vm = new SettingsWindowViewModel(Vm.Settings) { IsFirstRun = firstRun };
         var dialog = new SettingsWindow { DataContext = vm };
-        
+
         await dialog.ShowDialog(this);
 
-        if (vm.Saved)
+        if (vm.Saved && !string.Equals(prevPath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase))
         {
             Vm.ReloadFromGame();
         }
@@ -754,6 +755,7 @@ public partial class MainWindow : Window
 
         Vm.MarkDirty();
         Vm.RefreshNowPlaying();
+        Vm.RecalcProjectedSize();
         Vm.Status = string.Format(Str.StatusReplaceStagedFmt, track.SoundName);
     }
 

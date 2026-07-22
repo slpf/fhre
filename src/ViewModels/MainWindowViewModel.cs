@@ -379,7 +379,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 long size = 0;
                 var mode = 15;
                 try { size = new FileInfo(path).Length; } catch { }
-                try { mode = FevBank.ReadSkeleton(path).Mode; if (mode == 0) mode = 15; } catch { }
+                try
+                {
+                    var sk = FevBank.ReadSkeleton(path);
+                    if (sk.Mode != 0) mode = sk.Mode;
+                    var layout = Fsb5.ReadLayout(sk.Fsb5HeaderRegion).Samples;
+                    foreach (var t in res.Tracks)
+                    {
+                        if (t.SubIndex < 0 || t.SubIndex >= layout.Count) continue;
+                        var dl = layout[t.SubIndex].DataLen;
+                        t.BankBytes = layout[t.SubIndex].Header.Length + dl + ((0x20 - (dl % 0x20)) % 0x20);
+                    }
+                }
+                catch { }
                 return (res, size, mode);
             });
             result = r;
@@ -485,20 +497,41 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public void RecalcProjectedSize()
     {
         long added = 0;
+        long removed = 0;
         var n = 0;
 
         foreach (var t in Tracks)
         {
-            if (!IsProjectedNew(t)) continue;
-            var dur = TrackDurationSeconds(t);
-            if (dur <= 0) continue;
-            added += BankSize.EncodedBytes(dur, _baseBankMode, Settings.VorbisQuality);
-            n++;
+            if (IsProjectedNew(t))
+            {
+                var dur = TrackDurationSeconds(t);
+                if (dur <= 0) continue;
+                added += BankSize.EncodedBytes(dur, _baseBankMode, Settings.VorbisQuality);
+                n++;
+            }
+            else if (t.IsReplacing)
+            {
+                var dur = TrackDurationSeconds(t);
+                if (dur <= 0) continue;
+                added += BankSize.EncodedBytes(dur, _baseBankMode, Settings.VorbisQuality);
+
+                if (t.BankBytes > 0)
+                {
+                    removed += t.BankBytes;
+                }
+                else if (t.BankSampleRate > 0 && t.BankSampleLength > 0)
+                {
+                    removed += BankSize.EncodedBytes(
+                        t.BankSampleLength / (double) t.BankSampleRate, _baseBankMode, Settings.VorbisQuality);
+                }
+
+                n++;
+            }
         }
 
-        _projectedTotalBytes = _baseBankSize + added;
+        _projectedTotalBytes = _baseBankSize + added - removed;
         _sizeIsApprox = n > 0;
-        Log.Line($"projected bank size: {BankSize.Mb(_projectedTotalBytes)} total = base {BankSize.Mb(_baseBankSize)} + {BankSize.Mb(added)} over {n} new track(s)");
+        Log.Line($"projected bank size: {BankSize.Mb(_projectedTotalBytes)} total = base {BankSize.Mb(_baseBankSize)} + {BankSize.Mb(added)} - {BankSize.Mb(removed)} over {n} staged track(s)");
         Recount();
     }
 

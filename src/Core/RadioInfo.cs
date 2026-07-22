@@ -16,6 +16,7 @@ public sealed class RadioTrack
     public int SampleRate { get; set; }
     public int SubIndex { get; set; } = -1;
     public bool Replaced { get; set; }
+    public long BankBytes { get; set; }
     public IReadOnlyDictionary<string, long>? Markers { get; set; }
 
 }

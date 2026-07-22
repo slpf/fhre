@@ -23,6 +23,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public long BankSampleLength { get; set; }
     public int BankSampleRate { get; set; }
     public int SubIndex { get; set; } = -1;
+    public long BankBytes { get; set; }
     public int RestoreBakIndex { get; set; } = -1;
     public string? RestoreFsbPath { get; set; }
     
@@ -95,6 +96,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
         BankSampleLength = track.SampleLength;
         BankSampleRate = track.SampleRate;
         SubIndex = track.SubIndex;
+        BankBytes = track.BankBytes;
         Replaced = track.Replaced;
         Markers = track.Markers is { } m ? new Dictionary<string, long>(m) : null;
 
