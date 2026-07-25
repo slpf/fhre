@@ -153,7 +153,7 @@ public static class TrackPack
 
     public static ImportedPack Load(string path)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "FHRE", "import", Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(AppPaths.TempBase, "import", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
 
         PackManifest manifest;
@@ -207,7 +207,7 @@ public static class TrackPack
 
     public static void CleanupImport()
     {
-        var importRoot = Path.Combine(Path.GetTempPath(), "FHRE", "import");
+        var importRoot = Path.Combine(AppPaths.TempBase, "import");
         try
         {
             if (Directory.Exists(importRoot))

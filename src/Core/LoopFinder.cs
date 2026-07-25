@@ -83,8 +83,6 @@ public static class LoopFinder
         List<Cand> Candidates, double Bpm, int[] Sections, int[] Bars, int NFrames,
         int TrimOffset, int OriginalLength, double SectionWeight);
 
-    // Cached per role-independent key: the heavy search runs once; Track/Post only
-    // re-rank the shared candidate set.
     private const int CacheCap = 32;
     private static readonly object _cacheLock = new();
     private static readonly LinkedList<(string Path, LoopSearchOptions Options)> _cacheOrder = new();
@@ -2031,11 +2029,6 @@ public static class LoopFinder
             var endFrac = (double) c.EndFrame / nFrames;
             var pr = c.Score;
 
-            // Empirical priors from official FH4/FH5/FH6 RadioInfo loops (700+ samples).
-            // Quality (Score) stays dominant; these are moderate nudges shaping the order.
-
-            // Bar-quantization: ~90% of official loops are an integer number of bars,
-            // clustered on round counts. Role bar-count targets: Track ~80, Post ~16.
             if (barFrames > 1)
             {
                 var bars = len / barFrames;
@@ -2064,7 +2057,6 @@ public static class LoopFinder
                 }
             }
 
-            // Position / length priors (soft Gaussians around the official medians).
             if (role == LoopRole.Track)
             {
                 pr += 0.03 * Gauss(startFrac, 0.16, 0.12);
@@ -2082,7 +2074,6 @@ public static class LoopFinder
                 pr += 0.03 * Gauss(endFrac, 0.92, 0.08);
                 pr += 0.025 * Gauss(lenFrac, 0.16, 0.10);
 
-                // Post loops live in the second half — keep this a firm structural penalty.
                 if (startFrac < 0.5)
                 {
                     pr -= 0.30 * (0.5 - startFrac) * 2.0;

@@ -5,19 +5,16 @@ namespace FH6RB.Services;
 
 public static partial class GameScanner
 {
-    // Categorised outcome of a Scan(). The settings dialog uses Issue to display a precise
-    // reason to the user instead of a generic "no radio info" message. Transient vs permanent
-    // classification lets the caller decide whether to retry.
     public enum GameScanIssue
     {
         None,
         EmptyPath,
         DirectoryMissing,
         ExeMissing,
-        LanguageFilesMissing,    // tree walked cleanly, no RadioInfo_*.xml under root
-        AccessDenied,             // walked but hit UnauthorizedAccessException on some subdirs
-        TransientLock,            // walked but hit IOException on some subdirs (sharing violation, dir vanished)
-        PartialAccess,            // found files, but some subdirs returned errors
+        LanguageFilesMissing,
+        AccessDenied,
+        TransientLock,
+        PartialAccess,
         OtherError,
     }
 
@@ -29,23 +26,18 @@ public static partial class GameScanner
         int LanguageFileCount,
         int BankCount);
 
-    // Per-call exception counters. Passed by reference through SafeEnumerate so callers can
-    // tell whether "no files found" means "directory is empty" vs "could not read it".
     private sealed class ScanStats
     {
         public int AccessDeniedDirs;
         public int TransientLockDirs;
         public int OtherErrorDirs;
-        public readonly List<string> Samples = new();   // up to 3 offending paths for the detail string
+        public readonly List<string> Samples = new();
     }
 
     private const int MaxScanDetailSamples = 3;
 
     public static bool IsValid(string gamePath) => Scan(gamePath).IsValid;
 
-    // Thorough scan with categorised failure reason. Slightly heavier than IsValid because it
-    // also counts bank files; use IsValid for hot-path bool checks and Scan when the reason
-    // matters (e.g. the settings dialog).
     public static GameScanResult Scan(string gamePath)
     {
         if (string.IsNullOrWhiteSpace(gamePath))
@@ -68,9 +60,6 @@ public static partial class GameScanner
         var langs = CollectLanguageFiles(gamePath, stats);
 
 #if DEBUG
-        // Transient I/O on the first attempt is almost always AV / Steam overlay / Windows
-        // Search finishing its initial scan. Retry once after a short pause so devs can see
-        // the recover rather than chase a phantom "missing files" bug.
         if (langs.Count == 0 && stats.TransientLockDirs > 0)
         {
             Thread.Sleep(150);
@@ -136,6 +125,19 @@ public static partial class GameScanner
         {
             return null;
         }
+    }
+
+    public static int DetectVersion(string gamePath)
+    {
+        var exe = FindExe(gamePath);
+        if (exe is null)
+        {
+            return 0;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(exe);
+        var m = Regex.Match(name, @"\d+$");
+        return m.Success && int.TryParse(m.Value, out var v) ? v : 0;
     }
 
     public static bool IsGameProcessRunning(string gamePath)
@@ -219,7 +221,7 @@ public static partial class GameScanner
             .Where(n => VariantBankRegex().IsMatch(n)));
 
         const string bank = ".bank";
-        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank", stats: stats)     // FH4: без _assets и без варианта
+        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank", stats: stats)
             .Select(f => Path.GetFileName(f)[..^bank.Length])
             .Where(n => PlainBankRegex().IsMatch(n)));
 

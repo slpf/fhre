@@ -68,6 +68,7 @@ public static partial class RadioCatalog
         var stations = groups
             .OrderBy(g => g.Key)
             .Select(g => new StationInfo(g.Key, names.GetValueOrDefault(g.Key, $"Station {g.Key}"), g.Value.Keys.OrderBy(v => v).ToList(), g.Value))
+            .Where(st => !string.Equals(st.Name, StreamerModeName, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         Log.Line($"RadioCatalog: {stations.Count} stations");
@@ -79,6 +80,8 @@ public static partial class RadioCatalog
         
         return stations;
     }
+
+    private const string StreamerModeName = "Streamer Mode";
 
     [GeneratedRegex(@"^R(\d+)_Tracks_(.+)$")]
     private static partial Regex VariantRegex();

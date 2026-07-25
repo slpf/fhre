@@ -2,12 +2,13 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using FH6RB.Core;
 
 namespace FH6RB.Services;
 
 public static class AudioDecoder
 {
-    private static readonly string Dir = Path.Combine(Path.GetTempPath(), "FHRE", "preview");
+    private static readonly string Dir = Path.Combine(AppPaths.TempBase, "preview");
     private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
     private static int _purged;
 

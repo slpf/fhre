@@ -491,12 +491,10 @@ public partial class WaveformWindow : Window
 
                 var captureStart = start;
                 var captureEnd = end;
-                // var capturePostDrop = postDrop;
                 btn.Click += (_, _) =>
                 {
                     captureStart.Position = ss;
                     captureEnd.Position = es;
-                    // capturePostDrop?.Position = ss;
                     StartLoop(ss / (double) rate, es / (double) rate);
                     Wave.Focus();
                     flyout.Hide();

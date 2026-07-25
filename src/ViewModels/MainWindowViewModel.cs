@@ -41,6 +41,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isImporting;
 
     public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting || IsExporting || IsImporting;
+    public bool CanBuild => !IsBuilding && !PlaylistLow;
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
 
@@ -52,7 +53,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [ObservableProperty] private bool _hasUnsavedChanges;
     public void MarkDirty() => HasUnsavedChanges = true;
-    partial void OnIsBuildingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsBuildingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsBusy));
+        OnPropertyChanged(nameof(CanBuild));
+    }
+
+    partial void OnPlaylistLowChanged(bool value) => OnPropertyChanged(nameof(CanBuild));
     partial void OnIsAddingTracksChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsBackingUpChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
     partial void OnIsTestingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
@@ -75,7 +82,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string _statusDetail = "";
 
     public bool HasStatusDetail => !string.IsNullOrEmpty(StatusDetail);
-    [ObservableProperty] private string _countText = "";
+    private const int MinActiveTracksPerStation = 20;
+    private const long WarnBankBytes = 1900L * 1024 * 1024;
+    private int _otherBanksActive;
+    private int _activeLimit = MinActiveTracksPerStation;
+
+    [ObservableProperty] private string _statusHeadText = "";
+    [ObservableProperty] private string _statusCustomText = "";
+    [ObservableProperty] private string _statusPlaylistText = "";
+    [ObservableProperty] private string _statusSizeText = "";
+    [ObservableProperty] private bool _playlistLow;
+    [ObservableProperty] private bool _bankSizeHigh;
+    [ObservableProperty] private string _playlistTip = "";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSearch))]
@@ -442,6 +460,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _baseBankMode = baseMode;
             _projectedTotalBytes = baseSize;
             _sizeIsApprox = false;
+
+            var stEditor = _radio?.StationByNumber(station.Number);
+            _otherBanksActive = Math.Max(0, (stEditor?.FreeRoamActiveCount() ?? 0) - Tracks.Count(t => t.Enabled));
+            var version = GameScanner.DetectVersion(Settings.GamePath);
+            _activeLimit = (version == 4 || version == 5) ? 0 : MinActiveTracksPerStation;
+
             Recount();
             HasUnsavedChanges = false;
 
@@ -511,10 +535,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public void Recount()
     {
         var total = Tracks.Count;
-        var custom = Tracks.Count(t => t.IsCustom);
-        var on = Tracks.Count(t => t.Enabled);
+        var added = Tracks.Count(t => t.IsCustom);
+        var replaced = Tracks.Count(t => !t.IsCustom && (t.Replaced || t.IsReplacing));
+        var stationActive = _otherBanksActive + Tracks.Count(t => t.Enabled);
         var size = (_sizeIsApprox ? "~" : "") + BankSize.Mb(_projectedTotalBytes);
-        CountText = $"{total} tracks · {custom} custom · {on} in playlist · {size}";
+
+        var parts = new List<string>();
+        if (added > 0) parts.Add($"{added} added");
+        if (replaced > 0) parts.Add($"{replaced} replaced");
+
+        StatusHeadText = $"{total} tracks";
+        StatusCustomText = parts.Count > 0 ? " · " + string.Join(" · ", parts) : "";
+        StatusPlaylistText = $"{stationActive} in playlist";
+        StatusSizeText = size;
+
+        PlaylistLow = _activeLimit > 0 && stationActive < _activeLimit;
+        BankSizeHigh = _projectedTotalBytes > WarnBankBytes;
+        PlaylistTip = _activeLimit > 0
+            ? string.Format(Str.TipStatusPlaylist, stationActive, _activeLimit)
+            : Str.TipStatusPlaylistNoLimit;
     }
 
     public void RecalcProjectedSize()
@@ -938,7 +977,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return _radio?.StationByNumber(station.Number);
     }
 
-    private static readonly string RestoreDir = Path.Combine(AppContext.BaseDirectory, "restore");
+    private static readonly string RestoreDir = Path.Combine(AppPaths.TempBase, "restore");
 
     private static string WriteRestoreFsb(byte[] header60, byte[] sampleHeader, byte[] data)
     {
@@ -1363,7 +1402,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 break;
             }
 
-            var (saved, d) = SaveLocalizedXml(lf, station, bankName, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers, enabled, restored);
+            var (saved, d) = SaveLocalizedXml(lf, station, bankName, items.Count > 0, addedSamples, refStation, union, suspicious, changedMeta, changedMarkers, enabled, restored);
             savedXml += saved;
             dead += d;
         }
@@ -1372,7 +1411,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     private (int Saved, int Dead) SaveLocalizedXml(
-        string lf, StationInfo station, string bankName, IReadOnlyList<AddedSample> addedSamples,
+        string lf, StationInfo station, string bankName, bool bankHasContent, IReadOnlyList<AddedSample> addedSamples,
         RadioStationEditor refStation, HashSet<ulong> union, bool suspicious,
         IReadOnlyDictionary<string, (string? DisplayName, string? Artist)> changedMeta,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers,
@@ -1403,7 +1442,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return (0, 0);
         }
 
-        ed.RegisterBank(bankName);
+        if (bankHasContent)
+        {
+            ed.RegisterBank(bankName);
+        }
+        else
+        {
+            ed.UnregisterBank(bankName);
+        }
         ed.SyncCustomsFrom(refStation);
 
         foreach (var (sn, isEnabled) in enabled)
@@ -1556,7 +1602,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var editor = radio.StationByNumber(station.Number)
             ?? throw new InvalidOperationException($"station #{station.Number} not found in RadioInfo");
 
-        editor.RegisterBank(bankName);
+        if (items.Count > 0)
+        {
+            editor.RegisterBank(bankName);
+        }
+        else
+        {
+            editor.UnregisterBank(bankName);
+        }
         
         foreach (var a in added)
         {

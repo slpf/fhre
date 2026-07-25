@@ -2,8 +2,8 @@ namespace FH6RB.Core;
 
 public static class WorkDirs
 {
-    public static string WavDir { get; } = System.IO.Path.Combine(AppContext.BaseDirectory, "wav");
-    public static string FsbDir { get; } = System.IO.Path.Combine(AppContext.BaseDirectory, "fsb");
+    public static string WavDir { get; } = Path.Combine(AppPaths.TempBase, "wav");
+    public static string FsbDir { get; } = Path.Combine(AppPaths.TempBase, "fsb");
 
     public static void Ensure()
     {

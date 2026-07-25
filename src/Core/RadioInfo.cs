@@ -106,6 +106,25 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
+    public void UnregisterBank(string bankName)
+    {
+        var banks = station.Element("Banks");
+        if (banks is null)
+        {
+            return;
+        }
+
+        foreach (var b in banks.Elements("Bank").Where(b => (string?) b.Attribute("Name") == bankName).ToList())
+        {
+            b.Remove();
+        }
+
+        if (!banks.Elements("Bank").Any())
+        {
+            banks.Remove();
+        }
+    }
+
     public IEnumerable<string> CustomSoundNames()
     {
         return TrackList.Elements("Sample")
@@ -144,6 +163,12 @@ public sealed class RadioStationEditor(XElement station)
         return result;
     }
     
+    public int FreeRoamActiveCount()
+    {
+        var fr = station.Elements("PlayList").FirstOrDefault(pl => (string?) pl.Attribute("Type") == "FreeRoam");
+        return fr is null ? 0 : fr.Elements("Entry").Count();
+    }
+
     public void SetEnabled(string soundName, bool enabled)
     {
         foreach (var pl in MusicPlaylists)
@@ -164,24 +189,22 @@ public sealed class RadioStationEditor(XElement station)
         foreach (var e in playlist.Elements("Entry")
                      .Where(e => (string?)e.Attribute("Name") == name).ToList())
         {
-            e.AddBeforeSelf(new XComment(e.ToString(SaveOptions.DisableFormatting)));
             e.Remove();
+        }
+        foreach (var c in playlist.Nodes().OfType<XComment>()
+                     .Where(c => c.Value.Contains($"Name=\"{name}\"")).ToList())
+        {
+            c.Remove();
         }
     }
 
     private static void EnableIn(XElement playlist, string name)
     {
-        foreach (var c in playlist.Nodes().OfType<XComment>().ToList())
+        foreach (var c in playlist.Nodes().OfType<XComment>()
+                     .Where(c => c.Value.Contains($"Name=\"{name}\"")).ToList())
         {
-            if (!c.Value.Contains($"Name=\"{name}\"")) continue;
-            XElement parsed;
-            try { parsed = XElement.Parse(c.Value.Trim()); } catch { continue; }
-            if (parsed.Name != "Entry" || (string?)parsed.Attribute("Name") != name) continue;
-            c.AddBeforeSelf(parsed);
             c.Remove();
-            return;
         }
-        
         if (playlist.Elements("Entry").All(e => (string?) e.Attribute("Name") != name))
         {
             playlist.Add(new XElement("Entry", new XAttribute("Name", name)));

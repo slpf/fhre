@@ -12,6 +12,18 @@
         Icon="avares://FH6RB/Assets/app.ico"
         Title="{x:Static assets:Str.TitleMain}">
     
+    <Window.Styles>
+        <Style Selector="StackPanel.statbar > TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TxtFaint}"/>
+        </Style>
+        <Style Selector="StackPanel.statbar > TextBlock.low">
+            <Setter Property="Foreground" Value="#E0654F"/>
+        </Style>
+        <Style Selector="StackPanel.statbar > TextBlock.warn">
+            <Setter Property="Foreground" Value="#D9A441"/>
+        </Style>
+    </Window.Styles>
+
     <Grid RowDefinitions="Auto,*,Auto,Auto">
         <Border Grid.Row="0" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,0,0,1" Padding="10, 12, 14, 12">
@@ -258,7 +270,7 @@
                     </Button>
                 </Grid>
 
-                <Button Grid.Column="2" Classes="big primary" Width="100" MaxWidth="100" Click="OnBuild" IsEnabled="{Binding !IsBuilding}" HorizontalContentAlignment="Center"
+                <Button Grid.Column="2" Classes="big primary" Width="100" MaxWidth="100" Click="OnBuild" IsEnabled="{Binding CanBuild}" HorizontalContentAlignment="Center"
                         Height="48" MaxHeight="48" Padding="0" ToolTip.Tip="{x:Static assets:Str.TipBuildBank}">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Image Source="avares://FH6RB/Assets/icons/icon_build.png" Width="16" Height="16"
@@ -275,9 +287,17 @@
                 <TextBlock Grid.Column="0" Text="{Binding Status}" FontFamily="{DynamicResource MonoFont}"
                            FontSize="11.5" Foreground="{DynamicResource TxtMute}" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"/>
-                <TextBlock Grid.Column="1" Text="{Binding CountText}" FontFamily="{DynamicResource MonoFont}"
-                           FontSize="11.5" Foreground="{DynamicResource TxtFaint}" VerticalAlignment="Center"
-                           Margin="12,0,0,0"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Classes="statbar"
+                            Margin="12,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding StatusHeadText}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"/>
+                    <TextBlock Text="{Binding StatusCustomText}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"/>
+                    <TextBlock Text=" · " FontFamily="{DynamicResource MonoFont}" FontSize="11.5"/>
+                    <TextBlock Text="{Binding StatusPlaylistText}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                               Classes.low="{Binding PlaylistLow}" ToolTip.Tip="{Binding PlaylistTip}"/>
+                    <TextBlock Text=" · " FontFamily="{DynamicResource MonoFont}" FontSize="11.5"/>
+                    <TextBlock Text="{Binding StatusSizeText}" FontFamily="{DynamicResource MonoFont}" FontSize="11.5"
+                               Classes.warn="{Binding BankSizeHigh}" ToolTip.Tip="{x:Static assets:Str.TipStatusSize}"/>
+                </StackPanel>
             </Grid>
         </Border>
         
