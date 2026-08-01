@@ -483,7 +483,7 @@ public static class BankBuildService
     }
 
 
-    private static async Task RunAsync(string exe, string args, Action<string>? log)
+    private static async Task<string> RunAsync(string exe, string args, Action<string>? log, bool logStderr = true)
     {
         log?.Invoke($"$ {Path.GetFileName(exe)} {args}");
 
@@ -521,10 +521,12 @@ public static class BankBuildService
                 $"{Path.GetFileName(exe)} exited with code {p.ExitCode}" + (detail.Length > 0 ? $": {detail}" : ""));
         }
 
-        if (errText.Length > 0)
+        if (logStderr && errText.Length > 0)
         {
             log?.Invoke($"  [err] {errText}");
         }
+
+        return errText;
     }
 
     private static async Task EncodeAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)
@@ -534,7 +536,8 @@ public static class BankBuildService
             return;
         }
 
-        var filter = settings.LoudnessNormalize
+        var normalize = settings.LoudnessNormalize;
+        var filter = normalize
             ? await Loudnorm.FilterAsync(item.SourcePath, settings).ConfigureAwait(false)
             : "";
 
@@ -546,9 +549,23 @@ public static class BankBuildService
         }
 
         var af = filter.Length > 0 ? $"-af {filter} " : "";
+        var logArgs = normalize ? "-nostats -loglevel info " : "-loglevel error ";
 
-        await RunAsync(Tools.FfmpegPath,
-            $"-y -hide_banner -loglevel error -i \"{item.SourcePath}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{wav}\"",
-            log).ConfigureAwait(false);
+        var err = await RunAsync(Tools.FfmpegPath,
+            $"-y -hide_banner {logArgs}-i \"{item.SourcePath}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{wav}\"",
+            log, logStderr: !normalize).ConfigureAwait(false);
+
+        if (normalize)
+        {
+            var stats = Loudnorm.ParseSecondPass(err);
+            if (stats is { } s)
+            {
+                log?.Invoke($"loudnorm [{s.NormType}] in_I={s.InputI} in_LRA={s.InputLra} out_I={s.OutputI} | {Path.GetFileName(item.SourcePath)}");
+            }
+            else
+            {
+                log?.Invoke($"loudnorm: no stats | {Path.GetFileName(item.SourcePath)}");
+            }
+        }
     }
 }

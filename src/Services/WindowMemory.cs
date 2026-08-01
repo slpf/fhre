@@ -30,14 +30,13 @@ public static class WindowMemory
         }
 
         var w = window.Width;
-        var h = window.Height;
-
-        if (!double.IsFinite(w) || !double.IsFinite(h) || w <= 0 || h <= 0)
+        if (!double.IsFinite(w) || w <= 0)
         {
             return;
         }
 
-        settings.WindowSizes[key] = new WinSize { W = w, H = h };
+        var h = window.Height;
+        settings.WindowSizes[key] = new WinSize { W = w, H = double.IsFinite(h) && h > 0 ? h : 0 };
 
         try
         {

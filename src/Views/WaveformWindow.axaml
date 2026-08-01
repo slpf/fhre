@@ -5,9 +5,9 @@
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.WaveformWindow"
         x:DataType="vm:EditWindowViewModel"
-        Width="780" Height="765"
-        MinWidth="700" MinHeight="765"
-        MaxHeight="765"
+        Width="780"
+        MinWidth="700"
+        SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
         Title="{x:Static assets:Str.TitleMarkers}">
@@ -31,11 +31,11 @@
                 </StackPanel>
                 <Image Grid.Column="1" Source="avares://FH6RB/Assets/icons/icon_info.png" Width="12" Height="12"
                        HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip.Tip="{x:Static assets:Str.TipWaveHotkeys}"/>
-                
+
             </Grid>
-            
+
             <Border BorderBrush="{DynamicResource LineSoft}" BorderThickness="1" CornerRadius="3">
-                <ctl:WaveformView x:Name="Wave" Height="170" Peaks="{Binding Peaks}" 
+                <ctl:WaveformView x:Name="Wave" Height="170" Peaks="{Binding Peaks}"
                                   Markers="{Binding AllMarkers}" SampleLength="{Binding SampleLength}"/>
             </Border>
 
@@ -70,7 +70,7 @@
                            FontFamily="{DynamicResource MonoFont}" FontSize="11"
                            Foreground="{DynamicResource TxtMute}" TextAlignment="Center"
                            VerticalAlignment="Center" Margin="8,0,8,0"/>
-                
+
                 <Button Grid.Column="2" Classes="wave_act" Width="32" Height="32" Focusable="False"
                         Click="OnResetDefaults" ToolTip.Tip="{x:Static assets:Str.TipResetMarkers}"
                         Background="{DynamicResource BgInput}">
@@ -97,88 +97,87 @@
                 </Button>
             </Grid>
         </StackPanel>
-        
-        <Border Grid.Row="1" Margin="16,0,16,16" Background="{DynamicResource BgInput}"
-                            BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
-            <ScrollViewer Margin="16,16,16,16" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding Groups}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel>
-                                <ItemsControl ItemsSource="{Binding Fields}">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Grid ColumnDefinitions="*,Auto,120,Auto" Margin="0,1"
-                                                  Background="Transparent" Tag="{Binding}"
-                                                  PointerEntered="OnFieldNameEntered"
-                                                  PointerExited="OnFieldNameExited">
-                                                <DockPanel>
-                                                    <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" VerticalAlignment="Center"
-                                                               Classes="mk" Classes.hl="{Binding Highlighted}"
-                                                               Background="Transparent" Tag="{Binding}"
-                                                               PointerPressed="OnFieldNamePressed"
-                                                               ToolTip.Tip="{Binding Description}"
-                                                               FontSize="12"/>
-                                                    <Image DockPanel.Dock="Left" Width="14" Height="14" Margin="8,0,0,0"
-                                                           VerticalAlignment="Center" IsVisible="{Binding Locked}"
-                                                           Source="avares://FH6RB/Assets/icons/icon_lock.png"/>
-                                                    <Border VerticalAlignment="Center" Height="1" Margin="10,0"
-                                                            IsHitTestVisible="False"
-                                                            Background="{DynamicResource Line}"/>
-                                                </DockPanel>
-                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,10,0"
-                                                            IsVisible="{Binding CanLoop}">
-                                                    <Button Classes="mbutton" Width="18" Height="18" Margin="0,0,6,0"
-                                                            IsVisible="{Binding CanSuggest}"
-                                                            Click="OnSuggestLoops" Tag="{Binding}"
-                                                            ToolTip.Tip="{x:Static assets:Str.TipSuggestLoops}">
-                                                        <Image Classes="loop" Width="18" Height="18"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                    </Button>
-                                                    <Button Classes="mbutton" Width="18" Height="18"
-                                                            Click="OnPlayMarkerLoop" Tag="{Binding}"
-                                                            ToolTip.Tip="{Binding PlayLoopTip}">
-                                                        <Image Classes="play" Width="18" Height="18"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                    </Button>
-                                                </StackPanel>
-                                                <TextBox Grid.Column="2" Classes="field2" Tag="{Binding}"
-                                                         IsEnabled="{Binding Editable}"
-                                                         Text="{Binding SecondsText, Mode=TwoWay}"
-                                                         PlaceholderText="{x:Static assets:Str.WatermarkOff}"
-                                                         ToolTip.Tip="{Binding ValueTip}"
-                                                         ContextRequested="OnFieldContextRequested"
-                                                         FontFamily="{DynamicResource MonoFont}" FontSize="12">
-                                                    <TextBox.ContextFlyout>
-                                                        <MenuFlyout>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuCut}" Click="OnFieldCut"/>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuCopy}" Click="OnFieldCopy"/>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuPaste}" Click="OnFieldPaste"/>
-                                                            <Separator/>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuRevert}" Click="OnFieldRevert"/>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuReset}" Click="OnFieldReset"/>
-                                                            <Separator/>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuConvertSeconds}" Tag="toSeconds" Click="OnFieldToSeconds"/>
-                                                            <MenuItem Header="{x:Static assets:Str.MenuConvertSamples}" Tag="toSamples" Click="OnFieldToSamples"/>
-                                                        </MenuFlyout>
-                                                    </TextBox.ContextFlyout>
-                                                </TextBox>
-                                                <Button Grid.Column="3" Classes="mbutton" Width="14" Height="14" Margin="10,0,0,0"
-                                                        Click="OnSetFromPlayhead" Tag="{Binding}"
-                                                        IsEnabled="{Binding Editable}"
-                                                        ToolTip.Tip="{x:Static assets:Str.TipSetPlayhead}">
-                                                    <Image Classes="set" Width="14" Height="14"
+
+        <Border Grid.Row="1" Margin="16,0,16,16" VerticalAlignment="Top" Padding="16"
+                Background="{DynamicResource BgInput}"
+                BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+            <ItemsControl ItemsSource="{Binding Groups}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel>
+                            <ItemsControl ItemsSource="{Binding Fields}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid ColumnDefinitions="*,Auto,120,Auto" Margin="0,1"
+                                              Background="Transparent" Tag="{Binding}"
+                                              PointerEntered="OnFieldNameEntered"
+                                              PointerExited="OnFieldNameExited">
+                                            <DockPanel>
+                                                <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" VerticalAlignment="Center"
+                                                           Classes="mk" Classes.hl="{Binding Highlighted}"
+                                                           Background="Transparent" Tag="{Binding}"
+                                                           PointerPressed="OnFieldNamePressed"
+                                                           ToolTip.Tip="{Binding Description}"
+                                                           FontSize="12"/>
+                                                <Image DockPanel.Dock="Left" Width="14" Height="14" Margin="8,0,0,0"
+                                                       VerticalAlignment="Center" IsVisible="{Binding Locked}"
+                                                       Source="avares://FH6RB/Assets/icons/icon_lock.png"/>
+                                                <Border VerticalAlignment="Center" Height="1" Margin="10,0"
+                                                        IsHitTestVisible="False"
+                                                        Background="{DynamicResource Line}"/>
+                                            </DockPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,10,0"
+                                                        IsVisible="{Binding CanLoop}">
+                                                <Button Classes="mbutton" Width="18" Height="18" Margin="0,0,6,0"
+                                                        IsVisible="{Binding CanSuggest}"
+                                                        Click="OnSuggestLoops" Tag="{Binding}"
+                                                        ToolTip.Tip="{x:Static assets:Str.TipSuggestLoops}">
+                                                    <Image Classes="loop" Width="18" Height="18"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Button>
-                                            </Grid>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+                                                <Button Classes="mbutton" Width="18" Height="18"
+                                                        Click="OnPlayMarkerLoop" Tag="{Binding}"
+                                                        ToolTip.Tip="{Binding PlayLoopTip}">
+                                                    <Image Classes="play" Width="18" Height="18"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Button>
+                                            </StackPanel>
+                                            <TextBox Grid.Column="2" Classes="field2" Tag="{Binding}"
+                                                     IsEnabled="{Binding Editable}"
+                                                     Text="{Binding SecondsText, Mode=TwoWay}"
+                                                     PlaceholderText="{x:Static assets:Str.WatermarkOff}"
+                                                     ToolTip.Tip="{Binding ValueTip}"
+                                                     ContextRequested="OnFieldContextRequested"
+                                                     FontFamily="{DynamicResource MonoFont}" FontSize="12">
+                                                <TextBox.ContextFlyout>
+                                                    <MenuFlyout>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuCut}" Click="OnFieldCut"/>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuCopy}" Click="OnFieldCopy"/>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuPaste}" Click="OnFieldPaste"/>
+                                                        <Separator/>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuRevert}" Click="OnFieldRevert"/>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuReset}" Click="OnFieldReset"/>
+                                                        <Separator/>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuConvertSeconds}" Tag="toSeconds" Click="OnFieldToSeconds"/>
+                                                        <MenuItem Header="{x:Static assets:Str.MenuConvertSamples}" Tag="toSamples" Click="OnFieldToSamples"/>
+                                                    </MenuFlyout>
+                                                </TextBox.ContextFlyout>
+                                            </TextBox>
+                                            <Button Grid.Column="3" Classes="mbutton" Width="14" Height="14" Margin="10,0,0,0"
+                                                    Click="OnSetFromPlayhead" Tag="{Binding}"
+                                                    IsEnabled="{Binding Editable}"
+                                                    ToolTip.Tip="{x:Static assets:Str.TipSetPlayhead}">
+                                                <Image Classes="set" Width="14" Height="14"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </Border>
 
         <Border Grid.Row="2" Background="{DynamicResource Bg2}"

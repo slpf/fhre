@@ -4,9 +4,8 @@
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.MarkerDefaultsWindow"
         x:DataType="vm:MarkerDefaultsViewModel"
-        Width="400" Height="565"
-        MinWidth="400" MinHeight="565"
-        MaxWidth="400" MaxHeight="565"
+        Width="400"
+        SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
@@ -17,24 +16,23 @@
                    Foreground="{DynamicResource TxtMute}" FontSize="12" TextWrapping="Wrap"
                    Margin="20,16,20,12"/>
 
-        <Border Grid.Row="1" Margin="16,0,16,16" Background="{DynamicResource BgInput}"
+        <Border Grid.Row="1" Margin="16,0,16,16" Padding="16,16,8,16"
+                Background="{DynamicResource BgInput}"
                 BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
-            <ScrollViewer Margin="16,16,8,16" HorizontalScrollBarVisibility="Disabled">
-                <ItemsControl ItemsSource="{Binding Fields}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid ColumnDefinitions="*,140" Margin="4 2 6 2">
-                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
-                                           Foreground="{DynamicResource TxtMute}" FontSize="12"/>
-                                <TextBox Grid.Column="1" Classes="field2"
-                                         Text="{Binding Spec, Mode=TwoWay}"
-                                         PlaceholderText="{x:Static assets:Str.WatermarkOff}"
-                                         FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+            <ItemsControl ItemsSource="{Binding Fields}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Grid ColumnDefinitions="*,140" Margin="4 2 6 2">
+                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12"/>
+                            <TextBox Grid.Column="1" Classes="field2"
+                                     Text="{Binding Spec, Mode=TwoWay}"
+                                     PlaceholderText="{x:Static assets:Str.WatermarkOff}"
+                                     FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
         </Border>
 
         <Border Grid.Row="2" Background="{DynamicResource Bg2}"

@@ -10,6 +10,7 @@ public static class AudioDecoder
 {
     private static readonly string Dir = Path.Combine(AppPaths.TempBase, "preview");
     private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
+    private const int NormScheme = 2;
     private static int _purged;
 
     public static void ClearAll()
@@ -65,7 +66,7 @@ public static class AudioDecoder
         var norm = s.LoudnessNormalize;
         var i = s.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{i}|{tp}");
+        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{i}|{tp}|nv{NormScheme}");
         var outWav = Path.Combine(Dir, key + ".wav");
 
         if (File.Exists(outWav))
@@ -82,8 +83,20 @@ public static class AudioDecoder
         var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
         try
         {
-            Run(Tools.FfmpegPath,
-                $"-y -hide_banner -loglevel error -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{part}\"", ct);
+            var (_, err, code) = Proc.Run(Tools.FfmpegPath,
+                $"-y -hide_banner -nostats -loglevel info -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{part}\"",
+                ct, timeoutMs: 20 * 60 * 1000);
+
+            if (code != 0)
+            {
+                throw new InvalidOperationException($"ffmpeg exited {code}: {err.Trim()}");
+            }
+
+            if (norm)
+            {
+                LogLoudnorm(source, err);
+            }
+
             File.Move(part, outWav, overwrite: true);
         }
         catch
@@ -121,6 +134,18 @@ public static class AudioDecoder
         }
 
         return outWav;
+    }
+
+    private static void LogLoudnorm(string source, string stderr)
+    {
+        var sp = Loudnorm.ParseSecondPass(stderr);
+        if (sp is null)
+        {
+            Log.Line($"loudnorm: no stats | {Path.GetFileName(source)}");
+            return;
+        }
+
+        Log.Line($"loudnorm [{sp.NormType}] in_I={sp.InputI} in_LRA={sp.InputLra} out_I={sp.OutputI} | {Path.GetFileName(source)}");
     }
 
     private static long Stamp(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0;

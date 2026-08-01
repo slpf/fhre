@@ -33,6 +33,7 @@ public partial class WaveformWindow : Window
     private readonly HashSet<Key> _down = [];
     private MarkerField? _hoverField;
     private bool _shiftHeld;
+    private Win32HorizontalOnlyResize? _resizeLock;
 
     private const double SeekStep = 0.25;
 
@@ -79,6 +80,8 @@ public partial class WaveformWindow : Window
             _startSec = RegionStartSec;
             _headSec = RegionStartSec;
             UpdateUi();
+
+            _resizeLock = Win32HorizontalOnlyResize.TryAttach(this, ContentClientHeightPhysical);
         };
 
         Closed += (_, _) =>
@@ -105,6 +108,11 @@ public partial class WaveformWindow : Window
             Vm.Peaks = null;
             LoopFinder.ClearCache();
         };
+    }
+
+    private double ContentClientHeightPhysical()
+    {
+        return Content is Control c && RenderScaling > 0 ? c.DesiredSize.Height * RenderScaling : 0;
     }
 
     private double Total()
