@@ -22,7 +22,11 @@ public sealed class BackupRow
         Entry.Manifest.GameLabel, Entry.Manifest.StationNumber, Entry.Manifest.StationName);
 
     public string Meta => string.Format(Str.BackupMetaFmt,
-        Entry.Manifest.TrackCount, Entry.Manifest.CustomCount, CreatedLocal);
+        Entry.Manifest.TrackCount, Entry.Manifest.CustomCount, BankCount, CreatedLocal);
+
+    public int BankCount => Entry.Manifest.Variants.Count > 0
+        ? Entry.Manifest.Variants.Count
+        : string.IsNullOrEmpty(Entry.Manifest.BankName) ? 0 : 1;
 }
 
 public sealed partial class BackupsViewModel : ObservableObject

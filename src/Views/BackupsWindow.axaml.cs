@@ -27,7 +27,7 @@ public partial class BackupsWindow : Window
 
         var m = row.Entry.Manifest;
         var body = string.Format(Str.BackupRestoreBodyFmt, m.Name, m.GameLabel, m.StationNumber, m.StationName,
-            row.CreatedLocal, m.TrackCount, m.CustomCount);
+            row.CreatedLocal, m.TrackCount, m.CustomCount, row.BankCount);
 
         if (!await MessageDialog.ShowAsync(this, Str.BackupRestoreTitle, body, Str.BtnRestore, Str.BtnCancel))
         {

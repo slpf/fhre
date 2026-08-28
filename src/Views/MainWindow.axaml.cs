@@ -20,7 +20,14 @@ public partial class MainWindow : Window
     }
 
     private void OnOpened(object? sender, EventArgs e)
-        => SafeAsync.Run(OpenedAsync, "open", this);
+    {
+        Vm.ConfirmDiscardChanges = ConfirmDiscardChangesAsync;
+        SafeAsync.Run(OpenedAsync, "open", this);
+    }
+
+    private Task<bool> ConfirmDiscardChangesAsync() =>
+        MessageDialog.ShowAsync(this, Str.DlgSwitchUnsavedTitle, Str.DlgSwitchUnsavedBody,
+            Str.DlgSwitchUnsavedOk, Str.DlgSwitchUnsavedCancel);
 
     private async Task OpenedAsync()
     {
@@ -398,9 +405,10 @@ public partial class MainWindow : Window
 
         try
         {
-            await Task.Run(async () => await StationBackupService.RestoreAsync(target, gamePath, settings, Log.Line));
+            var (banks, langs) = await Task.Run(
+                async () => await StationBackupService.RestoreAsync(target, gamePath, settings, Log.Line));
             await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
-            status = string.Format(Str.StatusBackupRestoredFmt, target.Manifest.Name);
+            status = string.Format(Str.StatusBackupRestoredFmt, target.Manifest.Name, banks, langs);
         }
         catch (Exception ex)
         {

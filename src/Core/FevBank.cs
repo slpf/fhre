@@ -905,6 +905,7 @@ public sealed class FevBank
         }
         
         f.Write(ModMarker, 0, ModMarker.Length);
+        f.Flush(flushToDisk: true);
     }
     
     public static readonly byte[] ModMarker = "FH6RBANK"u8.ToArray();
@@ -914,25 +915,43 @@ public sealed class FevBank
         try
         {
             using var fs = File.OpenRead(path);
-            
+
             if (fs.Length < ModMarker.Length) return false;
             fs.Seek(-ModMarker.Length, SeekOrigin.End);
-            
+
             var buf = new byte[ModMarker.Length];
             var read = 0;
-            
+
             while (read < buf.Length)
             {
                 var k = fs.Read(buf, read, buf.Length - read);
                 if (k <= 0) return false;
                 read += k;
             }
-            
+
             return buf.AsSpan().SequenceEqual(ModMarker);
         }
         catch
         {
             return false;
+        }
+    }
+
+    public static bool LooksModified(string path)
+    {
+        if (HasModMarker(path))
+        {
+            return true;
+        }
+
+        try
+        {
+            var ids = ReadStblIdsFromFile(path);
+            return Naming.ScanCustomTracks(ids).Count > 0;
+        }
+        catch
+        {
+            return true;
         }
     }
 

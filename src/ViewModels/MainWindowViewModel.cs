@@ -119,6 +119,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly Dictionary<string, FileStream> _sourceLocks = new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressReload;
     private int _loadGen;
+    private (LangOption Lang, int StationNumber, string Variant)? _loadedSelection;
+    
+    public Func<Task<bool>>? ConfirmDiscardChanges { get; set; }
     
     private readonly PlaybackService _player = new();
     private TrackItemViewModel? _nowPlaying;
@@ -335,7 +338,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         if (!_suppressReload)
         {
-            _ = LoadAsync();
+            RequestLoadAsync();
         }
     }
 
@@ -360,7 +363,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _suppressReload = wasSuppressed;
         if (!_suppressReload)
         {
-            _ = LoadAsync();
+            RequestLoadAsync();
         }
     }
 
@@ -368,7 +371,66 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (!_suppressReload)
         {
+            RequestLoadAsync();
+        }
+    }
+
+    private void RequestLoadAsync()
+    {
+        if (!HasUnsavedChanges)
+        {
             _ = LoadAsync();
+            return;
+        }
+
+        _ = ConfirmSwitchAsync();
+    }
+
+    private async Task ConfirmSwitchAsync()
+    {
+        _loadGen++;
+
+        var proceed = ConfirmDiscardChanges is null || await ConfirmDiscardChanges!.Invoke();
+
+        if (proceed)
+        {
+            await LoadAsync();
+            return;
+        }
+
+        var sel = _loadedSelection;
+
+        if (sel is null)
+        {
+            await LoadAsync();
+            return;
+        }
+        
+        _suppressReload = true;
+        IsLoading = false;
+
+        try
+        {
+            if (SelectedLanguage != sel.Value.Lang)
+            {
+                SelectedLanguage = sel.Value.Lang;
+            }
+
+            var station = Stations.FirstOrDefault(s => s.Number == sel.Value.StationNumber);
+
+            if (station is not null && !Equals(SelectedStation, station))
+            {
+                SelectedStation = station;
+            }
+
+            if (Variants.Contains(sel.Value.Variant))
+            {
+                SelectedVariant = sel.Value.Variant;
+            }
+        }
+        finally
+        {
+            _suppressReload = false;
         }
     }
 
@@ -389,6 +451,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var gen = ++_loadGen;
         var station = SelectedStation;
         var bank = station.BankName(SelectedVariant);
+        _loadedSelection = (SelectedLanguage, station.Number, SelectedVariant);
 
         Log.Line($"LoadAsync #{gen}: lang={SelectedLanguage.FileName} station=#{station.Number} variant={SelectedVariant} bank={bank}");
 
@@ -1526,7 +1589,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             File.Copy(bankPath, bankBak);
         }
-        else if (!BankLooksModified(bankPath))
+        else if (!FevBank.LooksModified(bankPath))
         {
             File.Copy(bankPath, bankBak, overwrite: true);
             Log.Line($"  .bak refreshed from clean (vanilla) bank: {Path.GetFileName(bankPath)}");
@@ -1563,24 +1626,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         radio.Save(path);
     }
     
-    private static bool BankLooksModified(string bankPath)
-    {
-        if (FevBank.HasModMarker(bankPath))
-        {
-            return true;
-        }
-
-        try
-        {
-            var ids = FevBank.ReadStblIdsFromFile(bankPath);
-            return Naming.ScanCustomTracks(ids).Count > 0;
-        }
-        catch
-        {
-            return true;
-        }
-    }
-
     private static bool XmlIsMarked(string path)
     {
         try

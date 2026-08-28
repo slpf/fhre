@@ -153,6 +153,13 @@ public static class Str
     public const string DlgUnsavedOk = "Quit anyway";
     public const string DlgUnsavedCancel = "Keep editing";
 
+    public const string DlgSwitchUnsavedTitle = "Unsaved changes";
+    public const string DlgSwitchUnsavedBody =
+        "You have changes that haven't been built into the bank yet " +
+        "(added, edited, replaced or toggled tracks). Build to keep them.\n\nSwitch anyway and discard them?";
+    public const string DlgSwitchUnsavedOk = "Switch anyway";
+    public const string DlgSwitchUnsavedCancel = "Keep editing";
+
     public const string DlgBuildProgressTitle = "Build in progress";
     public const string DlgBuildProgressBody =
         "A build is still running. Quitting now may leave the bank half-written " +
@@ -236,22 +243,19 @@ public static class Str
     public const string BackupNameWatermark = "Enter a name for this backup";
     public const string BackupEmpty = "No station backups yet.";
     public const string BackupInfoFmt = "{0} · R{1} {2}";
-    public const string BackupMetaFmt = "{0} tracks · {1} custom · {2}";
+    public const string BackupMetaFmt = "{0} tracks · {1} custom · {2} banks · {3}";
     public const string BackupRestoreTitle = "Restore backup";
-    public const string BackupRestoreBodyFmt = "Restore this backup? The current station data will be overwritten.\n\nName: {0}\nGame: {1}\nStation: R{2} {3}\nCreated: {4}\nTracks: {5} (custom {6})";
+    public const string BackupRestoreBodyFmt = "Restore this backup? The current station data will be overwritten.\n\nName: {0}\nGame: {1}\nStation: R{2} {3}\nCreated: {4}\nTracks: {5} (custom {6})\nBanks: {7}";
     public const string BackupDeleteTitle = "Delete backup";
     public const string BackupDeleteBodyFmt = "Delete backup \"{0}\"?";
     public const string StatusBackupNoStation = "Select a station first.";
+
     public const string BtnResetSettings = "Reset";
     public const string TipResetSettings = "Reset all settings to defaults (keeps the game folder)";
     public const string DlgResetSettingsTitle = "Reset settings";
     public const string DlgResetSettingsBody = "Reset all settings to their defaults? This also restores the default marker positions. Your game folder is kept, and tracks you have added are not affected.";
     public const string DlgResetSettingsOk = "Reset";
     public const string DlgResetSettingsCancel = "Cancel";
-    public const string DlgBackupUnbuiltTitle = "Unbuilt changes";
-    public const string DlgBackupUnbuiltBody = "You have added or replaced tracks that haven’t been built into the game yet. A backup only captures the current game files, so these pending tracks won’t be included — they will show as 0 custom. Build first if you want them in the backup.\n\nCreate the backup anyway?";
-    public const string DlgBackupUnbuiltOk = "Back up anyway";
-    public const string DlgBackupUnbuiltCancel = "Cancel";
     public const string StatusBackupSavedFmt = "Backup saved: {0}";
     public const string StatusBackupFailedFmt = "Backup failed: {0}";
     public const string StatusBackupSaving = "Saving backup…";
@@ -279,7 +283,7 @@ public static class Str
 
     public const string TipSearch = "Search tracks";
     public const string SearchWatermark = "Search…";
-    public const string StatusBackupRestoredFmt = "Backup restored: {0}";
+    public const string StatusBackupRestoredFmt = "Backup restored: {0} ({1} banks, {2} languages)";
 
     public const string TitleLoopSearch = "Loop search settings";
     public const string SecLoopSearch = "LOOP SEARCH MODE";
