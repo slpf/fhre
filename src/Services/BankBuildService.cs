@@ -160,7 +160,14 @@ public static class BankBuildService
             var outBank = fev.FillEmpty(emptyStbl, combined);
             log?.Invoke($"filled empty skeleton: {newCustoms.Count} sample(s)");
 
-            File.WriteAllBytes(outPath, outBank);
+            using (var fs = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            {
+                fs.Write(outBank, 0, outBank.Length);
+                // same tail marker as the populated path, so the bank is recognized as modified
+                fs.Write(FevBank.ModMarker, 0, FevBank.ModMarker.Length);
+                fs.Flush(flushToDisk: true);
+            }
+
             WorkDirs.Clean();
             return emptyAdded;
         }

@@ -57,7 +57,13 @@ public static class Atomic
         var tmp = Tmp(dst);
         try
         {
-            File.Copy(src, tmp, overwrite: true);
+            using (var inFs = File.OpenRead(src))
+            using (var outFs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            {
+                inFs.CopyTo(outFs);
+                outFs.Flush(flushToDisk: true);
+            }
+
             File.Move(tmp, dst, overwrite: true);
         }
         finally

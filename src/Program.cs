@@ -8,9 +8,9 @@ using FH6RB.Services;
 [assembly: AssemblyTitle("Forza Horizon Radio Extender")]
 [assembly: AssemblyDescription("Forza Horizon Radio Extender")]
 [assembly: AssemblyCopyright("Chisou")]
-[assembly: AssemblyVersion("0.5.7")]
-[assembly: AssemblyFileVersion("0.5.7")]
-[assembly: AssemblyInformationalVersion("0.5.7")]
+[assembly: AssemblyVersion("0.5.8")]
+[assembly: AssemblyFileVersion("0.5.8")]
+[assembly: AssemblyInformationalVersion("0.5.8")]
 
 namespace FH6RB;
 

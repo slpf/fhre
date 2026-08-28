@@ -22,6 +22,20 @@ function Fail($msg) {
     exit 1
 }
 
+# Antivirus often holds freshly written executables for a moment;
+# retry removal instead of failing the build on a transient lock.
+function Remove-PathWithRetry([string]$Path, [int]$Attempts = 6, [int]$DelayMs = 500) {
+    for ($i = 1; $i -le $Attempts; $i++) {
+        try {
+            if (Test-Path $Path) { Remove-Item -Recurse -Force $Path -ErrorAction Stop }
+            return $true
+        } catch {
+            if ($i -lt $Attempts) { Start-Sleep -Milliseconds $DelayMs }
+        }
+    }
+    return $false
+}
+
 Write-Host '============================================'
 Write-Host '  FHRE release build'
 Write-Host '============================================'
@@ -32,9 +46,9 @@ if (-not (Test-Path $Proj))  { Fail "project not found: $Proj (run from project 
 if (-not (Test-Path $Tools)) { Fail "tools folder not found: $Tools." }
 
 # --- clean previous outputs ---
-if (Test-Path $Dist)     { Write-Host "Removing old $Dist ...";     Remove-Item -Recurse -Force $Dist }
-if (Test-Path $BuildOut) { Write-Host "Removing old $BuildOut ..."; Remove-Item -Recurse -Force $BuildOut }
-if (Test-Path $Zip)      { Remove-Item -Force $Zip }
+if (Test-Path $Dist)     { Write-Host "Removing old $Dist ...";     if (-not (Remove-PathWithRetry $Dist))     { Fail "cannot remove old $Dist - locked by another process (antivirus?). Close it and retry." } }
+if (Test-Path $BuildOut) { Write-Host "Removing old $BuildOut ..."; if (-not (Remove-PathWithRetry $BuildOut)) { Fail "cannot remove old $BuildOut - locked by another process (antivirus?). Close it and retry." } }
+if (Test-Path $Zip)      { if (-not (Remove-PathWithRetry $Zip)) { Fail "cannot remove old $Zip - locked by another process." } }
 
 # --- [1/5] publish ---
 Write-Host ''
@@ -61,14 +75,69 @@ Copy-Item -Path (Join-Path $Tools '*') -Destination $Dist -Recurse -Force
 # --- [4/5] zip ---
 Write-Host ''
 Write-Host "[4/5] Creating $Zip ..."
-Compress-Archive -Path (Join-Path $Dist '*') -DestinationPath $Zip -Force
+
+# Freshly copied executables are often briefly locked by an antivirus scan,
+# which aborts Compress-Archive halfway through (and the half-written zip then
+# gets locked too). Zip entry by entry with per-file retries into a temp file,
+# then rename at the end.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$zipTmp = "$Zip.tmp"
+if ((Test-Path $zipTmp) -and (-not (Remove-PathWithRetry $zipTmp))) { Fail "cannot remove stale $zipTmp - locked by another process." }
+
+$filesToZip = @(Get-ChildItem -Path $Dist -Recurse -File | ForEach-Object { $_.FullName })
+$distRoot = (Resolve-Path $Dist).ProviderPath.TrimEnd('\')
+
+$zipStream = [System.IO.File]::Open($zipTmp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+$archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+
+try {
+    foreach ($src in $filesToZip) {
+        $rel = $src.Substring($distRoot.Length + 1).Replace('\', '/')
+        $entry = $archive.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
+        $copied = $false
+
+        for ($i = 1; ($i -le 15) -and (-not $copied); $i++) {
+            try {
+                $in = [System.IO.File]::Open($src, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+                try {
+                    $es = $entry.Open()
+                    try { $in.CopyTo($es) } finally { $es.Dispose() }
+                    $copied = $true
+                } finally { $in.Close() }
+            } catch {
+                if ($i -eq 1) { Write-Host "  $rel is locked (antivirus?), retrying ..." }
+                if ($i -lt 15) { Start-Sleep -Milliseconds 500 }
+            }
+        }
+
+        if (-not $copied) { Fail "cannot read $rel - locked by another process (antivirus?). Add a project-folder exclusion and retry." }
+    }
+} finally {
+    $archive.Dispose()
+    $zipStream.Dispose()
+}
+
+$moved = $false
+for ($i = 1; ($i -le 10) -and (-not $moved); $i++) {
+    try {
+        if (Test-Path $Zip) { Remove-Item -Force $Zip -ErrorAction Stop }
+        Move-Item -Path $zipTmp -Destination $Zip -ErrorAction Stop
+        $moved = $true
+    } catch {
+        if ($i -lt 10) { Start-Sleep -Milliseconds 500 }
+    }
+}
+
+if (-not $moved)           { Fail "cannot finalize $Zip - locked by another process (antivirus?)." }
 if (-not (Test-Path $Zip)) { Fail "zip not created: $Zip." }
 
 # --- [5/5] cleanup ---
 Write-Host ''
 Write-Host '[5/5] Cleaning up ...'
-if (Test-Path $Bin)  { Remove-Item -Recurse -Force $Bin }
-if (Test-Path $Dist) { Remove-Item -Recurse -Force $Dist }
+if (-not (Remove-PathWithRetry $Bin))  { Write-Host "  WARNING: could not remove $Bin (locked) - remove it manually." -ForegroundColor Yellow }
+if (-not (Remove-PathWithRetry $Dist)) { Write-Host "  WARNING: could not remove $Dist (locked) - remove it manually." -ForegroundColor Yellow }
 
 Write-Host ''
 Write-Host '============================================' -ForegroundColor Green

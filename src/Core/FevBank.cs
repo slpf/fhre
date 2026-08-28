@@ -905,6 +905,9 @@ public sealed class FevBank
         }
         
         f.Write(ModMarker, 0, ModMarker.Length);
+        // the caller renames this temp over the live bank; make sure the bytes hit the
+        // disk first so a power loss can't leave a renamed-but-incomplete bank behind
+        f.Flush(flushToDisk: true);
     }
     
     public static readonly byte[] ModMarker = "FH6RBANK"u8.ToArray();
@@ -914,25 +917,48 @@ public sealed class FevBank
         try
         {
             using var fs = File.OpenRead(path);
-            
+
             if (fs.Length < ModMarker.Length) return false;
             fs.Seek(-ModMarker.Length, SeekOrigin.End);
-            
+
             var buf = new byte[ModMarker.Length];
             var read = 0;
-            
+
             while (read < buf.Length)
             {
                 var k = fs.Read(buf, read, buf.Length - read);
                 if (k <= 0) return false;
                 read += k;
             }
-            
+
             return buf.AsSpan().SequenceEqual(ModMarker);
         }
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// True if the bank differs from vanilla: carries our tail marker, or (for banks
+    /// built before the marker existed) contains custom sound names. Used to decide
+    /// whether a .bak may be refreshed from this file - never refresh from a modified bank.
+    /// </summary>
+    public static bool LooksModified(string path)
+    {
+        if (HasModMarker(path))
+        {
+            return true;
+        }
+
+        try
+        {
+            var ids = ReadStblIdsFromFile(path);
+            return Naming.ScanCustomTracks(ids).Count > 0;
+        }
+        catch
+        {
+            return true;
         }
     }
 
