@@ -73,12 +73,8 @@ public static class BankBuildService
                     return;
                 }
 
-                var encodeItem = IsFsbSource(item.SourcePath)
-                    ? item with { SourcePath = AudioDecoder.DecodeBank(item.SourcePath!, 0) }
-                    : item;
-
                 var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
-                await EncodeAsync(encodeItem, wav, settings, log).ConfigureAwait(false);
+                await EncodeAsync(item, wav, settings, log).ConfigureAwait(false);
 
                 var fsb = Path.Combine(WorkDirs.FsbDir, $"add_{i}.fsb");
                 try { if (File.Exists(fsb)) File.Delete(fsb); } catch { }
@@ -227,12 +223,8 @@ public static class BankBuildService
                     return;
                 }
 
-                var encodeItem = IsFsbSource(item.SourcePath)
-                    ? item with { SourcePath = AudioDecoder.DecodeBank(item.SourcePath!, 0) }
-                    : item;
-
                 var wav = Path.Combine(WorkDirs.WavDir, $"add_{i}.wav");
-                await EncodeAsync(encodeItem, wav, settings, log).ConfigureAwait(false);
+                await EncodeAsync(item, wav, settings, log).ConfigureAwait(false);
 
                 var fsb = Path.Combine(WorkDirs.FsbDir, $"add_{i}.fsb");
                 try { if (File.Exists(fsb)) File.Delete(fsb); } catch { }
@@ -542,12 +534,14 @@ public static class BankBuildService
             return;
         }
 
-        var normalize = settings.LoudnessNormalize;
+        var isFsb = IsFsbSource(item.SourcePath);
+        var sourcePath = isFsb ? AudioDecoder.DecodeBank(item.SourcePath, 0) : item.SourcePath;
+        var normalize = !isFsb && settings.LoudnessNormalize;
         var filter = normalize
-            ? await Loudnorm.FilterAsync(item.SourcePath, settings).ConfigureAwait(false)
+            ? await Loudnorm.FilterAsync(sourcePath, settings).ConfigureAwait(false)
             : "";
 
-        if (item.GainDb is { } g && Math.Abs(g) > 0.01)
+        if (!isFsb && item.GainDb is { } g && Math.Abs(g) > 0.01)
         {
             filter = filter.Length > 0
                 ? filter + $",volume={g.ToString("0.0", CultureInfo.InvariantCulture)}dB"
@@ -558,7 +552,7 @@ public static class BankBuildService
         var logArgs = normalize ? "-nostats -loglevel info " : "-loglevel error ";
 
         var err = await RunAsync(Tools.FfmpegPath,
-            $"-y -hide_banner {logArgs}-i \"{item.SourcePath}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{wav}\"",
+            $"-y -hide_banner {logArgs}-i \"{sourcePath}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{wav}\"",
             log, logStderr: !normalize).ConfigureAwait(false);
 
         if (normalize)
