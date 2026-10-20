@@ -17,7 +17,8 @@ public sealed class Fsb5
     private const int HeaderSize = 60;
     private const ulong OffMask = 0x07FFFFFFUL << 7;
 
-    private static readonly int[] FreqTable = [0, 8000, 11000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000];
+    private static readonly int[] FreqTable = [4000, 8000, 11000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000];
+    private static readonly int[] ChannelTable = [1, 2, 6, 8];
 
     private byte[] Header60 { get; }
     public List<Fsb5Sample> Samples { get; }
@@ -29,141 +30,27 @@ public sealed class Fsb5
     
     public static (long Frames, int SampleRate)[] ReadSampleInfo(byte[] b)
     {
-        if (b.Length < HeaderSize || b[0] != (byte)'F' || b[1] != (byte)'S' || b[2] != (byte)'B' || b[3] != (byte)'5')
-        {
-            return [];
-        }
-
-        var numSamples = (int) U32(b, 8);
-        var sampleHeaderSize = (int) U32(b, 12);
-        var nameStart = HeaderSize + sampleHeaderSize;
-
-        if (numSamples < 0 || numSamples > (b.Length - HeaderSize) / 8)
-        {
-            return [];
-        }
-
-        var res = new (long, int)[numSamples];
-        var pos = HeaderSize;
-
-        for (var i = 0; i < numSamples; i++)
-        {
-            if (pos + 8 > b.Length)
-            {
-                break;
-            }
-
-            var raw = U64(b, pos);
-            var freqId = (int)((raw >> 1) & 0xF);
-            var frames = (long)((raw >> 34) & 0x3FFFFFFF);
-
-            var p = pos + 8;
-            if ((raw & 1) != 0)
-            {
-                while (p + 4 <= b.Length)
-                {
-                    var ch = U32(b, p);
-                    var size = (int)((ch >> 1) & 0xFFFFFF);
-                    p += 4 + size;
-                    if ((ch & 1) == 0) break;
-                }
-            }
-
-            res[i] = (frames, freqId < FreqTable.Length ? FreqTable[freqId] : 0);
-            pos = p;
-            if (pos > nameStart) break;
-        }
-
-        return res;
+        try { return ReadLayout(b).Samples.Select(s => (s.Frames, s.SampleRate)).ToArray(); }
+        catch (InvalidDataException) { return []; }
     }
 
     public static Fsb5 Parse(byte[] b)
     {
-        if (b.Length < HeaderSize || b[0] != (byte)'F' || b[1] != (byte)'S' || b[2] != (byte)'B' || b[3] != (byte)'5')
+        var (header60, layout) = ReadLayout(b);
+        var dataStart = HeaderSize + (long) U32(b, 12) + U32(b, 16);
+        if (dataStart + U32(b, 20) > b.Length)
         {
-            throw new InvalidDataException("not an FSB5 block");
+            throw new InvalidDataException("FSB5 data region is truncated");
         }
-
-        var numSamples = (int) U32(b, 8);
-        var sampleHeaderSize = (int) U32(b, 12);
-        var nameSize = (int) U32(b, 16);
-        long dataSize = U32(b, 20);
-
-        if (numSamples < 0 || numSamples > (b.Length - HeaderSize) / 8)
+        var samples = new List<Fsb5Sample>(layout.Count);
+        foreach (var sample in layout)
         {
-            throw new InvalidDataException($"FSB5 implausible sample count {numSamples}");
-        }
-
-        var header60 = b[0..HeaderSize];
-        var shStart = HeaderSize;
-        var nameStart = HeaderSize + sampleHeaderSize;
-        var dataStart = nameStart + nameSize;
-
-        var hdrOff = new int[numSamples];
-        var hdrLen = new int[numSamples];
-        var dataOff = new long[numSamples];
-        var frames = new long[numSamples];
-        var freqId = new int[numSamples];
-        var chans = new int[numSamples];
-
-        var pos = shStart;
-        
-        for (int i = 0; i < numSamples; i++)
-        {
-            if (pos + 8 > b.Length)
-            {
-                throw new InvalidDataException("FSB5 sample header truncated");
-            }
-
-            var raw = U64(b, pos);
-            freqId[i] = (int)((raw >> 1) & 0xF);
-            chans[i] = (int)((raw >> 5) & 0x3) + 1;
-            dataOff[i] = (long)((raw >> 7) & 0x07FFFFFF) * 0x20;
-            frames[i] = (long)((raw >> 34) & 0x3FFFFFFF);
-
-            var p = pos + 8;
-            
-            if ((raw & 1) != 0)
-            {
-                while (p + 4 <= b.Length)
-                {
-                    var ch = U32(b, p);
-                    var size = (int)((ch >> 1) & 0xFFFFFF);
-                    p += 4 + size;
-                    if ((ch & 1) == 0) break;
-                }
-            }
-            
-            hdrOff[i] = pos; hdrLen[i] = p - pos;
-            pos = p;
-        }
-
-        if (pos > nameStart)
-        {
-            throw new InvalidDataException($"FSB5 header walk overran at 0x{pos:x}, expected <= 0x{nameStart:x}");
-        }
-        
-        var samples = new List<Fsb5Sample>(numSamples);
-        
-        for (var i = 0; i < numSamples; i++)
-        {
-            var end = (i + 1 < numSamples) ? dataOff[i + 1] : dataSize;
-            var dStart = (int) (dataStart + dataOff[i]);
-            var dEnd = (int) (dataStart + end);
-
-            if (hdrOff[i] < 0 || hdrLen[i] < 0 || hdrOff[i] + hdrLen[i] > b.Length
-                || dStart < 0 || dEnd < dStart || dEnd > b.Length)
-            {
-                throw new InvalidDataException($"FSB5 sample {i} data range out of bounds");
-            }
-
+            var start = checked((int) (dataStart + sample.DataOff));
+            var end = checked((int) (dataStart + sample.DataOff + sample.DataLen));
             samples.Add(new Fsb5Sample
             {
-                Header = b[hdrOff[i]..(hdrOff[i] + hdrLen[i])],
-                Data = b[dStart..dEnd],
-                Frames = frames[i],
-                SampleRate = freqId[i] < FreqTable.Length ? FreqTable[freqId[i]] : 0,
-                Channels = chans[i],
+                Header = sample.Header, Data = b[start..end], Frames = sample.Frames,
+                SampleRate = sample.SampleRate, Channels = sample.Channels,
             });
         }
         
@@ -172,10 +59,11 @@ public sealed class Fsb5
 
     private static void RebaseOffsetInto(byte[] header, long byteOffset, Span<byte> dest)
     {
-        if (byteOffset % 0x20 != 0)
+        if (byteOffset < 0 || byteOffset % 0x20 != 0 || byteOffset / 0x20 > 0x07FFFFFF)
         {
-            throw new ArgumentException("data offset must be 0x20-aligned");
+            throw new ArgumentException("data offset must fit the FSB5 field and be 0x20-aligned");
         }
+        if (header.Length < 8) throw new InvalidDataException("FSB5 sample header is truncated");
         
         header.CopyTo(dest);
         
@@ -184,7 +72,7 @@ public sealed class Fsb5
         BinaryPrimitives.WriteUInt64LittleEndian(dest, raw);
     }
 
-    public sealed record SampleLayout(byte[] Header, long DataOff, long DataLen, long Frames, int SampleRate);
+    public sealed record SampleLayout(byte[] Header, long DataOff, long DataLen, long Frames, int SampleRate, int Channels = 0);
 
     public static (byte[] Header60, List<SampleLayout> Samples) ReadLayout(byte[] b)
     {
@@ -193,34 +81,40 @@ public sealed class Fsb5
             throw new InvalidDataException("not an FSB5 block");
         }
 
-        var numSamples = (int) U32(b, 8);
-        var sampleHeaderSize = (int) U32(b, 12);
+        if (U32(b, 4) != 1) throw new InvalidDataException($"unsupported FSB5 version {U32(b, 4)}");
+        var sampleHeaderSize = U32(b, 12);
+        var count = U32(b, 8);
         long dataSize = U32(b, 20);
-
-        if (numSamples < 0 || numSamples > (b.Length - HeaderSize) / 8)
+        if (sampleHeaderSize > b.Length - HeaderSize || count > sampleHeaderSize / 8)
         {
-            throw new InvalidDataException($"FSB5 implausible sample count {numSamples}");
+            throw new InvalidDataException($"FSB5 sample header region is invalid (count={count}, bytes={sampleHeaderSize})");
         }
+        var numSamples = checked((int) count);
+        var headerEnd = HeaderSize + checked((int) sampleHeaderSize);
 
         var header60 = b[0..HeaderSize];
         var hdrOff = new int[numSamples];
         var hdrLen = new int[numSamples];
         var dataOff = new long[numSamples];
         var frames = new long[numSamples];
-        var freqId = new int[numSamples];
+        var rates = new int[numSamples];
+        var channels = new int[numSamples];
 
         var pos = HeaderSize;
         
         for (var i = 0; i < numSamples; i++)
         {
-            if (pos + 8 > b.Length)
+            if (pos > headerEnd - 8)
             {
                 throw new InvalidDataException("FSB5 layout: header region truncated");
             }
             
             var raw = U64(b, pos);
             
-            freqId[i]  = (int)((raw >> 1) & 0xF);
+            var freqId = (int)((raw >> 1) & 0xF);
+            if (freqId >= FreqTable.Length) throw new InvalidDataException($"FSB5 sample {i} has invalid frequency id {freqId}");
+            rates[i] = FreqTable[freqId];
+            channels[i] = ChannelTable[(int)((raw >> 5) & 0x3)];
             dataOff[i] = (long)((raw >> 7) & 0x07FFFFFF) * 0x20;
             frames[i]  = (long)((raw >> 34) & 0x3FFFFFFF);
 
@@ -228,13 +122,34 @@ public sealed class Fsb5
             
             if ((raw & 1) != 0)
             {
-                while (p + 4 <= b.Length)
+                uint chunk;
+                do
                 {
-                    var ch = U32(b, p);
-                    var size = (int)((ch >> 1) & 0xFFFFFF);
-                    p += 4 + size;
-                    if ((ch & 1) == 0) break;
-                }
+                    if (p > headerEnd - 4) throw new InvalidDataException($"FSB5 sample {i} metadata header is truncated");
+                    chunk = U32(b, p);
+                    var size = (int)((chunk >> 1) & 0xFFFFFF);
+                    var type = chunk >> 25;
+                    p += 4;
+                    if (size > headerEnd - p) throw new InvalidDataException($"FSB5 sample {i} metadata payload is truncated");
+                    switch (type)
+                    {
+                        case 1:
+                            if (size < 1 || b[p] == 0) throw new InvalidDataException($"FSB5 sample {i} has invalid channel metadata");
+                            channels[i] = b[p];
+                            break;
+                        case 2:
+                            if (size < 4 || U32(b, p) == 0 || U32(b, p) > int.MaxValue)
+                                throw new InvalidDataException($"FSB5 sample {i} has invalid frequency metadata");
+                            rates[i] = (int) U32(b, p);
+                            break;
+                        case 14:
+                            if (size < 4 || U32(b, p) == 0 || U32(b, p) > int.MaxValue / channels[i])
+                                throw new InvalidDataException($"FSB5 sample {i} has invalid layer metadata");
+                            channels[i] *= (int) U32(b, p);
+                            break;
+                    }
+                    p += size;
+                } while ((chunk & 1) != 0);
             }
 
             hdrOff[i] = pos;
@@ -247,8 +162,10 @@ public sealed class Fsb5
         for (var i = 0; i < numSamples; i++)
         {
             var end = (i + 1 < numSamples) ? dataOff[i + 1] : dataSize;
+            if (dataOff[i] > dataSize || end < dataOff[i] || end > dataSize)
+                throw new InvalidDataException($"FSB5 sample {i} data offsets are invalid");
             samples.Add(new SampleLayout(b[hdrOff[i]..(hdrOff[i] + hdrLen[i])], dataOff[i], end - dataOff[i],
-                frames[i], freqId[i] < FreqTable.Length ? FreqTable[freqId[i]] : 0));
+                frames[i], rates[i], channels[i]));
         }
 
         return (header60, samples);

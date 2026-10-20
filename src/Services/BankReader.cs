@@ -46,8 +46,26 @@ public static class BankReader
         var markersById = new Dictionary<ulong, Dictionary<string, long>>();
         var replaced = new HashSet<ulong>();
         var enabled = new HashSet<ulong>();
+        var usesMilliseconds = radio?.StationByNumber(stationNumber)?.UsesMilliseconds == true;
 
-        if (radio is not null)
+        if (usesMilliseconds)
+        {
+            var station = radio!.StationByNumber(stationNumber)!;
+            foreach (var track in station.ReadTracks())
+            {
+                var id = Lookup.SoundNameToId(track.SoundName);
+                meta.TryAdd(id, (track.SoundName, track.DisplayName, track.Artist));
+                if (track.Enabled) enabled.Add(id);
+                if (track.Replaced) replaced.Add(id);
+                if (track.Markers is { Count: > 0 })
+                {
+                    markersById.TryAdd(id, track.Markers.ToDictionary(m => m.Key, m => m.Value));
+                }
+            }
+
+            Log.Line($"  XML: meta entries = {meta.Count}, FreeroamTracks@#{stationNumber} = {enabled.Count}");
+        }
+        else if (radio is not null)
         {
             foreach (var s in radio.Document.Descendants("Sample"))
             {
@@ -104,6 +122,13 @@ public static class BankReader
             var hasMeta = meta.TryGetValue(t.Id, out var m);
             var soundName = hasMeta ? m.Sn : customName ?? $"sound_{t.Index}";
             var isCustom = soundName.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal);
+            IReadOnlyDictionary<string, long>? markers = markersById.GetValueOrDefault(t.Id);
+            if (usesMilliseconds && hasAudio && markers is not null)
+            {
+                markers = markers.ToDictionary(m => m.Key,
+                    m => m.Value < 0 ? m.Value : checked((long) decimal.Round(m.Value * (decimal) t.SampleRate / 1000,
+                        0, MidpointRounding.AwayFromZero)));
+            }
 
             result.Add(new RadioTrack
             {
@@ -116,7 +141,8 @@ public static class BankReader
                 SampleRate = t.SampleRate,
                 SubIndex = hasAudio ? t.Index : -1,
                 Replaced = replaced.Contains(t.Id),
-                Markers = markersById.TryGetValue(t.Id, out var mk) ? mk : null,
+                UsesMilliseconds = usesMilliseconds,
+                Markers = markers,
             });
         }
 

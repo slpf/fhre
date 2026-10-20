@@ -11,6 +11,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public string SoundName { get; }
     public TrackOrigin Origin { get; }
     public bool IsCustom => Origin == TrackOrigin.Custom;
+    public bool UsesMilliseconds { get; }
     
     public bool CanDelete => IsCustom;
     public bool CanRestoreDefault => !IsCustom && (IsReplacing || Replaced);
@@ -62,6 +63,12 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     partial void OnReplacementPathChanged(string? value)
     {
+        if (value is not null)
+        {
+            RestoreFromBak = false;
+            RestoreBakIndex = -1;
+            RestoreFsbPath = null;
+        }
         OnPropertyChanged(nameof(IsReplacing));
         OnPropertyChanged(nameof(ShowRplBadge));
         OnPropertyChanged(nameof(ShowCstBadge));
@@ -80,6 +87,29 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     public Dictionary<string, long>? Markers { get; set; }
 
+    public void StageReplacement(string sourcePath, string title, string? artist, double durationSeconds,
+        bool resetMarkers)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+        var markerRate = SampleRate > 0 ? SampleRate : BankSampleRate;
+        if (resetMarkers)
+        {
+            Markers = null;
+        }
+        else if (UsesMilliseconds && markerRate > 0 && markerRate != 48000 && Markers is { } markers)
+        {
+            Markers = markers.ToDictionary(m => m.Key,
+                m => m.Value < 0 ? -1 : checked((long) Math.Round(m.Value * (48000.0 / markerRate))));
+        }
+        ReplacementPath = sourcePath;
+        Title = title;
+        Artist = artist;
+        var duration = double.IsFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+        SampleRate = UsesMilliseconds ? 48000 : 0;
+        SampleLength = UsesMilliseconds ? checked((long) Math.Round(duration * SampleRate)) : 0;
+        PendingDurationSeconds = duration > 0 ? duration : null;
+    }
+
     [ObservableProperty] private string _title = "";
     [ObservableProperty] private string? _artist;
     [ObservableProperty] private bool _enabled;
@@ -91,6 +121,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     {
         SoundName = track.SoundName;
         Origin = track.Origin;
+        UsesMilliseconds = track.UsesMilliseconds;
         SampleLength = track.SampleLength;
         SampleRate = track.SampleRate;
         BankSampleLength = track.SampleLength;

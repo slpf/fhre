@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace FH6RB.Services;
@@ -8,16 +9,16 @@ public static class Loudnorm
     private const double DefaultLra = 11.0;
     private const double MaxLra = 50.0;
 
-    public static string Filter(string source, AppSettings settings)
+    public static string Filter(string source, AppSettings settings, Action<string>? log = null)
     {
         var basef = BaseFilter(settings);
-        return BuildFilter(settings, Measure(source, basef));
+        return BuildFilter(settings, Measure(source, basef, log));
     }
 
-    public static async Task<string> FilterAsync(string source, AppSettings settings)
+    public static async Task<string> FilterAsync(string source, AppSettings settings, Action<string>? log = null)
     {
         var basef = BaseFilter(settings);
-        return BuildFilter(settings, await MeasureAsync(source, basef).ConfigureAwait(false));
+        return BuildFilter(settings, await MeasureAsync(source, basef, log).ConfigureAwait(false));
     }
 
     public static async Task<string?> MeasureIntegratedAsync(string source)
@@ -44,7 +45,9 @@ public static class Loudnorm
                 Get("input_i"),
                 Get("input_lra"),
                 Get("output_i"),
-                Get("output_lra"));
+                Get("output_lra"),
+                Get("input_tp"),
+                Get("output_tp"));
         }
         catch
         {
@@ -100,34 +103,38 @@ public static class Loudnorm
     private static string Fmt(double d) => Math.Round(d, 2).ToString(CultureInfo.InvariantCulture);
 
     private static string MeasureArgs(string source, string basef)
-        => $"-hide_banner -i \"{source}\" -af {basef}:print_format=json -f null -";
+        => $"-hide_banner -nostats -i \"{source}\" -map 0:a:0 -af {basef}:print_format=json -f null -";
 
-    private static (string Mi, string Mtp, string Mlra, string Mthresh, string Off)? Measure(string source, string basef)
+    private static (string Mi, string Mtp, string Mlra, string Mthresh, string Off)? Measure(string source, string basef, Action<string>? log = null)
     {
+        var timer = Stopwatch.StartNew();
+        var args = MeasureArgs(source, basef);
+        log?.Invoke($"loudnorm.measure.start $ ffmpeg {args}");
         try
         {
-            var (_, err, code) = Proc.Run(Tools.FfmpegPath, MeasureArgs(source, basef), timeoutMs: 5 * 60 * 1000);
-            return code != 0 ? null : Parse(err);
+            var (_, err, code) = Proc.Run(Tools.FfmpegPath, args, timeoutMs: 5 * 60 * 1000);
+            if (log is not null)
+            {
+                foreach (var line in err.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    log($"loudnorm.measure.stderr {line.TrimEnd('\r')}");
+                }
+                log($"loudnorm.measure.exit code={code} elapsedMs={timer.ElapsedMilliseconds}");
+            }
+            var measured = code != 0 ? null : Parse(err);
+            if (measured is null) log?.Invoke("WARN loudnorm.measure.fallback: no finite first-pass statistics; using dynamic normalization.");
+            return measured;
         }
-        catch
+        catch (Exception ex)
         {
+            log?.Invoke($"WARN loudnorm.measure.failed elapsedMs={timer.ElapsedMilliseconds}: {ex}; using dynamic normalization.");
             return null;
         }
     }
 
-    private static async Task<(string Mi, string Mtp, string Mlra, string Mthresh, string Off)?> MeasureAsync(string source, string basef)
+    private static async Task<(string Mi, string Mtp, string Mlra, string Mthresh, string Off)?> MeasureAsync(string source, string basef, Action<string>? log = null)
     {
-        try
-        {
-            var (_, err, code) = await Task.Run(
-                () => Proc.Run(Tools.FfmpegPath, MeasureArgs(source, basef), timeoutMs: 5 * 60 * 1000)
-            ).ConfigureAwait(false);
-            return code != 0 ? null : Parse(err);
-        }
-        catch
-        {
-            return null;
-        }
+        return await Task.Run(() => Measure(source, basef, log)).ConfigureAwait(false);
     }
 
     private static (string Mi, string Mtp, string Mlra, string Mthresh, string Off)? Parse(string text)
@@ -174,5 +181,6 @@ public static class Loudnorm
         return (open < 0 || close <= open) ? null : text[open..(close + 1)];
     }
 
-    public sealed record SecondPass(string? NormType, string? InputI, string? InputLra, string? OutputI, string? OutputLra);
+    public sealed record SecondPass(string? NormType, string? InputI, string? InputLra, string? OutputI, string? OutputLra,
+        string? InputTp = null, string? OutputTp = null);
 }

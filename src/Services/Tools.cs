@@ -31,5 +31,6 @@ public static class Tools
     {
         if (!HasFfmpeg) yield return "ffmpeg";
         if (!HasFsbankcl) yield return "fsbankcl";
+        if (!HasVgmstream) yield return "vgmstream";
     }
 }

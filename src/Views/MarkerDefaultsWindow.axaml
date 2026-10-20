@@ -12,7 +12,7 @@
         Title="{x:Static assets:Str.TitleMarkerDefaults}">
 
     <Grid RowDefinitions="Auto,*,Auto">
-        <TextBlock Grid.Row="0" Text="{x:Static assets:Str.HintMarkerDefaults}"
+        <TextBlock Grid.Row="0" Text="{Binding Hint}"
                    Foreground="{DynamicResource TxtMute}" FontSize="12" TextWrapping="Wrap"
                    Margin="20,16,20,12"/>
 

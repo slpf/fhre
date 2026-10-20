@@ -9,6 +9,7 @@ public static class BackupService
     [
         "R*_Tracks_*.assets.bank.bak",
         "R*_Tracks.bank.bak",
+        "HZ2_MX_Radio_*_Tracks.bank.bak",
         "RadioInfo_*.xml.bak",
     ];
 

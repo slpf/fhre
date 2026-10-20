@@ -33,6 +33,11 @@ public static partial class RadioCatalog
             else
             {
                 var m4 = PlainRegex().Match(bank);
+
+                if (!m4.Success)
+                {
+                    m4 = Horizon2Regex().Match(bank);
+                }
                 
                 if (!m4.Success)
                 {
@@ -88,4 +93,7 @@ public static partial class RadioCatalog
 
     [GeneratedRegex(@"^R(\d+)_Tracks$")]
     private static partial Regex PlainRegex();
+
+    [GeneratedRegex(@"^HZ2_MX_Radio_(\d+)_Tracks$", RegexOptions.IgnoreCase)]
+    private static partial Regex Horizon2Regex();
 }

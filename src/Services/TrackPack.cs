@@ -154,15 +154,18 @@ public static class TrackPack
     public static ImportedPack Load(string path)
     {
         var dir = Path.Combine(AppPaths.TempBase, "import", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
-
         PackManifest manifest;
 
         using (var fs = File.OpenRead(path))
         using (var zip = new ZipArchive(fs, ZipArchiveMode.Read))
         {
-            var manifestEntry = zip.GetEntry(ManifestEntry)
-                ?? throw new InvalidDataException("not a FH6RB export (no manifest)");
+            var manifestEntries = zip.Entries.Where(entry => entry.FullName == ManifestEntry).ToArray();
+            if (manifestEntries.Length != 1)
+            {
+                throw new InvalidDataException(manifestEntries.Length == 0
+                    ? "not a FH6RB export (no manifest)" : "export contains duplicate manifests");
+            }
+            var manifestEntry = manifestEntries[0];
 
             using (var mes = manifestEntry.Open())
             {
@@ -181,27 +184,79 @@ public static class TrackPack
                     $"export version {manifest.Version} is newer than supported {CurrentVersion}");
             }
 
+            if (manifest.Tracks is null)
+            {
+                throw new InvalidDataException("export has no track list");
+            }
+
+            var audioEntries = new Dictionary<string, (ZipArchiveEntry Entry, string File)>(StringComparer.Ordinal);
+            var destinations = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in zip.Entries)
             {
-                if (!entry.FullName.StartsWith(AudioPrefix, StringComparison.Ordinal)) continue;
-
-                var name = entry.FullName[AudioPrefix.Length..];
-                if (string.IsNullOrEmpty(name)) continue;
-
-                var dest = Path.Combine(dir, SafeFileName(name));
-                using (var es = entry.Open())
-                using (var outs = File.Create(dest))
+                var entryName = entry.FullName.Replace('\\', '/');
+                if (!entryName.StartsWith(AudioPrefix, StringComparison.Ordinal)
+                    || entryName.EndsWith('/')) continue;
+                entryName = AudioEntryName(entryName);
+                var fileName = SafeFileName(entryName[AudioPrefix.Length..]);
+                if (!audioEntries.TryAdd(entryName, (entry, fileName)))
                 {
-                    es.CopyTo(outs);
+                    throw new InvalidDataException($"duplicate audio entry: {entry.FullName}");
                 }
+                if (!destinations.Add(fileName))
+                {
+                    throw new InvalidDataException($"audio entries resolve to the same file: {fileName}");
+                }
+            }
+
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            var planned = new List<(PackTrack Track, string EntryName, ZipArchiveEntry Entry, string File)>();
+            foreach (var track in manifest.Tracks)
+            {
+                if (track is null || string.IsNullOrWhiteSpace(track.Id))
+                {
+                    throw new InvalidDataException("export contains a track without an id");
+                }
+                if (!ids.Add(track.Id))
+                {
+                    throw new InvalidDataException($"duplicate track id: {track.Id}");
+                }
+                if (track.GainDb is { } gain && !double.IsFinite(gain))
+                {
+                    throw new InvalidDataException($"track {track.Id} has an invalid gain");
+                }
+                var entryName = AudioEntryName(track.File);
+                if (!audioEntries.TryGetValue(entryName, out var audio))
+                {
+                    throw new InvalidDataException($"audio file not found for track {track.Id}: {track.File}");
+                }
+                if (audio.Entry.Length <= 0)
+                {
+                    throw new InvalidDataException($"audio file is empty for track {track.Id}: {track.File}");
+                }
+                planned.Add((track, entryName, audio.Entry, audio.File));
+            }
+
+            Directory.CreateDirectory(dir);
+            var extracted = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var item in planned)
+            {
+                var dest = Path.Combine(dir, item.File);
+                if (extracted.Add(item.EntryName))
+                {
+                    using var es = item.Entry.Open();
+                    using var output = new FileStream(dest, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    es.CopyTo(output);
+                }
+                item.Track.File = item.File;
+                Log.Line($"pack import \"{path}\": track={item.Track.Id}, title=\"{item.Track.DisplayName}\", " +
+                    $"entry=\"{item.EntryName}\" -> \"{dest}\", bytes={item.Entry.Length}, " +
+                    $"frames={item.Track.SampleLength}, rate={item.Track.SampleRate}, " +
+                    $"gain={item.Track.GainDb?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none"}, " +
+                    $"markers={item.Track.Markers?.Count ?? 0}");
             }
         }
 
-        foreach (var t in manifest.Tracks)
-        {
-            t.File = SafeFileName(Path.GetFileName(t.File));
-        }
-
+        Log.Line($"pack import complete: \"{path}\", tracks={manifest.Tracks.Count}, directory=\"{dir}\"");
         return new ImportedPack(manifest, dir);
     }
 
@@ -222,9 +277,25 @@ public static class TrackPack
 
     private static string SafeFileName(string name)
     {
+        name = name.Replace('/', '_').Replace('\\', '_');
         foreach (var c in Path.GetInvalidFileNameChars())
         {
             name = name.Replace(c, '_');
+        }
+        name = name.TrimEnd(' ', '.');
+        if (name.Length == 0) throw new InvalidDataException("audio entry has an empty file name");
+        return name;
+    }
+
+    private static string AudioEntryName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new InvalidDataException("track has no audio file");
+        name = name.Replace('\\', '/');
+        if (!name.Contains('/')) name = AudioPrefix + name;
+        if (!name.StartsWith(AudioPrefix, StringComparison.Ordinal)
+            || name[AudioPrefix.Length..].Split('/').Any(part => string.IsNullOrWhiteSpace(part) || part is "." or ".."))
+        {
+            throw new InvalidDataException($"invalid audio entry path: {name}");
         }
         return name;
     }
@@ -240,18 +311,15 @@ public static class TrackPack
         }
 
         var sl = layout[sub0];
-        var data = new byte[sl.DataLen];
-
         using var fs = File.OpenRead(bankPath);
-        fs.Position = sk.DataStartAbs + sl.DataOff;
-
-        var read = 0;
-        while (read < data.Length)
+        if (sl.DataOff < 0 || sl.DataLen < 0 || sl.DataLen > int.MaxValue
+            || sk.DataStartAbs + sl.DataOff + sl.DataLen > fs.Length)
         {
-            var n = fs.Read(data, read, data.Length - read);
-            if (n <= 0) break;
-            read += n;
+            throw new InvalidDataException($"sample {sub0} data is outside {Path.GetFileName(bankPath)}");
         }
+        var data = new byte[checked((int) sl.DataLen)];
+        fs.Position = sk.DataStartAbs + sl.DataOff;
+        fs.ReadExactly(data);
 
         return Fsb5.BuildSingleSample(header60, new Fsb5Sample { Header = sl.Header, Data = data });
     }

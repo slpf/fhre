@@ -10,7 +10,7 @@ public static class AudioDecoder
 {
     private static readonly string Dir = Path.Combine(AppPaths.TempBase, "preview");
     private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
-    private const int NormScheme = 2;
+    private const int NormScheme = 3;
     private static int _purged;
 
     public static void ClearAll()
@@ -68,29 +68,28 @@ public static class AudioDecoder
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
         var key = Key($"add|{source}|{Stamp(source)}|{norm}|{i}|{tp}|nv{NormScheme}");
         var outWav = Path.Combine(Dir, key + ".wav");
+        var context = $"preview source \"{source}\"";
 
         if (File.Exists(outWav))
         {
+            LogWave(context, outWav, cacheHit: true);
             return outWav;
         }
+
+        Log.Line($"{context}: cache miss, normalize={norm}, target_I={i}, target_TP={tp}, source_stamp={Stamp(source)}");
 
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
-        var filter = norm ? Loudnorm.Filter(source, s) : "";
+        var filter = norm ? Loudnorm.Filter(source, s, message => Log.Line($"{context}: {message}")) : "";
         var af = filter.Length > 0 ? $"-af {filter} " : "";
 
         var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
         try
         {
-            var (_, err, code) = Proc.Run(Tools.FfmpegPath,
-                $"-y -hide_banner -nostats -loglevel info -i \"{source}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{part}\"",
-                ct, timeoutMs: 20 * 60 * 1000);
-
-            if (code != 0)
-            {
-                throw new InvalidOperationException($"ffmpeg exited {code}: {err.Trim()}");
-            }
+            var err = Run(Tools.FfmpegPath,
+                $"-y -hide_banner -nostats -loglevel info -i \"{source}\" -map 0:a:0 -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{part}\"",
+                context, ct);
 
             if (norm)
             {
@@ -98,6 +97,7 @@ public static class AudioDecoder
             }
 
             File.Move(part, outWav, overwrite: true);
+            LogWave(context, outWav, cacheHit: false);
         }
         catch
         {
@@ -110,27 +110,65 @@ public static class AudioDecoder
 
     public static string DecodeBank(string bankPath, int sub0, CancellationToken ct = default)
     {
-        var key = Key($"bank|{bankPath}|{Stamp(bankPath)}|{sub0}");
+        if (sub0 < 0) throw new ArgumentOutOfRangeException(nameof(sub0));
+        var key = Key($"bank|{bankPath}|{Stamp(bankPath)}|{sub0}|bv3");
         var outWav = Path.Combine(Dir, key + ".wav");
+        var context = $"preview bank \"{bankPath}\" sample[{sub0}]";
 
         if (File.Exists(outWav))
         {
+            LogWave(context, outWav, cacheHit: true);
             return outWav;
         }
+
+        Log.Line($"{context}: cache miss, source_stamp={Stamp(bankPath)}");
 
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
         var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
+        string? extractedFsb = null;
         try
         {
-            Run(Tools.VgmstreamPath, $"-s {sub0 + 1} -o \"{part}\" \"{bankPath}\"", ct);
+            ct.ThrowIfCancellationRequested();
+            var decodePath = bankPath;
+            var decodeIndex = sub0;
+            bool rawFsb;
+            using (var source = File.OpenRead(bankPath))
+            {
+                Span<byte> magic = stackalloc byte[4];
+                source.ReadExactly(magic);
+                rawFsb = magic.SequenceEqual("FSB5"u8);
+            }
+            if (!rawFsb)
+            {
+                Log.Line($"{context}: extracting selected sample as standalone FSB5");
+                var fsb = TrackPack.ExtractSampleFsb(bankPath, sub0);
+                ct.ThrowIfCancellationRequested();
+                extractedFsb = Path.ChangeExtension(part, ".fsb");
+                File.WriteAllBytes(extractedFsb, fsb);
+                Log.Line($"{context}: extracted FSB5=\"{extractedFsb}\", bytes={fsb.Length}, " +
+                    $"sha256={Convert.ToHexString(SHA256.HashData(fsb))}");
+                decodePath = extractedFsb;
+                decodeIndex = 0;
+            }
+            Run(Tools.VgmstreamPath, $"-i -s {decodeIndex + 1} -o \"{part}\" \"{decodePath}\"", context, ct);
             File.Move(part, outWav, overwrite: true);
+            LogWave(context, outWav, cacheHit: false);
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Line($"{context}: preview failed: {ex.Message}");
             try { File.Delete(part); } catch { }
             throw;
+        }
+        finally
+        {
+            if (extractedFsb is not null)
+            {
+                try { File.Delete(extractedFsb); }
+                catch (Exception ex) { Log.Line($"{context}: could not delete extracted FSB5: {ex.Message}"); }
+            }
         }
 
         return outWav;
@@ -145,20 +183,69 @@ public static class AudioDecoder
             return;
         }
 
-        Log.Line($"loudnorm [{sp.NormType}] in_I={sp.InputI} in_LRA={sp.InputLra} out_I={sp.OutputI} | {Path.GetFileName(source)}");
+        Log.Line($"loudnorm [{sp.NormType}] in_I={sp.InputI} in_LRA={sp.InputLra} in_TP={sp.InputTp} " +
+            $"out_I={sp.OutputI} out_LRA={sp.OutputLra} out_TP={sp.OutputTp} | {Path.GetFileName(source)}");
     }
 
-    private static long Stamp(string path) => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0;
+    private static string Stamp(string path)
+    {
+        var file = new FileInfo(path);
+        return file.Exists ? $"{file.LastWriteTimeUtc.Ticks}:{file.Length}" : "missing";
+    }
 
     private static string Key(string s) => Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(s)))[..16];
 
-    private static void Run(string exe, string args, CancellationToken ct = default)
+    private static void LogWave(string context, string path, bool cacheHit)
     {
-        var (_, err, code) = Proc.Run(exe, args, ct, timeoutMs: 20 * 60 * 1000);
-
-        if (code != 0)
+        try
         {
-            throw new InvalidOperationException($"{Path.GetFileName(exe)} exited {code}: {err.Trim()}");
+            var (rate, frames) = WaveformService.Probe(path);
+            var seconds = rate > 0 ? frames / (double) rate : 0;
+            Log.Line($"{context}: cache={(cacheHit ? "hit" : "written")}, wav=\"{path}\", " +
+                $"bytes={new FileInfo(path).Length}, frames={frames}, rate={rate}, " +
+                $"duration={seconds.ToString("0.000", CultureInfo.InvariantCulture)}s");
         }
+        catch (Exception ex)
+        {
+            Log.Line($"{context}: could not inspect preview WAV: {ex.Message}");
+        }
+    }
+
+    private static string Run(string exe, string args, string context, CancellationToken ct)
+    {
+        var timer = Stopwatch.StartNew();
+        Log.Line($"{context}: $ {Path.GetFileName(exe)} {args}");
+        try
+        {
+            var (output, err, code) = Proc.Run(exe, args, ct, timeoutMs: 20 * 60 * 1000);
+            Log.Line($"{context}: {Path.GetFileName(exe)} exit={code}, elapsed_ms={timer.ElapsedMilliseconds}");
+            LogOutput(context, "out", output);
+            LogOutput(context, "err", err);
+            if (code != 0)
+            {
+                var detail = string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim();
+                throw new InvalidOperationException($"{Path.GetFileName(exe)} exited {code}: {detail}");
+            }
+            return err;
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Line($"{context}: canceled after {timer.ElapsedMilliseconds} ms");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Line($"{context}: failed after {timer.ElapsedMilliseconds} ms: {ex.Message}");
+            throw;
+        }
+    }
+
+    private static void LogOutput(string context, string stream, string text)
+    {
+        text = text.Trim();
+        if (text.Length == 0) return;
+        const int limit = 32000;
+        var output = text.Length <= limit ? text : text[..limit] + $"\n(truncated, {text.Length} characters total)";
+        Log.Line($"{context} [{stream}] {output}");
     }
 }

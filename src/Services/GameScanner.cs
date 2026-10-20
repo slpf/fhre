@@ -119,7 +119,9 @@ public static partial class GameScanner
         {
             return Directory
                 .EnumerateFiles(gamePath, "ForzaHorizon*.exe", SearchOption.TopDirectoryOnly)
-                .FirstOrDefault();
+                .FirstOrDefault()
+                ?? Directory.EnumerateFiles(gamePath, "forza_durango_*.exe", SearchOption.TopDirectoryOnly)
+                    .FirstOrDefault();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -136,6 +138,11 @@ public static partial class GameScanner
         }
 
         var name = Path.GetFileNameWithoutExtension(exe);
+        if (name.StartsWith("forza_durango_", StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+
         var m = Regex.Match(name, @"\d+$");
         return m.Success && int.TryParse(m.Value, out var v) ? v : 0;
     }
@@ -224,6 +231,10 @@ public static partial class GameScanner
         names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank", stats: stats)
             .Select(f => Path.GetFileName(f)[..^bank.Length])
             .Where(n => PlainBankRegex().IsMatch(n)));
+
+        names.AddRange(SafeEnumerate(gamePath, "HZ2_MX_Radio_*_Tracks.bank", stats: stats)
+            .Select(f => Path.GetFileName(f)[..^bank.Length])
+            .Where(n => Horizon2BankRegex().IsMatch(n)));
 
         var result = names.Distinct().OrderBy(x => x).ToList();
         Log.Line($"GameScanner: radio banks = {result.Count} [{string.Join(", ", result)}]");
@@ -328,4 +339,7 @@ public static partial class GameScanner
 
     [GeneratedRegex(@"^R\d+_Tracks$")]
     private static partial Regex PlainBankRegex();
+
+    [GeneratedRegex(@"^HZ2_MX_Radio_\d+_Tracks$", RegexOptions.IgnoreCase)]
+    private static partial Regex Horizon2BankRegex();
 }

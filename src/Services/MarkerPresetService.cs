@@ -17,6 +17,24 @@ public static class MarkerPresetService
 
     public static string Root => Path.Combine(AppContext.BaseDirectory, "markers");
 
+    public static Dictionary<string, long> AdaptMarkers(IReadOnlyDictionary<string, long> markers,
+        bool usesMilliseconds, int sampleRate)
+    {
+        var result = new Dictionary<string, long>(markers);
+        var target = usesMilliseconds ? "TrackBreakDown" : "PostDrop";
+        var source = usesMilliseconds ? "PostDrop" : "TrackBreakDown";
+        if (!result.ContainsKey(target) && result.TryGetValue(source, out var breakdown))
+        {
+            result[target] = breakdown;
+        }
+        if (usesMilliseconds && !result.ContainsKey("StingerStart")
+            && result.TryGetValue("DJStart", out var dj))
+        {
+            result["StingerStart"] = dj < 0 ? -1 : Math.Max(0, dj - (sampleRate > 0 ? sampleRate : DefaultSampleRate));
+        }
+        return result;
+    }
+
     private static string FilePathFor(string name) => Path.Combine(Root, Sanitize(name) + ".json");
 
     private static string Resolve(string rel)

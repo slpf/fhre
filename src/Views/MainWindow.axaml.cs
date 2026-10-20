@@ -152,6 +152,10 @@ public partial class MainWindow : Window
         {
             Vm.ReloadFromGame();
         }
+        else if (vm.Saved)
+        {
+            Vm.RecalcProjectedSize();
+        }
 
         if (firstRun && !GameScanner.IsValid(Vm.Settings.GamePath))
         {
@@ -223,7 +227,8 @@ public partial class MainWindow : Window
         var sources = Vm.Tracks
             .Select(t => new BackupTrackSource(
                 t.SoundName, t.IsCustom, t.IsReplacing, t.Replaced,
-                t.SourcePath, t.ReplacementPath, t.SubIndex,
+                t.RestoreFsbPath ?? t.SourcePath, t.ReplacementPath,
+                t.RestoreFsbPath is not null ? -1 : t.SubIndex,
                 t.Title, t.Artist, t.SampleLength, t.SampleRate,
                 t.GainDb, t.Enabled, t.Markers))
             .ToList();
@@ -749,17 +754,7 @@ public partial class MainWindow : Window
         var resetMarkers = await MessageDialog.ShowAsync(this, Str.DlgReplaceResetMarkersTitle, Str.DlgReplaceResetMarkersBody,
             Str.BtnYes, Str.BtnNo);
 
-        track.ReplacementPath = path;
-        track.Title = mTitle ?? fTitle;
-        track.Artist = mArtist ?? fArtist;
-
-        if (resetMarkers)
-        {
-            track.Markers = null;
-        }
-        track.SampleLength = 0;
-        track.SampleRate = 0;
-        track.PendingDurationSeconds = mDuration > 0 ? mDuration : null;
+        track.StageReplacement(path, mTitle ?? fTitle, mArtist ?? fArtist, mDuration, resetMarkers);
 
         Vm.MarkDirty();
         Vm.RefreshNowPlaying();

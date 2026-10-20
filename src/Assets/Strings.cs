@@ -130,7 +130,7 @@ public static class Str
     public const string ErrNoRadioInfo = "No RadioInfo_*.xml found. Check the game folder, or close the program.";
     public const string ErrScanEmptyPath = "Select the Forza Horizon installation folder.";
     public const string ErrScanDirectoryMissingFmt = "Folder not found: {0}";
-    public const string ErrScanExeMissingFmt = "No ForzaHorizon*.exe in this folder: {0}";
+    public const string ErrScanExeMissingFmt = "No ForzaHorizon*.exe or forza_durango_*.exe in this folder: {0}";
     public const string ErrScanLanguageMissing = "No RadioInfo_*.xml in this folder. Point at the Forza Horizon installation, not a subfolder.";
     public const string ErrScanAccessDeniedFmt = "Some subfolders are blocked ({0}). Close Forza / Steam / antivirus and try again.";
     public const string ErrScanTransientLockFmt = "Some subfolders are temporarily locked ({0}). Try again in a moment.";
@@ -192,6 +192,9 @@ public static class Str
     public const string MkDjStart = "Free-roam: where the DJ comes in at the end and the music fades out.\n\nBest at the very end on the fade.";
     public const string MkDjDrop = "Free-roam: where the DJ stops talking over the intro and the music comes to the front.\n\nBest after the intro or on an early drop.";
     public const string MkDjSegment = "Free-roam: a DJ line over the middle of the track, layered on top of the music.\n\nBest on a calmer mid-track section.";
+    public const string MkTrackBreakDown = "FH2: the track breakdown marker used during events.";
+    public const string MkStingerStart = "FH2: where the station stinger begins before the DJ transition.";
+    public const string MkTrackDropHorizon2 = "Events: where the track starts when an event begins, right after the countdown.\n\nBest on a first drop.";
     public const string MkTrackDrop = "Events: where the track starts when an event begins, right after the countdown.\n\nBest on a first drop.\n\nMust not exceed TrackLoopEnd.";
     public const string MkPostDrop = "Events: the point reached after crossing the finish line.\n\nBest on a final drop.\n\nMust not exceed PostRaceLoopEnd.";
     public const string MkTrackLoopStart = "Events: start of the loop played during the event.\n\nPick a section that loops cleanly with TrackLoopEnd.";
@@ -233,6 +236,7 @@ public static class Str
     public const string TipResetAllMarkers = "Reset markers for all custom and replaced tracks";
     public const string TitleMarkerDefaults = "Custom-track marker values";
     public const string HintMarkerDefaults = "Default positions for custom-track markers.";
+    public const string HintMarkerDefaultsHorizon2 = "Default positions for custom-track markers. StingerStart defaults to one second before DJStart.";
     public const string BtnRestoreDefaults = "Restore defaults";
 
     public const string TipSaveBackup = "Save station backup";

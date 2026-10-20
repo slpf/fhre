@@ -50,7 +50,19 @@ public sealed partial class MarkerField : ObservableObject
             SampleLength > 0 ? (double) Position / SampleLength * 100 : 0);
 
     public void Revert() => Position = InitialPosition;
-    public void Reset() => Position = MarkerDefaults.Resolve(MarkerDefaults.Get(Name), SampleLength, SampleRate);
+    public void Reset()
+    {
+        var defaultName = Name switch
+        {
+            "TrackBreakDown" => "PostDrop",
+            "StingerStart" => "DJStart",
+            _ => Name,
+        };
+        var position = MarkerDefaults.Resolve(MarkerDefaults.Get(defaultName), SampleLength, SampleRate);
+        Position = Name == "StingerStart" && position >= 0
+            ? Math.Max(0, position - SampleRate)
+            : position;
+    }
     
     public string SecondsText
     {
@@ -144,6 +156,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
     public bool CanEditMarkers { get; }
     public long SampleLength { get; }
     public int SampleRate { get; }
+    public bool UsesMilliseconds { get; }
     public double TotalSeconds => SampleRate > 0 ? SampleLength / (double) SampleRate : 0;
 
     [ObservableProperty] private float[]? _peaks;
@@ -195,7 +208,17 @@ public sealed partial class EditWindowViewModel : ObservableObject
         (Str.GrpTrackLoops, ["TrackLoopStart", "TrackLoopEnd", "PostDrop", "PostRaceLoopStart", "PostRaceLoopEnd"]),
     ];
 
+    private static readonly (string Group, string[] Names)[] Horizon2Schema =
+    [
+        (Str.GrpCore, ["TrackStart", "End"]),
+        (Str.GrpDjDrops, ["DJDrop", "DJStart", "StingerStart", "TrackDrop", "TrackBreakDown"]),
+    ];
+
     public static readonly HashSet<string> EditorMarkerNames = new(Schema.SelectMany(s => s.Names));
+    private static readonly HashSet<string> Horizon2MarkerNames = new(Horizon2Schema.SelectMany(s => s.Names));
+
+    public static IReadOnlySet<string> MarkerNamesFor(bool usesMilliseconds) =>
+        usesMilliseconds ? Horizon2MarkerNames : EditorMarkerNames;
 
     private static readonly Dictionary<string, string> Descriptions = new()
     {
@@ -210,6 +233,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
         ["TrackLoopEnd"] = Str.MkTrackLoopEnd,
         ["PostRaceLoopStart"] = Str.MkPostRaceLoopStart,
         ["PostRaceLoopEnd"] = Str.MkPostRaceLoopEnd,
+        ["TrackBreakDown"] = Str.MkTrackBreakDown,
+        ["StingerStart"] = Str.MkStingerStart,
     };
 
     public EditWindowViewModel(TrackItemViewModel track)
@@ -220,6 +245,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
         _title = track.Title;
         _artist = track.Artist;
         _gainDb = track.GainDb ?? 0;
+        UsesMilliseconds = track.UsesMilliseconds;
 
         var rate = track.SampleRate;
         var len = track.SampleLength;
@@ -229,10 +255,12 @@ public sealed partial class EditWindowViewModel : ObservableObject
         SampleRate = rate;
 
         var end = len > 0 ? len - 1 : -1;
-        var auto = len > 0 ? RadioStationEditor.ComputeAutoMarkers(len, rate) : null;
-        var existing = track.Markers;
+        var auto = len > 0 ? RadioStationEditor.ComputeAutoMarkers(len, rate, UsesMilliseconds) : null;
+        var existing = track.Markers is { } markers
+            ? MarkerPresetService.AdaptMarkers(markers, UsesMilliseconds, rate)
+            : null;
 
-        foreach (var (group, names) in Schema)
+        foreach (var (group, names) in UsesMilliseconds ? Horizon2Schema : Schema)
         {
             var grp = new MarkerGroup { Title = group };
 
@@ -258,9 +286,11 @@ public sealed partial class EditWindowViewModel : ObservableObject
                     };
                 }
 
-                grp.Fields.Add(new MarkerField { Name = name, Description = Descriptions.GetValueOrDefault(name, ""), SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position,
-                    LoopEndName = name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", "TrackDrop" => "TrackLoopEnd", "PostDrop" => "PostRaceLoopEnd", _ => null },
-                    LoopReturnToName = name switch { "TrackDrop" => "TrackLoopStart", "PostDrop" => "PostRaceLoopStart", _ => null } });
+                grp.Fields.Add(new MarkerField { Name = name,
+                    Description = UsesMilliseconds && name == "TrackDrop" ? Str.MkTrackDropHorizon2 : Descriptions.GetValueOrDefault(name, ""),
+                    SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position,
+                    LoopEndName = UsesMilliseconds ? null : name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", "TrackDrop" => "TrackLoopEnd", "PostDrop" => "PostRaceLoopEnd", _ => null },
+                    LoopReturnToName = UsesMilliseconds ? null : name switch { "TrackDrop" => "TrackLoopStart", "PostDrop" => "PostRaceLoopStart", _ => null } });
             }
 
             Groups.Add(grp);
@@ -274,7 +304,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
             return;
         }
 
-        var def = RadioStationEditor.ComputeAutoMarkers(SampleLength, SampleRate);
+        var def = RadioStationEditor.ComputeAutoMarkers(SampleLength, SampleRate, UsesMilliseconds);
 
         foreach (var f in AllMarkers)
         {
@@ -285,17 +315,19 @@ public sealed partial class EditWindowViewModel : ObservableObject
     public int ApplyMarkerPositions(IReadOnlyDictionary<string, long> positions, int presetSampleRate = 0)
     {
         if (!CanEditMarkers) return 0;
-        var max = SampleLength - 1;
+        var max = UsesMilliseconds ? SampleLength : SampleLength - 1;
         var hits = 0;
         var scale = presetSampleRate > 0 && presetSampleRate != SampleRate
             ? (double)SampleRate / presetSampleRate
             : 1.0;
+        var adapted = MarkerPresetService.AdaptMarkers(positions, UsesMilliseconds,
+            presetSampleRate > 0 ? presetSampleRate : SampleRate);
         foreach (var f in AllMarkers)
         {
-            if (positions.TryGetValue(f.Name, out var p))
+            if (adapted.TryGetValue(f.Name, out var p))
             {
-                var scaled = scale != 1.0 ? (long)Math.Round(p * scale) : p;
-                f.Position = Math.Max(0, Math.Min(scaled, max));
+                var scaled = p < 0 ? -1 : scale != 1.0 ? (long) Math.Round(p * scale) : p;
+                f.Position = scaled < 0 ? -1 : Math.Clamp(scaled, 0, max);
                 hits++;
             }
         }
@@ -307,7 +339,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
         var dict = new Dictionary<string, long>();
         foreach (var f in AllMarkers)
         {
-            if (f.Position >= 0) dict[f.Name] = f.Position;
+            if (f.Position >= 0 || UsesMilliseconds) dict[f.Name] = f.Position;
         }
         return dict;
     }

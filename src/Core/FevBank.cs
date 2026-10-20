@@ -25,7 +25,7 @@ public sealed class FevBank
 
     private void Parse()
     {
-        if (Cc(_src, 0) != "RIFF" || Cc(_src, 8) != "FEV ")
+        if (_src.Length < 12 || Cc(_src, 0) != "RIFF" || Cc(_src, 8) != "FEV ")
         {
             throw new InvalidDataException("not a RIFF/FEV bank");
         }
@@ -37,6 +37,8 @@ public sealed class FevBank
             var id = Cc(_src, pos);
             var size = (int) U32(_src, pos + 4);
             var pay = pos + 8;
+            if (size < 0 || size > _src.Length - pay)
+                throw new InvalidDataException($"RIFF chunk {id} has an invalid size {size}");
             
             switch (id)
             {
@@ -48,16 +50,20 @@ public sealed class FevBank
             if (id == "SND ") break;
             
             pos = pay + size;
+            if ((pos & 1) != 0) pos++;
         }
         
         var p = _listPay + 4;
         var end = _listPay + _listSize;
+        var sndhSize = 0;
         
         while (p + 8 <= end)
         {
             var id = Cc(_src, p);
             var size = (int) U32(_src, p + 4);
             var pay = p + 8;
+            if (size < 0 || size > end - pay)
+                throw new InvalidDataException($"LIST chunk {id} has an invalid size {size}");
             
             switch (id)
             {
@@ -67,7 +73,9 @@ public sealed class FevBank
                     _stblSize = size;
                     break;
                 case "SNDH":
+                    if (size < 12 && size is not 0 and not 4) throw new InvalidDataException("SNDH chunk is truncated");
                     _sndhPay = pay;
+                    sndhSize = size;
                     break;
             }
 
@@ -75,8 +83,12 @@ public sealed class FevBank
             if ((p & 1) != 0) p++;
         }
 
-        _fsbOff  = (int) U32(_src, _sndhPay + 4);
-        _fsbSize = (int) U32(_src, _sndhPay + 8);
+        if (_sndhPay == 0) throw new InvalidDataException("FEV bank has no SNDH chunk");
+        if (sndhSize >= 12)
+        {
+            _fsbOff = (int) U32(_src, _sndhPay + 4);
+            _fsbSize = (int) U32(_src, _sndhPay + 8);
+        }
     }
 
     private byte[] FmtChunk() => _src[_fmtOff..(_fmtPay + _fmtSize)];
@@ -131,6 +143,7 @@ public sealed class FevBank
 
                 var id = Cc(hdr, 0);
                 var size = (int) U32(hdr, 4);
+                if (size < 0 || size > fs.Length - fs.Position) return ids;
 
                 if (id == "LIST")
                 {
@@ -155,6 +168,7 @@ public sealed class FevBank
                 }
 
                 fs.Seek(size, SeekOrigin.Current);
+                if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
             }
         }
         catch
@@ -193,6 +207,7 @@ public sealed class FevBank
 
                 var id = Cc(hdr, 0);
                 var size = (int) U32(hdr, 4);
+                if (size < 0 || size > fs.Length - fs.Position) return -1;
 
                 if (id == "LIST")
                 {
@@ -217,6 +232,7 @@ public sealed class FevBank
                 }
 
                 fs.Seek(size, SeekOrigin.Current);
+                if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
             }
 
             return -1;
@@ -323,6 +339,7 @@ public sealed class FevBank
 
             var id = Cc(hdr, 0);
             var size = (int) U32(hdr, 4);
+            if (size < 0 || size > fs.Length - fs.Position) return result;
 
             if (id == "LIST")
             {
@@ -341,6 +358,7 @@ public sealed class FevBank
             }
 
             fs.Seek(size, SeekOrigin.Current);
+            if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
         }
 
         if (list is null)
@@ -470,6 +488,10 @@ public sealed class FevBank
     public static byte[] BuildStbl(IEnumerable<(ulong Id, int Index)> entries, uint version = 1, uint unk = 0, uint tail = 4)
     {
         var list = entries.OrderBy(e => e.Id).ToList();
+        if (list.Count > ushort.MaxValue)
+            throw new InvalidDataException($"STBL supports at most {ushort.MaxValue} entries");
+        if (list.Any(e => e.Index < 0 || e.Index > 0xFFFFFF))
+            throw new InvalidDataException("STBL sample indices must fit in 24 bits");
         
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
@@ -721,6 +743,10 @@ public sealed class FevBank
             
             var id = Tag4(hdr, 0);
             var size = (int) BinaryPrimitives.ReadUInt32LittleEndian(hdr.AsSpan(4));
+            if (size < 0 || size > fs.Length - fs.Position)
+            {
+                throw new InvalidDataException($"RIFF chunk {id} has an invalid size {size}");
+            }
             
             if (id == "FMT ")
             {
@@ -732,6 +758,7 @@ public sealed class FevBank
             else if (id == "LIST") { listPay = ReadExact(fs, size); }
             else if (id == "SND ") { sawSnd = true; break; }
             else { fs.Seek(size, SeekOrigin.Current); }
+            if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
         }
 
         if (!sawSnd || listPay is null || fmtChunk is null)
