@@ -5,6 +5,7 @@
         x:Class="FH6RB.Views.SettingsWindow"
         x:DataType="vm:SettingsWindowViewModel"
         Width="520"
+        MaxHeight="760"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         SizeToContent="Height"
@@ -12,92 +13,109 @@
         Title="{x:Static assets:Str.TitleSettings}">
 
     <Grid RowDefinitions="*,Auto">
-        <StackPanel MaxWidth="480" HorizontalAlignment="Stretch" Margin="16">
-            <TextBlock Classes="sect" Text="{x:Static assets:Str.SecGamePath}"/>
-            <Grid ColumnDefinitions="*,Auto">
-                <Border Background="{DynamicResource BgInput}" Padding="12"
-                        BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
-                    <TextBlock Classes="field" Text="{Binding GamePath}"
-                               FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
-                </Border>
+        <ScrollViewer MaxHeight="600" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel MaxWidth="480" HorizontalAlignment="Stretch" Margin="16">
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecGamePath}"/>
+                <Grid ColumnDefinitions="*,Auto">
+                    <Border Background="{DynamicResource BgInput}" Padding="12"
+                            BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
+                        <TextBlock Classes="field" Text="{Binding GamePath}"
+                                   FontFamily="{DynamicResource MonoFont}" FontSize="12"/>
+                    </Border>
                 
-                <Button Grid.Column="1" Classes="big" Click="OnBrowse" Content="{x:Static assets:Str.BtnBrowse}"
-                        Padding="14,9" Margin="8,0,0,0"/>
-            </Grid>
+                    <Button Grid.Column="1" Classes="big" Click="OnBrowse" Content="{x:Static assets:Str.BtnBrowse}"
+                            Padding="14,9" Margin="8,0,0,0"/>
+                </Grid>
 
-            <Border Margin="0,12,0,0" Background="{DynamicResource BgInput}"
-                    BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8"
-                    Padding="12" IsVisible="{Binding IsValid}">
-                <StackPanel Spacing="3">
-                    <TextBlock Text="{Binding ExeLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                    <TextBlock Text="{Binding LangLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                    <TextBlock Text="{Binding BankLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                <Border Margin="0,12,0,0" Background="{DynamicResource BgInput}"
+                        BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8"
+                        Padding="12" IsVisible="{Binding IsValid}">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="{Binding ExeLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                        <TextBlock Text="{Binding LangLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                        <TextBlock Text="{Binding BankLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Margin="0,12,0,0" Background="{DynamicResource BgInput}"
+                        BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8"
+                        Padding="12" IsVisible="{Binding Scanning}">
+                    <TextBlock Text="{Binding ScanningText}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                </Border>
+
+                <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Red}" FontSize="12.5"
+                           Margin="12,12,0,12" TextWrapping="Wrap" IsVisible="{Binding ShowError}"/>
+
+                <StackPanel IsVisible="{Binding ShowAdvanced}">
+                    <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoudness}" Margin="12,24,0,8"/>
+                    <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                            BorderThickness="1" CornerRadius="8" Padding="12">
+                        <StackPanel Spacing="6">
+                            <CheckBox IsChecked="{Binding LoudnessNormalize}"
+                                      Content="{x:Static assets:Str.LblLoudnessNormalize}"
+                                      ToolTip.Tip="{x:Static assets:Str.TipLoudnessNormalize}"
+                                      Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblTargetLoudness}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                                <TextBlock Grid.Column="1" Text="{Binding TargetLufsText}" Foreground="{DynamicResource Header}"
+                                           FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                            </Grid>
+                            <Slider Classes="loudness" Minimum="-30" Maximum="-9" Value="{Binding TargetLufs}"
+                                    TickFrequency="1" IsSnapToTickEnabled="True" IsEnabled="{Binding LoudnessNormalize}" Margin="0, -12, 0, 0"/>
+                            <TextBlock Text="{x:Static assets:Str.HintLoudness}"
+                                       Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,8,0,0">
+                                <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblTargetTruePeak}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                                <TextBlock Grid.Column="1" Text="{Binding TargetTruePeakText}" Foreground="{DynamicResource Header}"
+                                           FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                            </Grid>
+                            <Slider Classes="loudness" Minimum="-9" Maximum="0" Value="{Binding TargetTruePeak}"
+                                    TickFrequency="0.1" IsSnapToTickEnabled="True" IsEnabled="{Binding LoudnessNormalize}" Margin="0, -12, 0, 0"/>
+                            <TextBlock Text="{x:Static assets:Str.HintTruePeak}"
+                                       Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                            <CheckBox IsChecked="{Binding DynamicNormalization}" IsEnabled="{Binding LoudnessNormalize}"
+                                      Content="{x:Static assets:Str.LblDynamicNormalization}" Margin="0,6,0,0"
+                                      ToolTip.Tip="{x:Static assets:Str.HintDynamicNormalization}"
+                                      Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Text="{x:Static assets:Str.HintDynamicNormalization}"
+                                       Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Classes="sect" Text="{x:Static assets:Str.SecQuality}" Margin="12,24,0,8"/>
+                    <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                            BorderThickness="1" CornerRadius="8" Padding="12">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblVorbisQuality}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                                <TextBlock Grid.Column="1" Text="{Binding VorbisQualityText}" Foreground="{DynamicResource Header}"
+                                           FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                            </Grid>
+                            <Slider Classes="loudness" Minimum="30" Maximum="100" Value="{Binding VorbisQuality}"
+                                    TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
+                            <TextBlock Text="{x:Static assets:Str.HintQuality}"
+                                       Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Classes="sect" Text="{x:Static assets:Str.SecEncoding}" Margin="12,24,0,8"/>
+                    <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                            BorderThickness="1" CornerRadius="8" Padding="12">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblEncodingThreads}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                                <TextBlock Grid.Column="1" Text="{Binding EncodeParallelismText}" Foreground="{DynamicResource Header}"
+                                           FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                            </Grid>
+                            <Slider Classes="loudness" Minimum="1" Maximum="{Binding MaxThreads}" Value="{Binding EncodeParallelism}"
+                                    TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
+                            <TextBlock Text="{x:Static assets:Str.HintEncoding}"
+                                       Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-            </Border>
-
-            <Border Margin="0,12,0,0" Background="{DynamicResource BgInput}"
-                    BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8"
-                    Padding="12" IsVisible="{Binding Scanning}">
-                <TextBlock Text="{Binding ScanningText}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-            </Border>
-
-            <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Red}" FontSize="12.5"
-                       Margin="12,12,0,12" TextWrapping="Wrap" IsVisible="{Binding ShowError}"/>
-
-            <StackPanel IsVisible="{Binding ShowAdvanced}">
-                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoudness}" Margin="12,24,0,8"/>
-                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                        BorderThickness="1" CornerRadius="8" Padding="12">
-                    <StackPanel Spacing="6">
-                        <CheckBox IsChecked="{Binding LoudnessNormalize}"
-                                  Content="{x:Static assets:Str.LblLoudnessNormalize}"
-                                  ToolTip.Tip="{x:Static assets:Str.TipLoudnessNormalize}"
-                                  Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblTargetLoudness}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding TargetLufsText}" Foreground="{DynamicResource Header}"
-                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
-                        </Grid>
-                        <Slider Classes="loudness" Minimum="-30" Maximum="-9" Value="{Binding TargetLufs}"
-                                TickFrequency="1" IsSnapToTickEnabled="True" IsEnabled="{Binding LoudnessNormalize}" Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintLoudness}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
-                    </StackPanel>
-                </Border>
-
-                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecQuality}" Margin="12,24,0,8"/>
-                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                        BorderThickness="1" CornerRadius="8" Padding="12">
-                    <StackPanel Spacing="6">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblVorbisQuality}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding VorbisQualityText}" Foreground="{DynamicResource Header}"
-                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
-                        </Grid>
-                        <Slider Classes="loudness" Minimum="30" Maximum="100" Value="{Binding VorbisQuality}"
-                                TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintQuality}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
-                    </StackPanel>
-                </Border>
-
-                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecEncoding}" Margin="12,24,0,8"/>
-                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
-                        BorderThickness="1" CornerRadius="8" Padding="12">
-                    <StackPanel Spacing="6">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblEncodingThreads}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
-                            <TextBlock Grid.Column="1" Text="{Binding EncodeParallelismText}" Foreground="{DynamicResource Header}"
-                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
-                        </Grid>
-                        <Slider Classes="loudness" Minimum="1" Maximum="{Binding MaxThreads}" Value="{Binding EncodeParallelism}"
-                                TickFrequency="1" IsSnapToTickEnabled="True" Margin="0, -12, 0, 0"/>
-                        <TextBlock Text="{x:Static assets:Str.HintEncoding}"
-                                   Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
-                    </StackPanel>
-                </Border>
             </StackPanel>
-        </StackPanel>
+        </ScrollViewer>
 
         <Border Grid.Row="1" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">

@@ -21,8 +21,10 @@ public static class Str
     public const string LblArtist = "ARTIST";
     public const string LblVolumeCompensation = "VOLUME COMPENSATION";
     public const string LblTargetLoudness = "Target loudness";
+    public const string LblTargetTruePeak = "True peak ceiling";
     public const string LblEncodingThreads = "Encoding threads";
     public const string LblLoudnessNormalize = "Normalize loudness";
+    public const string LblDynamicNormalization = "Use dynamic normalization";
     
     public const string BtnCancel = "Cancel";
     public const string BtnSave = "Save";
@@ -71,13 +73,15 @@ public static class Str
     public const string TipSetPlayhead = "Set this marker to start";
     public const string TipRevertToSaved = "Restore the last saved value";
     public const string TipBackupRestore = "Reverts files to their pre-build state.";
-    public const string TipLoudnessNormalize = "When off, added tracks keep their original loudness and encoding is faster (skips the two-pass loudness measurement).";
+    public const string TipLoudnessNormalize = "Adjusts added tracks toward the target loudness while respecting the peak ceiling. When off, only manual volume compensation is applied.";
     
     public const string Loading = "Loading…";
     public const string WatermarkOff = "off";
     public const string TimeZero = "0:00 / 0:00";
     public const string NoBackups = "No backups to restore.";
-    public const string HintLoudness = "Added tracks are normalized to this level. Originals sit around -23 LUFS.";
+    public const string HintLoudness = "Targets this level while respecting the peak ceiling. Constant gain preserves dynamics.";
+    public const string HintTruePeak = "Peak ceiling before encoding. Lower values leave more headroom for audio compression.";
+    public const string HintDynamicNormalization = "May compress loudness differences to reach the target. Off preserves the track's dynamics.";
     public const string HintEncoding = "Parallel jobs while building. Higher is faster but uses more CPU, RAM and disk.";
     public const string SecQuality = "QUALITY";
     public const string LblVorbisQuality = "Vorbis quality";

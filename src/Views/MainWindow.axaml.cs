@@ -155,6 +155,7 @@ public partial class MainWindow : Window
         else if (vm.Saved)
         {
             Vm.RecalcProjectedSize();
+            Vm.RefreshNowPlaying();
         }
 
         if (firstRun && !GameScanner.IsValid(Vm.Settings.GamePath))

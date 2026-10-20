@@ -12,6 +12,7 @@ public sealed class AppSettings
     public double TargetLufs { get; set; } = -23.0;
     public double TargetTruePeak { get; set; } = -1.0;
     public bool LoudnessNormalize { get; set; } = true;
+    public bool DynamicNormalization { get; set; } = false;
     public int VorbisQuality { get; set; } = 90;
 
 
@@ -39,6 +40,10 @@ public sealed class AppSettings
 
     public Dictionary<string, WinSize> WindowSizes { get; set; } = new();
     public static int RecommendedParallelism => Math.Max(1, Environment.ProcessorCount * 3 / 4);
+
+    public static double ClampTargetLufs(double value) => double.IsFinite(value) ? Math.Clamp(value, -30, -9) : -23;
+
+    public static double ClampTargetTruePeak(double value) => double.IsFinite(value) ? Math.Clamp(value, -9, 0) : -1;
 }
 
 public sealed class WinSize
@@ -71,6 +76,9 @@ public static class SettingsService
             s = new AppSettings();
         }
 
+        s.TargetLufs = AppSettings.ClampTargetLufs(s.TargetLufs);
+        s.TargetTruePeak = AppSettings.ClampTargetTruePeak(s.TargetTruePeak);
+
         if (s.SettingsVersion < 2)
         {
             s.MarkerDefaults = new();
@@ -100,6 +108,8 @@ public static class SettingsService
 
     public static void Save(AppSettings settings)
     {
+        settings.TargetLufs = AppSettings.ClampTargetLufs(settings.TargetLufs);
+        settings.TargetTruePeak = AppSettings.ClampTargetTruePeak(settings.TargetTruePeak);
         Directory.CreateDirectory(Dir);
         Atomic.Write(FilePath, JsonSerializer.Serialize(settings, Options));
     }

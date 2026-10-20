@@ -35,9 +35,17 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(TargetLufsText))]
     private double _targetLufs;
 
-    public string TargetLufsText => $"{TargetLufs:0} LUFS";
+    public string TargetLufsText => $"{TargetLufs:0.#} LUFS";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetTruePeakText))]
+    private double _targetTruePeak;
+
+    public string TargetTruePeakText => $"{TargetTruePeak:0.0} dBTP";
 
     [ObservableProperty] private bool _loudnessNormalize;
+
+    [ObservableProperty] private bool _dynamicNormalization;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VorbisQualityText))]
@@ -64,8 +72,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     {
         _settings = settings;
         _gamePath = settings.GamePath;
-        _targetLufs = settings.TargetLufs;
+        _targetLufs = AppSettings.ClampTargetLufs(settings.TargetLufs);
+        _targetTruePeak = AppSettings.ClampTargetTruePeak(settings.TargetTruePeak);
         _loudnessNormalize = settings.LoudnessNormalize;
+        _dynamicNormalization = settings.DynamicNormalization;
         _vorbisQuality = settings.VorbisQuality;
         _encodeParallelism = settings.EncodeParallelism > 0
             ? Math.Min(settings.EncodeParallelism, MaxThreads)
@@ -219,6 +229,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.VorbisQuality = d.VorbisQuality;
         _settings.EncodeParallelism = d.EncodeParallelism;
         _settings.LoudnessNormalize = d.LoudnessNormalize;
+        _settings.DynamicNormalization = d.DynamicNormalization;
         _settings.MarkerDefaults = new();
         _settings.WaveformLabelRows = new();
         _settings.LoopAutoTune = d.LoopAutoTune;
@@ -235,8 +246,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         MarkerDefaults.Reset();
 
         TargetLufs = _settings.TargetLufs;
+        TargetTruePeak = _settings.TargetTruePeak;
         EncodeParallelism = AppSettings.RecommendedParallelism;
         LoudnessNormalize = _settings.LoudnessNormalize;
+        DynamicNormalization = _settings.DynamicNormalization;
         VorbisQuality = _settings.VorbisQuality;
 
         Saved = true;
@@ -245,9 +258,13 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public void Commit()
     {
         _settings.GamePath = GamePath;
-        _settings.TargetLufs = Math.Round(TargetLufs);
+        TargetLufs = AppSettings.ClampTargetLufs(TargetLufs);
+        TargetTruePeak = AppSettings.ClampTargetTruePeak(TargetTruePeak);
+        _settings.TargetLufs = TargetLufs;
+        _settings.TargetTruePeak = TargetTruePeak;
         _settings.EncodeParallelism = EncodeParallelism;
         _settings.LoudnessNormalize = LoudnessNormalize;
+        _settings.DynamicNormalization = DynamicNormalization;
         _settings.VorbisQuality = VorbisQuality;
         SettingsService.Save(_settings);
         Saved = true;

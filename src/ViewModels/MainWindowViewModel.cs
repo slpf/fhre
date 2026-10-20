@@ -124,6 +124,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     
     private readonly PlaybackService _player = new();
     private TrackItemViewModel? _nowPlaying;
+    private sealed record FilePreview(string Path, double GainDb, bool Normalize, bool Dynamic, double Lufs, double TruePeak);
+    private FilePreview? _requestedFilePreview;
+    private double _previewResumeSeconds;
+    private bool _previewResumePaused;
     private string? _loadedBankPath;
     public string? LoadedBankPath => _loadedBankPath;
     public bool CanRestoreAll { get; private set; }
@@ -805,7 +809,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 {
                     wav = track.IsFileSourceFsb
                         ? AudioDecoder.DecodeBank(track.FileSource!, 0)
-                        : AudioDecoder.DecodeAdded(track.FileSource!, Settings);
+                        : AudioDecoder.DecodeAdded(track.FileSource!, Settings, gainDb: track.GainDb ?? 0);
                 }
                 else if (track.RestoreFsbPath is not null)
                 {
@@ -888,9 +892,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private async Task StartAsync(TrackItemViewModel track)
+    private FilePreview? GetFilePreview(TrackItemViewModel track) => track.UsesFileSource && !track.IsFileSourceFsb
+        ? new FilePreview(track.FileSource!, track.GainDb ?? 0, Settings.LoudnessNormalize,
+            Settings.DynamicNormalization, Settings.TargetLufs, Settings.TargetTruePeak)
+        : null;
+
+    private async Task StartAsync(TrackItemViewModel track, double fromSec = 0, bool paused = false)
     {
         var gen = ++_playGen;
+        var filePreview = GetFilePreview(track);
+        _requestedFilePreview = filePreview;
+        _previewResumeSeconds = fromSec;
+        _previewResumePaused = paused;
         
         _player.Stop();
         _tick?.Stop();
@@ -915,11 +928,20 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var bankPath = _loadedBankPath;
             var wav = await Task.Run(() =>
             {
+                if (filePreview is { } preview)
+                {
+                    var settings = new AppSettings
+                    {
+                        LoudnessNormalize = preview.Normalize,
+                        DynamicNormalization = preview.Dynamic,
+                        TargetLufs = preview.Lufs,
+                        TargetTruePeak = preview.TruePeak
+                    };
+                    return AudioDecoder.DecodeAdded(preview.Path, settings, gainDb: preview.GainDb);
+                }
                 if (track.UsesFileSource)
                 {
-                    return track.IsFileSourceFsb
-                        ? AudioDecoder.DecodeBank(track.FileSource!, 0)
-                        : AudioDecoder.DecodeAdded(track.FileSource!, Settings);
+                    return AudioDecoder.DecodeBank(track.FileSource!, 0);
                 }
                 if (track.RestoreFsbPath is not null) return AudioDecoder.DecodeBank(track.RestoreFsbPath, 0);
                 return AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
@@ -930,16 +952,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            var volDb = track.UsesFileSource && !track.IsFileSourceFsb ? track.GainDb ?? 0 : 0;
-            _player.Play(wav, volDb);
+            var resumeSeconds = Math.Max(0, fromSec);
+            if (resumeSeconds > 0)
+            {
+                var (rate, frames) = WaveformService.Probe(wav);
+                if (rate > 0 && resumeSeconds >= frames / (double) rate) resumeSeconds = 0;
+            }
+            _player.Play(wav, 0, resumeSeconds);
+            if (paused) _player.TogglePause();
 
-            track.PlayState = TrackPlayState.Playing;
-            TransportPlaying = true;
+            track.PlayState = paused ? TrackPlayState.Paused : TrackPlayState.Playing;
+            TransportPlaying = !paused;
             DurationSeconds = Math.Max(0.1, _player.Duration.TotalSeconds);
             NowDurationText = Fmt(_player.Duration);
+            _suppressSeek = true;
+            PositionSeconds = Math.Clamp(resumeSeconds, 0, DurationSeconds);
+            _suppressSeek = false;
+            NowPositionText = Fmt(TimeSpan.FromSeconds(PositionSeconds));
             Status = string.Format(Str.StatusPlayingFmt, track.Title);
-            SetClockAnchor(0, true);
-            _tick?.Start();
+            SetClockAnchor(PositionSeconds, !paused);
+            if (!paused) _tick?.Start();
         }
         catch (Exception ex)
         {
@@ -971,6 +1003,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         _nowPlaying = null;
+        _requestedFilePreview = null;
+        _previewResumeSeconds = 0;
+        _previewResumePaused = false;
         TransportVisible = false;
         TransportPlaying = false;
         IsPreparingPlayback = false;
@@ -1005,9 +1040,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         NowTitle = _nowPlaying.Title;
         NowArtist = _nowPlaying.Artist;
 
-        if (_nowPlaying.IsUnbuilt)
+        if (GetFilePreview(_nowPlaying) != _requestedFilePreview)
         {
-            _player.SetVolumeDb(_nowPlaying.GainDb ?? 0);
+            var position = IsPreparingPlayback ? _previewResumeSeconds : _player.Position.TotalSeconds;
+            var paused = IsPreparingPlayback ? _previewResumePaused : _player.IsPaused;
+            _ = StartAsync(_nowPlaying, position, paused);
         }
     }
 

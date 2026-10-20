@@ -10,7 +10,7 @@ public static class AudioDecoder
 {
     private static readonly string Dir = Path.Combine(AppPaths.TempBase, "preview");
     private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
-    private const int NormScheme = 3;
+    private const int NormScheme = 5;
     private static int _purged;
 
     public static void ClearAll()
@@ -61,12 +61,21 @@ public static class AudioDecoder
         }
     }
 
-    public static string DecodeAdded(string source, AppSettings s, CancellationToken ct = default)
+    public static string DecodeAdded(string source, AppSettings s, CancellationToken ct = default, double gainDb = 0)
     {
+        ct.ThrowIfCancellationRequested();
+        s = new AppSettings
+        {
+            LoudnessNormalize = s.LoudnessNormalize,
+            DynamicNormalization = s.DynamicNormalization,
+            TargetLufs = AppSettings.ClampTargetLufs(s.TargetLufs),
+            TargetTruePeak = AppSettings.ClampTargetTruePeak(s.TargetTruePeak)
+        };
         var norm = s.LoudnessNormalize;
         var i = s.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{i}|{tp}|nv{NormScheme}");
+        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{s.DynamicNormalization}|{i}|{tp}|" +
+            $"{gainDb.ToString("R", CultureInfo.InvariantCulture)}|nv{NormScheme}");
         var outWav = Path.Combine(Dir, key + ".wav");
         var context = $"preview source \"{source}\"";
 
@@ -76,26 +85,16 @@ public static class AudioDecoder
             return outWav;
         }
 
-        Log.Line($"{context}: cache miss, normalize={norm}, target_I={i}, target_TP={tp}, source_stamp={Stamp(source)}");
+        Log.Line($"{context}: cache miss, normalize={norm}, dynamic={s.DynamicNormalization}, target_I={i}, " +
+            $"target_TP={tp}, gainDb={gainDb.ToString("R", CultureInfo.InvariantCulture)}, source_stamp={Stamp(source)}");
 
         Directory.CreateDirectory(Dir);
         PurgeStale();
 
-        var filter = norm ? Loudnorm.Filter(source, s, message => Log.Line($"{context}: {message}")) : "";
-        var af = filter.Length > 0 ? $"-af {filter} " : "";
-
         var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
         try
         {
-            var err = Run(Tools.FfmpegPath,
-                $"-y -hide_banner -nostats -loglevel info -i \"{source}\" -map 0:a:0 -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{part}\"",
-                context, ct);
-
-            if (norm)
-            {
-                LogLoudnorm(source, err);
-            }
-
+            Loudnorm.Render(source, part, s, gainDb, message => Log.Line($"{context}: {message}"), ct);
             File.Move(part, outWav, overwrite: true);
             LogWave(context, outWav, cacheHit: false);
         }
@@ -172,19 +171,6 @@ public static class AudioDecoder
         }
 
         return outWav;
-    }
-
-    private static void LogLoudnorm(string source, string stderr)
-    {
-        var sp = Loudnorm.ParseSecondPass(stderr);
-        if (sp is null)
-        {
-            Log.Line($"loudnorm: no stats | {Path.GetFileName(source)}");
-            return;
-        }
-
-        Log.Line($"loudnorm [{sp.NormType}] in_I={sp.InputI} in_LRA={sp.InputLra} in_TP={sp.InputTp} " +
-            $"out_I={sp.OutputI} out_LRA={sp.OutputLra} out_TP={sp.OutputTp} | {Path.GetFileName(source)}");
     }
 
     private static string Stamp(string path)

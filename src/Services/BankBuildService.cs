@@ -54,6 +54,7 @@ public static class BankBuildService
         settings = new AppSettings
         {
             LoudnessNormalize = settings.LoudnessNormalize,
+            DynamicNormalization = settings.DynamicNormalization,
             TargetLufs = settings.TargetLufs,
             TargetTruePeak = settings.TargetTruePeak,
             VorbisQuality = settings.VorbisQuality,
@@ -68,7 +69,7 @@ public static class BankBuildService
         try
         {
             Diagnostic(buildLog, "build.start", new { sourcePath, outPath, workDir, tracks = items.Count,
-                settings.LoudnessNormalize, settings.TargetLufs, settings.TargetTruePeak, settings.VorbisQuality,
+                settings.LoudnessNormalize, settings.DynamicNormalization, settings.TargetLufs, settings.TargetTruePeak, settings.VorbisQuality,
                 settings.EncodeParallelism, runtime = Environment.Version.ToString(), processors = Environment.ProcessorCount });
             foreach (var tool in buildLog is null ? Array.Empty<string>() : new[] { Tools.FfmpegPath, Tools.FsbankclPath, Tools.VgmstreamPath })
             {
@@ -261,7 +262,9 @@ public static class BankBuildService
                         throw new InvalidOperationException($"fsbankcl produced no output for {item.SoundName}");
                     }
                     prepared[i] = ReadPreparedSample(fsb, targetMode);
-                    await ValidateFsbAsync(fsb, prepared[i], wav, verifiedWav, trackLog, pcm).ConfigureAwait(false);
+                    await ValidateFsbAsync(fsb, prepared[i], wav, verifiedWav, trackLog, pcm,
+                        entry.Source is null && settings.LoudnessNormalize
+                            ? AppSettings.ClampTargetTruePeak(settings.TargetTruePeak) : null).ConfigureAwait(false);
                     if (entry.Source is { } converted)
                     {
                         var originalSample = converted.Samples[entry.Index];
@@ -354,7 +357,7 @@ public static class BankBuildService
     }
 
     private static async Task ValidateFsbAsync(string fsbPath, PreparedSample sample, string? expectedWav,
-        string decodedPath, Action<string>? log, AudioBuildInfo? expected = null)
+        string decodedPath, Action<string>? log, AudioBuildInfo? expected = null, double? peakCeiling = null)
     {
         var timer = Stopwatch.StartNew();
         Diagnostic(log, "fsb.validate.start", new { path = fsbPath, bytes = new FileInfo(fsbPath).Length,
@@ -375,6 +378,11 @@ public static class BankBuildService
         await RunAsync(Tools.VgmstreamPath, $"-i -w -s 1 -o \"{decodedPath}\" \"{fsbPath}\"", log).ConfigureAwait(false);
         var decoded = AudioBuildValidation.Inspect(decodedPath);
         Diagnostic(log, "fsb.decoded", decoded);
+        if (peakCeiling is { } ceiling && decoded.PeakDb.Any(peak => peak > ceiling))
+        {
+            log?.Invoke("WARN fsb.peak_ceiling: decoded sample peak exceeds the normalization ceiling; " +
+                "audio compression can change peaks after normalization.");
+        }
         if (decoded.Frames != sample.Frames || decoded.SampleRate != sample.SampleRate || decoded.Channels != sample.Channels)
         {
             throw new InvalidDataException("Decoded FSB timing or channels do not match its header.");
@@ -708,28 +716,8 @@ public static class BankBuildService
             return;
         }
         var sourcePath = item.SourcePath;
-        var normalize = settings.LoudnessNormalize;
-        var filter = normalize ? await Loudnorm.FilterAsync(sourcePath, settings, log).ConfigureAwait(false) : "";
-        if (item.GainDb is { } g && Math.Abs(g) > 0.01)
-        {
-            filter = filter.Length > 0
-                ? filter + $",volume={g.ToString("0.0", CultureInfo.InvariantCulture)}dB"
-                : $"volume={g.ToString("0.0", CultureInfo.InvariantCulture)}dB";
-        }
-        var af = filter.Length > 0 ? $"-af {filter} " : "";
-        Diagnostic(log, "wav.encode.start", new { sourcePath, normalize, item.GainDb, filter });
-        var err = await RunAsync(Tools.FfmpegPath,
-            $"-y -hide_banner -nostats -loglevel info -i \"{sourcePath}\" -map 0:a:0 -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{wav}\"",
-            log).ConfigureAwait(false);
-        if (normalize)
-        {
-            var stats = Loudnorm.ParseSecondPass(err);
-            if (stats is { } s)
-            {
-                Diagnostic(log, "loudnorm.result", new { s.NormType, s.InputI, s.InputLra, s.InputTp, s.OutputI, s.OutputLra, s.OutputTp,
-                    gainAfterNormalizationDb = item.GainDb ?? 0 });
-            }
-            else log?.Invoke($"loudnorm: no stats | {Path.GetFileName(item.SourcePath)}");
-        }
+        Diagnostic(log, "wav.encode.start", new { sourcePath, normalize = settings.LoudnessNormalize,
+            settings.DynamicNormalization, settings.TargetLufs, settings.TargetTruePeak, item.GainDb });
+        await Loudnorm.RenderAsync(sourcePath, wav, settings, item.GainDb ?? 0, log).ConfigureAwait(false);
     }
 }

@@ -18,10 +18,16 @@ Environment.SetEnvironmentVariable("TEMP", temp);
 Environment.SetEnvironmentVariable("TMP", temp);
 try
 {
+    if (args.Contains("--benchmark-normalization", StringComparer.Ordinal))
+    {
+        await NormalizationBenchmark.RunAsync(temp);
+        return 0;
+    }
     TestFsbHeaders();
     TestAudioMeasurements(temp);
     TestTrackPacks(temp);
     TestImportedMarkers(temp);
+    await NormalizationChecks.RunAsync(temp);
     var inputs = GenerateInputs(temp);
     await TestPreviewMarkersAsync(inputs[0]);
     await TestBuildAsync(temp, inputs, false);
@@ -280,11 +286,13 @@ static async Task TestBuildAsync(string temp, string[] inputs, bool normalize)
     {
         var expected = Path.Combine(temp, $"{prefix}-{i}.expected.wav");
         var decoded = Path.Combine(temp, $"{prefix}-{i}.decoded.wav");
-        var filter = normalize ? await Loudnorm.FilterAsync(inputs[i], settings) : "";
-        if (gains[i] is { } gain)
-            filter = (filter.Length > 0 ? filter + "," : "") + "volume=" + gain.ToString("0.0", CultureInfo.InvariantCulture) + "dB";
-        var af = filter.Length > 0 ? $"-af {filter} " : "";
-        RunTool(Tools.FfmpegPath, $"-y -hide_banner -loglevel error -i \"{inputs[i]}\" -ar 48000 -ac 2 -c:a pcm_s16le {af}\"{expected}\"");
+        await Loudnorm.RenderAsync(inputs[i], expected, settings, gains[i] ?? 0);
+        var expectedInfo = AudioBuildValidation.Inspect(expected);
+        var preparation = log.Single(l => l.Contains($"[track={i} ", StringComparison.Ordinal) && l.Contains("wav.prepared ", StringComparison.Ordinal));
+        using (var json = JsonDocument.Parse(preparation[(preparation.IndexOf("wav.prepared ", StringComparison.Ordinal) + "wav.prepared ".Length)..]))
+            Check(json.RootElement.GetProperty("PcmSha256").GetString() == expectedInfo.PcmSha256, "Bank encoder input differs from the shared audio renderer.");
+        var previewWav = AudioDecoder.DecodeAdded(inputs[i], settings, gainDb: gains[i] ?? 0);
+        Check(AudioBuildValidation.Inspect(previewWav).PcmSha256 == expectedInfo.PcmSha256, "Preview PCM differs from the bank encoder input.");
         RunTool(Tools.VgmstreamPath, $"-i -w -s {i + 1} -o \"{decoded}\" \"{output}\"");
         var info = AudioBuildValidation.Inspect(decoded);
         Check(info.SampleRate == 48000 && info.Channels == 2 && info.Frames == samples[i].Frames, "The assembled sample has incorrect playback timing or channels.");
