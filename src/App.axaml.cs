@@ -61,21 +61,13 @@ public partial class App : Application
 
     private static async Task CheckRequiredToolsAsync(MainWindow owner)
     {
-        if (!Tools.HasFfmpeg || !Tools.HasFsbankcl)
+        var missing = Tools.MissingRequired().ToList();
+        if (missing.Count > 0)
         {
-            var missing = new List<string>();
-            if (!Tools.HasFfmpeg) missing.Add("ffmpeg");
-            if (!Tools.HasFsbankcl) missing.Add("fsbank");
+            Log.Line($"tools.missing root=\"{Tools.Root}\" tools={string.Join(", ", missing)}");
             await MessageDialog.ShowAsync(owner,
                 Str.DlgMissingToolsTitle,
                 string.Format(Str.DlgMissingToolsBody, string.Join(", ", missing)),
-                Str.BtnOk);
-        }
-        else if (!Tools.HasVgmstream)
-        {
-            await MessageDialog.ShowAsync(owner,
-                Str.DlgMissingVgmstreamTitle,
-                Str.DlgMissingVgmstreamBody,
                 Str.BtnOk);
         }
     }

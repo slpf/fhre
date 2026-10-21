@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia.Threading;
@@ -41,7 +42,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isImporting;
 
     public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting || IsExporting || IsImporting;
-    public bool CanBuild => !IsBuilding && !PlaylistLow;
+    public bool CanBuild => !IsBusy && !PlaylistLow && Tools.CanBuild;
+    public bool CanAddTracks => !IsBusy && Tools.CanAddTracks;
+    public string AddTracksTip => Tools.CanAddTracks ? Str.TipAddTrack
+        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForAddTracks()));
+    public string BuildTip => Tools.CanBuild ? Str.TipBuildBank
+        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForBuild()));
+
+    public void RefreshToolAvailability()
+    {
+        OnPropertyChanged(nameof(CanBuild));
+        OnPropertyChanged(nameof(CanAddTracks));
+        OnPropertyChanged(nameof(AddTracksTip));
+        OnPropertyChanged(nameof(BuildTip));
+        foreach (var track in Tracks) track.RefreshToolAvailability();
+    }
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
 
@@ -54,19 +69,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _hasUnsavedChanges;
     public void MarkDirty() => HasUnsavedChanges = true;
     partial void OnIsBuildingChanged(bool value)
+        => NotifyBusyChanged();
+
+    private void NotifyBusyChanged()
     {
         OnPropertyChanged(nameof(IsBusy));
         OnPropertyChanged(nameof(CanBuild));
+        OnPropertyChanged(nameof(CanAddTracks));
     }
 
     partial void OnPlaylistLowChanged(bool value) => OnPropertyChanged(nameof(CanBuild));
-    partial void OnIsAddingTracksChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
-    partial void OnIsBackingUpChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
-    partial void OnIsTestingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
-    partial void OnIsExportingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsAddingTracksChanged(bool value) => NotifyBusyChanged();
+    partial void OnIsBackingUpChanged(bool value) => NotifyBusyChanged();
+    partial void OnIsTestingChanged(bool value) => NotifyBusyChanged();
+    partial void OnIsExportingChanged(bool value) => NotifyBusyChanged();
     partial void OnIsImportingChanged(bool value)
     {
-        OnPropertyChanged(nameof(IsBusy));
+        NotifyBusyChanged();
         OnPropertyChanged(nameof(BusyText));
     }
     public string? PendingErrorDialog { get; set; }
@@ -83,6 +102,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool HasStatusDetail => !string.IsNullOrEmpty(StatusDetail);
     private const int MinActiveTracksPerStation = 20;
+    private int _minimumActiveTracks = MinActiveTracksPerStation;
+    private bool _usesOriginalPlaylistMinimum;
+    public int MinimumActiveTracks => _minimumActiveTracks > 0 ? _minimumActiveTracks : MinActiveTracksPerStation;
     private const long WarnBankBytes = 1900L * 1024 * 1024;
     private int _otherBanksActive;
 
@@ -249,6 +271,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Variants.Clear();
         _radio = null;
         _radioForFile = null;
+        _minimumActiveTracks = MinActiveTracksPerStation;
 
         if (!GameScanner.IsValid(Settings.GamePath))
         {
@@ -335,6 +358,34 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         SelectedStation = Stations.FirstOrDefault(s => s.Number == current) ?? Stations.FirstOrDefault();
+        UpdatePlaylistMinimum();
+    }
+
+    private void UpdatePlaylistMinimum()
+    {
+        var minimum = MinActiveTracksPerStation;
+        _usesOriginalPlaylistMinimum = SelectedStation is not null && GameScanner.DetectVersion(Settings.GamePath) == 3;
+        if (SelectedStation is { } station && _usesOriginalPlaylistMinimum)
+        {
+            var original = _radio?.StationByNumber(station.Number);
+            var file = ViewLanguageFile();
+            var path = file is null ? null : GameScanner.RadioInfoPathByFile(Settings.GamePath, file);
+            if (path is not null && File.Exists(path + ".bak"))
+            {
+                try { original = RadioInfo.Load(path + ".bak").StationByNumber(station.Number); }
+                catch (Exception ex)
+                {
+                    Log.Line($"playlist.minimum.failed path=\"{path}.bak\": {ex.Message}");
+                    original = null;
+                }
+            }
+            var count = original?.ReadTracks().Count(t => t.Enabled
+                && !t.SoundName.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal)) ?? 0;
+            if (count > 0) minimum = count;
+        }
+        if (_minimumActiveTracks == minimum) return;
+        _minimumActiveTracks = minimum;
+        OnPropertyChanged(nameof(MinimumActiveTracks));
     }
 
     partial void OnSelectedLanguageChanged(LangOption? value)
@@ -352,6 +403,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnSelectedStationChanged(StationInfo? value)
     {
+        UpdatePlaylistMinimum();
         var wasSuppressed = _suppressReload;
         _suppressReload = true;
 
@@ -366,7 +418,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
         }
 
-        SelectedVariant = Variants.Contains(previous ?? "") ? previous : Variants.FirstOrDefault();
+        SelectedVariant = Variants.Contains(previous ?? "") ? previous
+            : Variants.FirstOrDefault(v => v == "Tracks") ?? Variants.FirstOrDefault();
 
         _suppressReload = wasSuppressed;
         if (!_suppressReload)
@@ -613,7 +666,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var total = Tracks.Count;
         var added = Tracks.Count(t => t.IsCustom);
         var replaced = Tracks.Count(t => !t.IsCustom && (t.Replaced || t.IsReplacing));
-        var stationActive = _otherBanksActive + Tracks.Count(t => t.Enabled);
+        var stationActive = _otherBanksActive + Tracks.Count(t => t.Enabled && !t.IsBankOnly);
         var size = (_sizeIsApprox ? "~" : "") + BankSize.Mb(_projectedTotalBytes);
 
         var parts = new List<string>();
@@ -625,9 +678,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         StatusPlaylistText = $"{stationActive} in playlist";
         StatusSizeText = size;
 
-        PlaylistLow = stationActive < MinActiveTracksPerStation;
+        PlaylistLow = stationActive < MinimumActiveTracks;
         BankSizeHigh = _projectedTotalBytes > WarnBankBytes;
-        PlaylistTip = string.Format(Str.TipStatusPlaylist, stationActive, MinActiveTracksPerStation);
+        PlaylistTip = string.Format(_usesOriginalPlaylistMinimum ? Str.TipStatusPlaylistOriginal : Str.TipStatusPlaylist,
+            stationActive, MinimumActiveTracks);
     }
 
     public void RecalcProjectedSize()
@@ -717,7 +771,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
 
             t.Markers = t.SampleLength > 0
-                ? RadioStationEditor.ComputeAutoMarkers(t.SampleLength, t.SampleRate, t.UsesMilliseconds)
+                ? RadioStationEditor.ComputeAutoMarkers(t.SampleLength, t.SampleRate, t.UsesMilliseconds, t.UsesTrackBreakDown)
                 : null;
             count++;
         }
@@ -761,8 +815,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (t.Markers is not { Count: > 0 }) continue;
 
             var filtered = new Dictionary<string, long>();
-            var markerNames = EditWindowViewModel.MarkerNamesFor(t.UsesMilliseconds);
-            foreach (var kv in MarkerPresetService.AdaptMarkers(t.Markers, t.UsesMilliseconds, t.SampleRate))
+            var markerNames = EditWindowViewModel.MarkerNamesFor(t.UsesMilliseconds, t.UsesTrackBreakDown);
+            foreach (var kv in MarkerPresetService.AdaptMarkers(t.Markers, t.UsesMilliseconds, t.SampleRate, t.UsesTrackBreakDown))
             {
                 if ((kv.Value >= 0 || t.UsesMilliseconds) && markerNames.Contains(kv.Key))
                 {
@@ -799,7 +853,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task<(float[]? Peaks, string? Wav)> LoadPeaksAsync(TrackItemViewModel track)
     {
+        track.RefreshToolAvailability();
+        if (!track.CanPlay)
+        {
+            Status = track.MarkersTip;
+            return (null, null);
+        }
+
         var bankPath = _loadedBankPath;
+        var settings = NormalizationOverride.Resolve(Settings, track.Normalization);
+        var gainDb = track.GainDb ?? 0;
         return await Task.Run<(float[]?, string?)>(() =>
         {
             try
@@ -809,7 +872,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 {
                     wav = track.IsFileSourceFsb
                         ? AudioDecoder.DecodeBank(track.FileSource!, 0)
-                        : AudioDecoder.DecodeAdded(track.FileSource!, Settings, gainDb: track.GainDb ?? 0);
+                        : AudioDecoder.DecodeAdded(track.FileSource!, settings, gainDb: gainDb);
                 }
                 else if (track.RestoreFsbPath is not null)
                 {
@@ -892,13 +955,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private FilePreview? GetFilePreview(TrackItemViewModel track) => track.UsesFileSource && !track.IsFileSourceFsb
-        ? new FilePreview(track.FileSource!, track.GainDb ?? 0, Settings.LoudnessNormalize,
-            Settings.DynamicNormalization, Settings.TargetLufs, Settings.TargetTruePeak)
-        : null;
+    private FilePreview? GetFilePreview(TrackItemViewModel track)
+    {
+        if (!track.UsesFileSource || track.IsFileSourceFsb) return null;
+        var settings = NormalizationOverride.Resolve(Settings, track.Normalization);
+        return new FilePreview(track.FileSource!, track.GainDb ?? 0, settings.LoudnessNormalize,
+            settings.DynamicNormalization, settings.TargetLufs, settings.TargetTruePeak);
+    }
 
     private async Task StartAsync(TrackItemViewModel track, double fromSec = 0, bool paused = false)
     {
+        track.RefreshToolAvailability();
+        if (!track.CanPlay)
+        {
+            StopPlayback();
+            Status = track.PlayTip;
+            return;
+        }
+
         var gen = ++_playGen;
         var filePreview = GetFilePreview(track);
         _requestedFilePreview = filePreview;
@@ -1063,6 +1137,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void ToggleEnabled(TrackItemViewModel track, bool above = false, bool below = false)
     {
+        if (!track.CanToggle) return;
         var state = !track.Enabled;
         track.Enabled = state;
 
@@ -1072,7 +1147,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             for (var i = 0; i < Tracks.Count; i++)
             {
-                if ((above && i < idx) || (below && i > idx))
+                if (Tracks[i].CanToggle && ((above && i < idx) || (below && i > idx)))
                 {
                     Tracks[i].Enabled = state;
                 }
@@ -1151,7 +1226,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 var bakPath = bankPath + ".bak";
                 var sk = FevBank.ReadSkeleton(bakPath);
-                var hash = Lookup.SoundNameToId(track.SoundName);
+                var hash = track.BankId ?? Lookup.SoundNameToId(track.SoundName);
                 var bidx = -1;
 
                 foreach (var (id, index) in sk.Stbl)
@@ -1220,6 +1295,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         track.ReplacementPath = null;
         track.Replaced = false;
         track.GainDb = null;
+        track.Normalization = null;
 
         Status = string.Format(Str.StatusRestoreTrackFmt, track.SoundName);
         HasUnsavedChanges = true;
@@ -1235,11 +1311,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         var soundName = Naming.MakeSoundName(_nextSeq++);
         const int sampleRate = 48000;
+        var version = GameScanner.DetectVersion(Settings.GamePath);
         var track = new RadioTrack
         {
             SoundName = soundName,
             Origin = TrackOrigin.Custom,
-            UsesMilliseconds = GameScanner.DetectVersion(Settings.GamePath) == 2,
+            UsesMilliseconds = version == 2,
+            UsesTrackBreakDown = version is 2 or 3,
             Enabled = true,
             DisplayName = title ?? Path.GetFileNameWithoutExtension(sourcePath),
             Artist = artist,
@@ -1276,7 +1354,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 t.GainDb,
                 t.Enabled,
                 ExportRole(t),
-                t.Markers))
+                t.Markers,
+                t.UsesFileSource && !t.IsFileSourceFsb ? t.Normalization : null))
             .ToList();
 
         if (items.Count == 0)
@@ -1329,6 +1408,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void StageImportedReplace(TrackItemViewModel defaultTrack, ImportedPack pack, PackTrack e)
     {
+        if (defaultTrack.IsBankOnly) throw new InvalidOperationException(Str.TipMissingTrackInfo);
         var audioPath = Path.Combine(pack.Dir, e.File);
         defaultTrack.ReplacementPath = audioPath;
         defaultTrack.Title = e.DisplayName ?? defaultTrack.Title;
@@ -1345,17 +1425,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         track.SampleLength = checked((long) Math.Round(imported.SampleLength * scale));
         track.SampleRate = targetRate;
         track.GainDb = imported.GainDb;
+        track.Normalization = audioPath.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase) ? null : imported.Normalization;
         track.PendingDurationSeconds = targetRate > 0 && track.SampleLength > 0
             ? track.SampleLength / (double) targetRate : null;
         Log.Line($"import.staged sound={track.SoundName} source=\"{audioPath}\" " +
             $"sourceRate={sourceRate} targetRate={targetRate} sourceFrames={imported.SampleLength} " +
-            $"targetFrames={track.SampleLength} gainDb={track.GainDb}");
+            $"targetFrames={track.SampleLength} gainDb={track.GainDb} normalization={JsonSerializer.Serialize(track.Normalization)}");
         if (imported.Markers is not { } markers)
         {
             track.Markers = null;
             return;
         }
-        var adapted = MarkerPresetService.AdaptMarkers(markers, track.UsesMilliseconds, sourceRate);
+        var adapted = MarkerPresetService.AdaptMarkers(markers, track.UsesMilliseconds, sourceRate, track.UsesTrackBreakDown);
         track.Markers = adapted.ToDictionary(m => m.Key,
             m => m.Value < 0 ? -1 : checked((long) Math.Round(m.Value * scale)));
     }
@@ -1370,6 +1451,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             if (defaultSoundName is not null && defaultByName.TryGetValue(defaultSoundName, out var def))
             {
+                if (ReferenceEquals(def, _nowPlaying)) StopPlayback();
                 StageImportedReplace(def, pack, e);
             }
             else
@@ -1386,15 +1468,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task BuildAsync()
     {
+        RefreshToolAvailability();
+        if (IsBusy) return;
+
         if (SelectedStation is null || SelectedLanguage is null || SelectedVariant is null)
         {
-            return;
-        }
-
-        Recount();
-        if (PlaylistLow)
-        {
-            Status = PlaylistTip;
             return;
         }
 
@@ -1402,6 +1480,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (missing.Count > 0)
         {
             Status = string.Format(Str.StatusBuildMissingFmt, string.Join(", ", missing));
+            return;
+        }
+
+        UpdatePlaylistMinimum();
+        Recount();
+        if (PlaylistLow)
+        {
+            Status = PlaylistTip;
             return;
         }
 
@@ -1449,7 +1535,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return new BuildItem(
                 t.SoundName, newCustom, encodeSrc, t.Title, t.Artist, t.GainDb, t.Enabled,
                 t.Markers, replacing, t.RestoreFromBak,
-                MarkerSampleRate: t.SampleRate > 0 ? t.SampleRate : t.BankSampleRate);
+                MarkerSampleRate: t.SampleRate > 0 ? t.SampleRate : t.BankSampleRate,
+                Normalization: t.Normalization,
+                BankId: t.BankId);
         }).ToList();
         var settings = Settings;
 
@@ -1563,7 +1651,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Log.Line($"RadioInfo saved (reference): {refFile}");
 
         var refStation = refRadio.StationByNumber(station.Number);
-        var enabled = items.ToDictionary(i => i.SoundName, i => i.Enabled);
+        var enabled = items.Where(i => i.BankId is null || i.BankId == Lookup.SoundNameToId(i.SoundName))
+            .ToDictionary(i => i.SoundName, i => i.Enabled);
         var markerRates = items.ToDictionary(i => i.SoundName, i => i.MarkerSampleRate);
         var restored = items.Where(i => i.RestoreFromBak).Select(i => i.SoundName).ToList();
 
@@ -1789,22 +1878,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         var changed = ApplySampleMeta(editor, items);
         var changedMarkers = new Dictionary<string, IReadOnlyDictionary<string, long>>();
+        var radioItems = items.Where(i => i.BankId is null || i.BankId == Lookup.SoundNameToId(i.SoundName)).ToList();
 
-        foreach (var it in items)
+        foreach (var it in radioItems)
         {
             editor.SetEnabled(it.SoundName, it.Enabled);
         }
 
-        foreach (var it in items)
+        foreach (var it in radioItems)
         {
             if (it.Markers is { } mk)
             {
-                var adapted = MarkerPresetService.AdaptMarkers(mk, editor.UsesMilliseconds, it.MarkerSampleRate);
+                var adapted = MarkerPresetService.AdaptMarkers(mk, editor.UsesMilliseconds, it.MarkerSampleRate, editor.UsesTrackBreakDown);
                 if (!MarkersEqual(editor.GetMarkers(it.SoundName, it.MarkerSampleRate), adapted))
                 {
                     changedMarkers[it.SoundName] = adapted;
+                    editor.SetMarkers(it.SoundName, adapted, it.MarkerSampleRate);
                 }
-                editor.SetMarkers(it.SoundName, adapted, it.MarkerSampleRate);
                 Log.Line($"radio.track.markers sound={it.SoundName} sourceRate={it.MarkerSampleRate} " +
                     $"xmlMilliseconds={editor.UsesMilliseconds} positions={System.Text.Json.JsonSerializer.Serialize(editor.GetMarkers(it.SoundName))}");
             }

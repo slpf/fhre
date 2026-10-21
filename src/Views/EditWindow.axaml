@@ -4,7 +4,7 @@
         xmlns:assets="clr-namespace:FH6RB.Assets"
         x:Class="FH6RB.Views.EditWindow"
         x:DataType="vm:EditWindowViewModel"
-        Width="520" MaxHeight="760"
+        Width="600"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource Bg1}"
@@ -18,10 +18,10 @@
                        FontSize="11" Foreground="{DynamicResource TxtFaint}" Margin="16,0,16,16"/>
 
             <TextBlock Text="{x:Static assets:Str.LblTitle}" Classes="sect" Margin="16,0,16,4"/>
-            <TextBox Classes="field" Text="{Binding Title}" MaxWidth="480"/>
+            <TextBox Classes="field" Text="{Binding Title}"/>
 
             <TextBlock Text="{x:Static assets:Str.LblArtist}" Classes="sect" Margin="16,16,16,4"/>
-            <TextBox Classes="field" Text="{Binding Artist}" MaxWidth="480"/>
+            <TextBox Classes="field" Text="{Binding Artist}"/>
 
             <StackPanel IsVisible="{Binding ShowVolume}">
                 <Grid ColumnDefinitions="*,Auto">
@@ -34,6 +34,47 @@
                 <Slider Classes="volume" Minimum="-24" Maximum="6" TickFrequency="0.5"
                         IsSnapToTickEnabled="True" Value="{Binding GainDb}"
                         VerticalAlignment="Center" Margin="16,-8,16,0"/>
+            </StackPanel>
+
+            <StackPanel IsVisible="{Binding ShowNormalization}">
+                <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoudness}" Margin="16,20,16,8"/>
+                <Border Background="{DynamicResource BgInput}" BorderBrush="{DynamicResource BgDarkest}"
+                        BorderThickness="1" CornerRadius="8" Padding="12">
+                    <StackPanel Spacing="6">
+                        <CheckBox IsChecked="{Binding UseGlobalNormalization}"
+                                  Content="{x:Static assets:Str.LblUseGlobalNormalization}"
+                                  ToolTip.Tip="{x:Static assets:Str.TipUseGlobalNormalization}"
+                                  Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                        <CheckBox IsChecked="{Binding LoudnessNormalize}" IsEnabled="{Binding CanEditNormalization}"
+                                  Content="{x:Static assets:Str.LblLoudnessNormalize}"
+                                  ToolTip.Tip="{x:Static assets:Str.TipLoudnessNormalize}"
+                                  Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblTargetLoudness}"
+                                       ToolTip.Tip="{x:Static assets:Str.HintLoudness}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding TargetLufsText}" Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="-30" Maximum="-9" Value="{Binding TargetLufs}"
+                                TickFrequency="1" IsSnapToTickEnabled="True" IsEnabled="{Binding CanEditNormalizationTargets}"
+                                ToolTip.Tip="{x:Static assets:Str.HintLoudness}" Margin="0,-12,0,0"/>
+                        <Grid ColumnDefinitions="*,Auto" Margin="0,8,0,0">
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblTargetTruePeak}"
+                                       ToolTip.Tip="{x:Static assets:Str.HintTruePeak}"
+                                       Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="1" Text="{Binding TargetTruePeakText}" Foreground="{DynamicResource Header}"
+                                       FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
+                        </Grid>
+                        <Slider Classes="loudness" Minimum="-9" Maximum="0" Value="{Binding TargetTruePeak}"
+                                TickFrequency="0.1" IsSnapToTickEnabled="True" IsEnabled="{Binding CanEditNormalizationTargets}"
+                                ToolTip.Tip="{x:Static assets:Str.HintTruePeak}" Margin="0,-12,0,0"/>
+                        <CheckBox IsChecked="{Binding DynamicNormalization}" IsEnabled="{Binding CanEditNormalizationTargets}"
+                                  Content="{x:Static assets:Str.LblDynamicNormalization}"
+                                  ToolTip.Tip="{x:Static assets:Str.HintDynamicNormalization}"
+                                  Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </StackPanel>
 

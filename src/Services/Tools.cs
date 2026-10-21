@@ -24,8 +24,26 @@ public static class Tools
     public static bool HasDemucsModel => DemucsModelPath() is not null;
 
     public static bool HasFfmpeg => File.Exists(FfmpegPath);
+    public static bool HasFfprobe => File.Exists(FfprobePath);
     public static bool HasFsbankcl => File.Exists(FsbankclPath);
     public static bool HasVgmstream => File.Exists(VgmstreamPath);
+
+    public static bool CanAddTracks => HasFfmpeg && HasFfprobe;
+    public static bool CanBuild => HasFfmpeg && HasFsbankcl && HasVgmstream;
+
+    public static IEnumerable<string> MissingForAddTracks()
+    {
+        if (!HasFfmpeg) yield return "ffmpeg";
+        if (!HasFfprobe) yield return "ffprobe";
+    }
+
+    public static IEnumerable<string> MissingRequired()
+    {
+        if (!HasFfmpeg) yield return "ffmpeg";
+        if (!HasFfprobe) yield return "ffprobe";
+        if (!HasFsbankcl) yield return "fsbankcl";
+        if (!HasVgmstream) yield return "vgmstream";
+    }
     
     public static IEnumerable<string> MissingForBuild()
     {

@@ -13,7 +13,11 @@ public partial class BackupsWindow : Window
 
     public BackupEntry? RestoreTarget { get; private set; }
 
-    public BackupsWindow() => InitializeComponent();
+    public BackupsWindow()
+    {
+        InitializeComponent();
+        Activated += (_, _) => (DataContext as BackupsViewModel)?.RefreshToolAvailability();
+    }
 
     private void OnRestore(object? sender, RoutedEventArgs e)
         => SafeAsync.Run(() => RestoreAsync(sender), "restore", this);
@@ -25,6 +29,9 @@ public partial class BackupsWindow : Window
             return;
         }
 
+        row.RefreshToolAvailability();
+        if (!row.CanRestoreNow) return;
+
         var m = row.Entry.Manifest;
         var body = string.Format(Str.BackupRestoreBodyFmt, m.Name, m.GameLabel, m.StationNumber, m.StationName,
             row.CreatedLocal, m.TrackCount, m.CustomCount, row.BankCount);
@@ -33,6 +40,9 @@ public partial class BackupsWindow : Window
         {
             return;
         }
+
+        row.RefreshToolAvailability();
+        if (!row.CanRestoreNow) return;
 
         RestoreTarget = row.Entry;
         Close();

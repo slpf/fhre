@@ -26,12 +26,14 @@ public sealed partial class MarkerDefaultsViewModel : ObservableObject
     public MarkerDefaultsViewModel(AppSettings settings)
     {
         _settings = settings;
-        var usesMilliseconds = GameScanner.DetectVersion(settings.GamePath) == 2;
+        var version = GameScanner.DetectVersion(settings.GamePath);
+        var usesMilliseconds = version == 2;
+        var usesTrackBreakDown = version is 2 or 3;
         Hint = usesMilliseconds ? Str.HintMarkerDefaultsHorizon2 : Str.HintMarkerDefaults;
 
         foreach (var (name, _) in MarkerDefaults.Order)
         {
-            var displayName = usesMilliseconds && name == "PostDrop" ? "TrackBreakDown" : name;
+            var displayName = usesTrackBreakDown && name == "PostDrop" ? "TrackBreakDown" : name;
             if (usesMilliseconds && !EditWindowViewModel.MarkerNamesFor(true).Contains(displayName)) continue;
             Fields.Add(new MarkerDefaultField
             {

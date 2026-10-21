@@ -18,14 +18,18 @@ public static class MarkerPresetService
     public static string Root => Path.Combine(AppContext.BaseDirectory, "markers");
 
     public static Dictionary<string, long> AdaptMarkers(IReadOnlyDictionary<string, long> markers,
-        bool usesMilliseconds, int sampleRate)
+        bool usesMilliseconds, int sampleRate, bool usesTrackBreakDown = false)
     {
         var result = new Dictionary<string, long>(markers);
-        var target = usesMilliseconds ? "TrackBreakDown" : "PostDrop";
-        var source = usesMilliseconds ? "PostDrop" : "TrackBreakDown";
+        var target = usesMilliseconds || usesTrackBreakDown ? "TrackBreakDown" : "PostDrop";
+        var source = usesMilliseconds || usesTrackBreakDown ? "PostDrop" : "TrackBreakDown";
         if (!result.ContainsKey(target) && result.TryGetValue(source, out var breakdown))
         {
             result[target] = breakdown;
+        }
+        if (usesTrackBreakDown)
+        {
+            result.Remove("PostDrop");
         }
         if (usesMilliseconds && !result.ContainsKey("StingerStart")
             && result.TryGetValue("DJStart", out var dj))

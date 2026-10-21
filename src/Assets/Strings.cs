@@ -25,6 +25,7 @@ public static class Str
     public const string LblEncodingThreads = "Encoding threads";
     public const string LblLoudnessNormalize = "Normalize loudness";
     public const string LblDynamicNormalization = "Use dynamic normalization";
+    public const string LblUseGlobalNormalization = "Use global normalization settings";
     
     public const string BtnCancel = "Cancel";
     public const string BtnSave = "Save";
@@ -59,6 +60,7 @@ public static class Str
     public const string TipPlayTdlsLoop = "Play TrackDrop/TrackLoopEnd/TrackLoopStart";
     public const string TipPlayTlsLoop = "Play TrackLoopStart/TrackLoopEnd";
     public const string TipPlayPdlsLoop = "Play PostDrop/PostRaceLoopEnd/PostRaceLoopStart";
+    public const string TipPlayBreakDownLoop = "Play TrackBreakDown/PostRaceLoopEnd/PostRaceLoopStart";
     public const string TipPlayPlsLoop = "Play PostRaceLoopStart/PostRaceLoopEnd";
     public const string TipDelete = "Delete track";
     public const string TipRestoreTrack = "Restore track to original";
@@ -70,10 +72,13 @@ public static class Str
     public const string TipEnable = "Enable";
     public const string TipAddTrack = "Add track";
     public const string TipBuildBank = "Build current bank";
+    public const string TipMissingToolsFmt = "Unavailable: missing {0}. Restore the tool files next to the program.";
+    public const string TipMissingTrackInfo = "Editing is unavailable because this track has no radio playlist information. Preview and export are available.";
     public const string TipSetPlayhead = "Set this marker to start";
     public const string TipRevertToSaved = "Restore the last saved value";
     public const string TipBackupRestore = "Reverts files to their pre-build state.";
     public const string TipLoudnessNormalize = "Adjusts added tracks toward the target loudness while respecting the peak ceiling. When off, only manual volume compensation is applied.";
+    public const string TipUseGlobalNormalization = "Use normalization from Settings. Turn off to customize normalization for this track.";
     
     public const string Loading = "Loading…";
     public const string WatermarkOff = "off";
@@ -181,6 +186,7 @@ public static class Str
     public const string DlgFilesInUseTitle = "Files in use";
     public const string DlgFilesInUseBody = "Some game files are in use. Forza Horizon is most likely running. Close the game before building, otherwise saving and building will fail.";
     public const string TipStatusPlaylist = "Forza Horizon crashes radio stations with fewer than {1} enabled tracks in the playlist.";
+    public const string TipStatusPlaylistOriginal = "Keep at least {1} enabled tracks, matching the station's original playlist.";
     public const string TipStatusPlaylistNoLimit = "The station's total enabled tracks across all its banks.";
     public const string TipStatusSize = "Banks larger than 2 GB do not work correctly.";
     public const string DlgGameRunningTitle = "Game is running";
@@ -188,15 +194,14 @@ public static class Str
     public const string DlgInterruptSearchBody = "A loop search is still running in the background. Stop it and close the editor?";
     public const string DlgInterruptSearchOk = "Stop and close";
     public const string DlgMissingToolsTitle = "Required tools missing";
-    public const string DlgMissingToolsBody = "{0} not found in its folder next to the program.\n\nThe app will not work correctly — decoding and building are unavailable.\n\nPut the tool into the matching subfolder (ffmpeg/ and/or fsbank/).";
-    public const string DlgMissingVgmstreamTitle = "Optional tool missing";
-    public const string DlgMissingVgmstreamBody = "vgmstream not found next to the program.\n\nBank-track decoding will be unavailable, but adding and building your own tracks still works.";
+    public const string DlgMissingToolsBody = "Missing tools: {0}.\n\nFunctions that require these tools are disabled. Hover over a disabled button to see which tools it needs.\n\nRestore the matching ffmpeg/, fsbank/ or vgmstream/ folders next to the program. ffmpeg/ must contain both ffmpeg and ffprobe.";
     public const string MkTrackStart = "Start of the track.";
     public const string MkEnd = "End of the track.";
     public const string MkDjStart = "Free-roam: where the DJ comes in at the end and the music fades out.\n\nBest at the very end on the fade.";
     public const string MkDjDrop = "Free-roam: where the DJ stops talking over the intro and the music comes to the front.\n\nBest after the intro or on an early drop.";
     public const string MkDjSegment = "Free-roam: a DJ line over the middle of the track, layered on top of the music.\n\nBest on a calmer mid-track section.";
     public const string MkTrackBreakDown = "FH2: the track breakdown marker used during events.";
+    public const string MkTrackBreakDownHorizon3 = "Events: the point reached after crossing the finish line.\n\nBest on a final drop.\n\nMust not exceed PostRaceLoopEnd.";
     public const string MkStingerStart = "FH2: where the station stinger begins before the DJ transition.";
     public const string MkTrackDropHorizon2 = "Events: where the track starts when an event begins, right after the countdown.\n\nBest on a first drop.";
     public const string MkTrackDrop = "Events: where the track starts when an event begins, right after the countdown.\n\nBest on a first drop.\n\nMust not exceed TrackLoopEnd.";
@@ -208,6 +213,8 @@ public static class Str
     public const string DlgTrackDropAfterLoopTitle = "TrackDrop is past TrackLoopEnd";
     public const string DlgTrackDropAfterLoopBody = "TrackDrop must not be later than TrackLoopEnd.\n\nMove TrackDrop earlier or push TrackLoopEnd past it.";
     public const string DlgPostDropAfterLoopTitle = "PostDrop is past PostRaceLoopEnd";
+    public const string DlgBreakDownAfterLoopTitle = "TrackBreakDown is past PostRaceLoopEnd";
+    public const string DlgBreakDownAfterLoopBody = "TrackBreakDown must not be later than PostRaceLoopEnd.\n\nMove TrackBreakDown earlier or push PostRaceLoopEnd past it.";
     public const string DlgPostDropAfterLoopBody = "PostDrop must not be later than PostRaceLoopEnd.\n\nMove PostDrop earlier or push PostRaceLoopEnd past it.";
 
     public const string DlgMarkerValidationTitle = "Marker validation";
@@ -215,6 +222,7 @@ public static class Str
     public const string ErrPostRaceLoopOrder = "PostRaceLoopStart must be earlier than PostRaceLoopEnd.";
     public const string ErrTrackDropAfterLoop = "TrackDrop is past TrackLoopEnd.";
     public const string ErrPostDropAfterLoop = "PostDrop is past PostRaceLoopEnd.";
+    public const string ErrBreakDownAfterLoop = "TrackBreakDown is past PostRaceLoopEnd.";
     
     public const string LangAll = "All languages";
     

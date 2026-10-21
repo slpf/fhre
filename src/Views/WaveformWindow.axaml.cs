@@ -592,6 +592,7 @@ public partial class WaveformWindow : Window
         {
             ("TrackDrop", "TrackLoopEnd") => (Str.DlgTrackDropAfterLoopTitle, Str.DlgTrackDropAfterLoopBody),
             ("PostDrop", "PostRaceLoopEnd") => (Str.DlgPostDropAfterLoopTitle, Str.DlgPostDropAfterLoopBody),
+            ("TrackBreakDown", "PostRaceLoopEnd") => (Str.DlgBreakDownAfterLoopTitle, Str.DlgBreakDownAfterLoopBody),
             _ => (Str.TitleNotice, $"{startName} must not be later than {endName}."),
         };
 

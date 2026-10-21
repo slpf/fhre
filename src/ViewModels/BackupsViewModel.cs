@@ -6,10 +6,19 @@ using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
 
-public sealed class BackupRow
+public sealed class BackupRow : ObservableObject
 {
     public required BackupEntry Entry { get; init; }
     public bool CanRestore { get; init; }
+    public bool CanRestoreNow => CanRestore && Tools.CanBuild;
+    public string RestoreTip => Tools.CanBuild ? Str.BtnRestore
+        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForBuild()));
+
+    public void RefreshToolAvailability()
+    {
+        OnPropertyChanged(nameof(CanRestoreNow));
+        OnPropertyChanged(nameof(RestoreTip));
+    }
 
     public string Name => Entry.Manifest.Name;
 
@@ -44,6 +53,11 @@ public sealed partial class BackupsViewModel : ObservableObject
         GamePath = gamePath;
         _station = station;
         Refresh();
+    }
+
+    public void RefreshToolAvailability()
+    {
+        foreach (var row in Items) row.RefreshToolAvailability();
     }
 
     public void Refresh()

@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         AddHandler(PointerPressedEvent, OnPreviewPressed, RoutingStrategies.Tunnel);
+        Activated += (_, _) => (DataContext as MainWindowViewModel)?.RefreshToolAvailability();
         Opened += OnOpened;
     }
 
@@ -231,7 +232,7 @@ public partial class MainWindow : Window
                 t.RestoreFsbPath ?? t.SourcePath, t.ReplacementPath,
                 t.RestoreFsbPath is not null ? -1 : t.SubIndex,
                 t.Title, t.Artist, t.SampleLength, t.SampleRate,
-                t.GainDb, t.Enabled, t.Markers))
+                t.GainDb, t.Enabled, t.Markers, t.Normalization, t.BankId))
             .ToList();
 
         await Dispatcher.UIThread.InvokeAsync(() =>
@@ -368,7 +369,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var defaults = Vm.Tracks.Where(t => !t.IsCustom).ToList();
+        var defaults = Vm.Tracks.Where(t => !t.IsCustom && !t.IsBankOnly).ToList();
         var vm = new ImportWindowViewModel(pack.Manifest.Tracks, defaults);
         var w = new ImportWindow { DataContext = vm };
         await w.ShowDialog(this);
@@ -397,6 +398,13 @@ public partial class MainWindow : Window
 
         if (w.RestoreTarget is not { } target)
         {
+            return;
+        }
+
+        Vm.RefreshToolAvailability();
+        if (!Tools.CanBuild)
+        {
+            Vm.Status = Vm.BuildTip;
             return;
         }
 
@@ -611,6 +619,8 @@ public partial class MainWindow : Window
 
     private async Task AddTrackAsync()
     {
+        if (!CheckAddTrackAvailability()) return;
+
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = Str.PickAddAudio,
@@ -637,6 +647,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        if (!CheckAddTrackAvailability()) return;
 
         Vm.IsAddingTracks = true;
         
@@ -717,6 +729,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!CheckAddTrackAvailability()) return;
+
+        if (!track.CanReplace)
+        {
+            Vm.Status = track.ReplaceTip;
+            return;
+        }
+
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = Str.PickReplaceAudio,
@@ -729,6 +749,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        if (!CheckAddTrackAvailability()) return;
 
         if (ReferenceEquals(Vm.NowPlaying, track))
         {
@@ -776,6 +798,14 @@ public partial class MainWindow : Window
 
     private async Task EditMarkersAsync(TrackItemViewModel track)
     {
+        if (Vm.IsBusy || track.MarkersLoading) return;
+        Vm.RefreshToolAvailability();
+        if (!track.CanEditMarkers)
+        {
+            Vm.Status = track.MarkersTip;
+            return;
+        }
+
         Vm.StopPlayback();
         Vm.Status = "";
 
@@ -793,13 +823,13 @@ public partial class MainWindow : Window
             Vm.IsPreparingPlayback = false;
         }
 
-        if (track.SampleLength <= 0 || track.SampleRate <= 0)
+        if (media.Wav is null || media.Peaks is null || track.SampleLength <= 0 || track.SampleRate <= 0)
         {
             Vm.Status = Str.StatusDecodeFailed;
             return;
         }
 
-        var vm = new EditWindowViewModel(track)
+        var vm = new EditWindowViewModel(track, Vm.Settings)
         {
             Peaks = media.Peaks,
             WavPath = media.Wav,
@@ -820,9 +850,14 @@ public partial class MainWindow : Window
 
     private async Task EditTrackAsync(TrackItemViewModel track)
     {
-        var vm = new EditWindowViewModel(track);
+        if (!track.CanEdit)
+        {
+            Vm.Status = track.EditTip;
+            return;
+        }
+        var vm = new EditWindowViewModel(track, Vm.Settings);
         
-        if (vm.CanEditMarkers)
+        if (vm.CanEditMarkers && track.CanEditMarkers)
         {
             vm.PeaksLoader = () => Vm.LoadPeaksAsync(track);
         }
@@ -845,6 +880,13 @@ public partial class MainWindow : Window
 
     private async Task BuildAsync()
     {
+        Vm.RefreshToolAvailability();
+        if (!Vm.CanBuild)
+        {
+            if (!Tools.CanBuild) Vm.Status = Vm.BuildTip;
+            return;
+        }
+
         if (Vm.ProjectedTotalBytes > int.MaxValue)
         {
             var proceed = await MessageDialog.ShowAsync(this, Str.DlgBankTooLargeWarnTitle,
@@ -960,5 +1002,14 @@ public partial class MainWindow : Window
         var i = fileName.IndexOf(" - ", StringComparison.Ordinal);
         
         return i > 0 ? (fileName[(i + 3)..].Trim(), fileName[..i].Trim()) : (fileName.Trim(), null);
+    }
+
+    private bool CheckAddTrackAvailability()
+    {
+        Vm.RefreshToolAvailability();
+        if (Vm.IsBusy) return false;
+        if (Vm.CanAddTracks) return true;
+        Vm.Status = Vm.AddTracksTip;
+        return false;
     }
 }

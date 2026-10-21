@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using FH6RB.Assets;
 using FH6RB.Core;
 using FH6RB.Services;
 
@@ -12,6 +13,13 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public TrackOrigin Origin { get; }
     public bool IsCustom => Origin == TrackOrigin.Custom;
     public bool UsesMilliseconds { get; }
+    public bool UsesTrackBreakDown { get; }
+    public ulong? BankId { get; }
+    public bool IsBankOnly { get; }
+    public bool CanEdit => !IsBankOnly;
+    public bool CanToggle => !IsBankOnly;
+    public string EditTip => IsBankOnly ? Str.TipMissingTrackInfo : Str.TipEdit;
+    public string ToggleTip => IsBankOnly ? Str.TipMissingTrackInfo : Enabled ? Str.TipDisable : Str.TipEnable;
     
     public bool CanDelete => IsCustom;
     public bool CanRestoreDefault => !IsCustom && (IsReplacing || Replaced);
@@ -28,9 +36,28 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public int RestoreBakIndex { get; set; } = -1;
     public string? RestoreFsbPath { get; set; }
     
-    public bool CanPlay => UsesFileSource
-        ? (IsFileSourceFsb ? Tools.HasVgmstream : Tools.HasFfmpeg)
-        : SubIndex >= 0 && SampleLength > 0 && Tools.HasVgmstream;
+    public bool CanPlay => HasDecoder
+        && (UsesFileSource || RestoreFsbPath is not null || SubIndex >= 0 && SampleLength > 0);
+
+    public bool CanEditMarkers => !IsBankOnly && CanPlay && !MarkersLoading;
+    private bool NeedsBankDecoder => !UsesFileSource || IsFileSourceFsb;
+    private string DecoderName => NeedsBankDecoder ? "vgmstream" : "ffmpeg";
+    private bool HasDecoder => NeedsBankDecoder ? Tools.HasVgmstream : Tools.HasFfmpeg;
+    public string PlayTip => HasDecoder ? Str.TipPlay : string.Format(Str.TipMissingToolsFmt, DecoderName);
+    public string MarkersTip => IsBankOnly ? Str.TipMissingTrackInfo
+        : HasDecoder ? Str.TipMarkers : string.Format(Str.TipMissingToolsFmt, DecoderName);
+    public string ReplaceTip => IsBankOnly ? Str.TipMissingTrackInfo : CanReplace ? Str.TipReplaceAudio
+        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForAddTracks()));
+
+    public void RefreshToolAvailability()
+    {
+        OnPropertyChanged(nameof(CanPlay));
+        OnPropertyChanged(nameof(CanReplace));
+        OnPropertyChanged(nameof(CanEditMarkers));
+        OnPropertyChanged(nameof(PlayTip));
+        OnPropertyChanged(nameof(ReplaceTip));
+        OnPropertyChanged(nameof(MarkersTip));
+    }
 
     [ObservableProperty] private TrackPlayState _playState = TrackPlayState.Idle;
 
@@ -51,11 +78,13 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     [ObservableProperty] private bool _markersLoading;
 
+    partial void OnMarkersLoadingChanged(bool value) => OnPropertyChanged(nameof(CanEditMarkers));
+
     [ObservableProperty] private bool _replaced;
     public bool IsReplacing => ReplacementPath is not null;
     public bool ShowRplBadge => IsReplacing;
     public bool ShowCstBadge => Replaced && !IsReplacing && !IsCustom;
-    public bool CanReplace => true;
+    public bool CanReplace => !IsBankOnly && Tools.CanAddTracks;
     public bool UsesFileSource => IsUnbuilt || IsReplacing;
     public string? FileSource => IsReplacing ? ReplacementPath : SourcePath;
     public bool IsFileSourceFsb => UsesFileSource
@@ -75,7 +104,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
         OnPropertyChanged(nameof(UsesFileSource));
         OnPropertyChanged(nameof(FileSource));
         OnPropertyChanged(nameof(IsFileSourceFsb));
-        OnPropertyChanged(nameof(CanPlay));
+        RefreshToolAvailability();
         OnPropertyChanged(nameof(CanRestoreDefault));
     }
 
@@ -114,6 +143,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     [ObservableProperty] private string? _artist;
     [ObservableProperty] private bool _enabled;
     [ObservableProperty] private double? _gainDb;
+    [ObservableProperty] private NormalizationOverride? _normalization;
 
     public bool HasArtist => !string.IsNullOrWhiteSpace(Artist);
 
@@ -122,6 +152,9 @@ public sealed partial class TrackItemViewModel : ObservableObject
         SoundName = track.SoundName;
         Origin = track.Origin;
         UsesMilliseconds = track.UsesMilliseconds;
+        UsesTrackBreakDown = track.UsesTrackBreakDown || track.UsesMilliseconds;
+        BankId = track.BankId;
+        IsBankOnly = BankId is { } id && id != Lookup.SoundNameToId(SoundName);
         SampleLength = track.SampleLength;
         SampleRate = track.SampleRate;
         BankSampleLength = track.SampleLength;
@@ -187,4 +220,5 @@ public sealed partial class TrackItemViewModel : ObservableObject
     partial void OnGainDbChanged(double? value) => OnPropertyChanged(nameof(InfoLine));
     partial void OnTitleChanged(string value) => OnPropertyChanged(nameof(InfoLine));
     partial void OnArtistChanged(string? value) => OnPropertyChanged(nameof(HasArtist));
+    partial void OnEnabledChanged(bool value) => OnPropertyChanged(nameof(ToggleTip));
 }

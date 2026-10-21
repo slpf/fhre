@@ -30,6 +30,7 @@ public sealed partial class MarkerField : ObservableObject
         "TrackDrop" => Str.TipPlayTdlsLoop,
         "TrackLoopStart" => Str.TipPlayTlsLoop,
         "PostDrop" => Str.TipPlayPdlsLoop,
+        "TrackBreakDown" => Str.TipPlayBreakDownLoop,
         "PostRaceLoopStart" => Str.TipPlayPlsLoop,
         _ => Str.TipPlayMarkerLoop,
     };
@@ -153,10 +154,12 @@ public sealed partial class EditWindowViewModel : ObservableObject
     public string FullName { get; }
 
     public bool ShowVolume { get; }
+    public bool ShowNormalization { get; }
     public bool CanEditMarkers { get; }
     public long SampleLength { get; }
     public int SampleRate { get; }
     public bool UsesMilliseconds { get; }
+    public bool UsesTrackBreakDown { get; }
     public double TotalSeconds => SampleRate > 0 ? SampleLength / (double) SampleRate : 0;
 
     [ObservableProperty] private float[]? _peaks;
@@ -196,6 +199,34 @@ public sealed partial class EditWindowViewModel : ObservableObject
     [ObservableProperty] private string? _artist;
     [ObservableProperty] private double _gainDb;
 
+    private readonly NormalizationOverride _globalNormalization;
+    private NormalizationOverride? _customNormalization;
+    private readonly IReadOnlyDictionary<string, long>? _savedMarkers;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanEditNormalization))]
+    [NotifyPropertyChangedFor(nameof(CanEditNormalizationTargets))]
+    private bool _useGlobalNormalization;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanEditNormalizationTargets))]
+    private bool _loudnessNormalize;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetLufsText))]
+    private double _targetLufs;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TargetTruePeakText))]
+    private double _targetTruePeak;
+
+    [ObservableProperty] private bool _dynamicNormalization;
+
+    public bool CanEditNormalization => ShowNormalization && !UseGlobalNormalization;
+    public bool CanEditNormalizationTargets => CanEditNormalization && LoudnessNormalize;
+    public string TargetLufsText => $"{TargetLufs:0.#} LUFS";
+    public string TargetTruePeakText => $"{TargetTruePeak:0.0} dBTP";
+
     public ObservableCollection<MarkerGroup> Groups { get; } = [];
     public bool Saved { get; private set; }
 
@@ -214,11 +245,16 @@ public sealed partial class EditWindowViewModel : ObservableObject
         (Str.GrpDjDrops, ["DJDrop", "DJStart", "StingerStart", "TrackDrop", "TrackBreakDown"]),
     ];
 
+    private static readonly (string Group, string[] Names)[] Horizon3Schema = Schema
+        .Select(group => (group.Group, group.Names.Select(name => name == "PostDrop" ? "TrackBreakDown" : name).ToArray()))
+        .ToArray();
+
     public static readonly HashSet<string> EditorMarkerNames = new(Schema.SelectMany(s => s.Names));
     private static readonly HashSet<string> Horizon2MarkerNames = new(Horizon2Schema.SelectMany(s => s.Names));
+    private static readonly HashSet<string> Horizon3MarkerNames = new(Horizon3Schema.SelectMany(s => s.Names));
 
-    public static IReadOnlySet<string> MarkerNamesFor(bool usesMilliseconds) =>
-        usesMilliseconds ? Horizon2MarkerNames : EditorMarkerNames;
+    public static IReadOnlySet<string> MarkerNamesFor(bool usesMilliseconds, bool usesTrackBreakDown = false) =>
+        usesMilliseconds ? Horizon2MarkerNames : usesTrackBreakDown ? Horizon3MarkerNames : EditorMarkerNames;
 
     private static readonly Dictionary<string, string> Descriptions = new()
     {
@@ -237,15 +273,26 @@ public sealed partial class EditWindowViewModel : ObservableObject
         ["StingerStart"] = Str.MkStingerStart,
     };
 
-    public EditWindowViewModel(TrackItemViewModel track)
+    public EditWindowViewModel(TrackItemViewModel track, AppSettings? settings = null)
     {
+        ArgumentNullException.ThrowIfNull(track);
         SoundName = track.SoundName;
         FullName = track.Title + " - " + track.Artist + " (" + track.SoundName + ")";
         ShowVolume = track.UsesFileSource;
+        ShowNormalization = track.UsesFileSource && !track.IsFileSourceFsb;
+        Settings = settings;
+        var global = settings ?? new AppSettings();
+        _globalNormalization = new NormalizationOverride(global.LoudnessNormalize,
+            AppSettings.ClampTargetLufs(global.TargetLufs), AppSettings.ClampTargetTruePeak(global.TargetTruePeak),
+            global.DynamicNormalization);
+        _customNormalization = track.Normalization;
+        _useGlobalNormalization = track.Normalization is null;
+        SetNormalizationDraft(_customNormalization ?? _globalNormalization);
         _title = track.Title;
         _artist = track.Artist;
         _gainDb = track.GainDb ?? 0;
         UsesMilliseconds = track.UsesMilliseconds;
+        UsesTrackBreakDown = track.UsesTrackBreakDown;
 
         var rate = track.SampleRate;
         var len = track.SampleLength;
@@ -255,12 +302,13 @@ public sealed partial class EditWindowViewModel : ObservableObject
         SampleRate = rate;
 
         var end = len > 0 ? len - 1 : -1;
-        var auto = len > 0 ? RadioStationEditor.ComputeAutoMarkers(len, rate, UsesMilliseconds) : null;
+        var auto = len > 0 ? RadioStationEditor.ComputeAutoMarkers(len, rate, UsesMilliseconds, UsesTrackBreakDown) : null;
         var existing = track.Markers is { } markers
-            ? MarkerPresetService.AdaptMarkers(markers, UsesMilliseconds, rate)
+            ? MarkerPresetService.AdaptMarkers(markers, UsesMilliseconds, rate, UsesTrackBreakDown)
             : null;
+        _savedMarkers = track.UsesFileSource ? null : existing;
 
-        foreach (var (group, names) in UsesMilliseconds ? Horizon2Schema : Schema)
+        foreach (var (group, names) in UsesMilliseconds ? Horizon2Schema : UsesTrackBreakDown ? Horizon3Schema : Schema)
         {
             var grp = new MarkerGroup { Title = group };
 
@@ -287,13 +335,39 @@ public sealed partial class EditWindowViewModel : ObservableObject
                 }
 
                 grp.Fields.Add(new MarkerField { Name = name,
-                    Description = UsesMilliseconds && name == "TrackDrop" ? Str.MkTrackDropHorizon2 : Descriptions.GetValueOrDefault(name, ""),
+                    Description = UsesMilliseconds && name == "TrackDrop" ? Str.MkTrackDropHorizon2
+                        : !UsesMilliseconds && name == "TrackBreakDown" ? Str.MkTrackBreakDownHorizon3
+                        : Descriptions.GetValueOrDefault(name, ""),
                     SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position,
-                    LoopEndName = UsesMilliseconds ? null : name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", "TrackDrop" => "TrackLoopEnd", "PostDrop" => "PostRaceLoopEnd", _ => null },
-                    LoopReturnToName = UsesMilliseconds ? null : name switch { "TrackDrop" => "TrackLoopStart", "PostDrop" => "PostRaceLoopStart", _ => null } });
+                    LoopEndName = UsesMilliseconds ? null : name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", "TrackDrop" => "TrackLoopEnd", "PostDrop" or "TrackBreakDown" => "PostRaceLoopEnd", _ => null },
+                    LoopReturnToName = UsesMilliseconds ? null : name switch { "TrackDrop" => "TrackLoopStart", "PostDrop" or "TrackBreakDown" => "PostRaceLoopStart", _ => null } });
             }
 
             Groups.Add(grp);
+        }
+    }
+
+    private void SetNormalizationDraft(NormalizationOverride settings)
+    {
+        LoudnessNormalize = settings.LoudnessNormalize;
+        TargetLufs = AppSettings.ClampTargetLufs(settings.TargetLufs);
+        TargetTruePeak = AppSettings.ClampTargetTruePeak(settings.TargetTruePeak);
+        DynamicNormalization = settings.DynamicNormalization;
+    }
+
+    private NormalizationOverride ReadNormalizationDraft() => new(LoudnessNormalize,
+        AppSettings.ClampTargetLufs(TargetLufs), AppSettings.ClampTargetTruePeak(TargetTruePeak), DynamicNormalization);
+
+    partial void OnUseGlobalNormalizationChanged(bool value)
+    {
+        if (value)
+        {
+            _customNormalization = ReadNormalizationDraft();
+            SetNormalizationDraft(_globalNormalization);
+        }
+        else
+        {
+            SetNormalizationDraft(_customNormalization ?? _globalNormalization);
         }
     }
 
@@ -304,7 +378,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
             return;
         }
 
-        var def = RadioStationEditor.ComputeAutoMarkers(SampleLength, SampleRate, UsesMilliseconds);
+        var def = RadioStationEditor.ComputeAutoMarkers(SampleLength, SampleRate, UsesMilliseconds, UsesTrackBreakDown);
 
         foreach (var f in AllMarkers)
         {
@@ -321,7 +395,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
             ? (double)SampleRate / presetSampleRate
             : 1.0;
         var adapted = MarkerPresetService.AdaptMarkers(positions, UsesMilliseconds,
-            presetSampleRate > 0 ? presetSampleRate : SampleRate);
+            presetSampleRate > 0 ? presetSampleRate : SampleRate, UsesTrackBreakDown);
         foreach (var f in AllMarkers)
         {
             if (adapted.TryGetValue(f.Name, out var p))
@@ -352,31 +426,35 @@ public sealed partial class EditWindowViewModel : ObservableObject
     {
         var errors = new List<string>();
         long Pos(string name) => AllMarkers.FirstOrDefault(f => f.Name == name)?.Position ?? -1;
+        bool Unchanged(string first, string second) => _savedMarkers is not null
+            && _savedMarkers.TryGetValue(first, out var originalFirst) && originalFirst == Pos(first)
+            && _savedMarkers.TryGetValue(second, out var originalSecond) && originalSecond == Pos(second);
 
         var tls = Pos("TrackLoopStart");
         var tle = Pos("TrackLoopEnd");
-        if (tls >= 0 && tle >= 0 && tls >= tle)
+        if (tls >= 0 && tle >= 0 && tls >= tle && !Unchanged("TrackLoopStart", "TrackLoopEnd"))
         {
             errors.Add(Str.ErrTrackLoopOrder);
         }
 
         var prls = Pos("PostRaceLoopStart");
         var prle = Pos("PostRaceLoopEnd");
-        if (prls >= 0 && prle >= 0 && prls >= prle)
+        if (prls >= 0 && prle >= 0 && prls >= prle && !Unchanged("PostRaceLoopStart", "PostRaceLoopEnd"))
         {
             errors.Add(Str.ErrPostRaceLoopOrder);
         }
 
         var td = Pos("TrackDrop");
-        if (td >= 0 && tle >= 0 && td > tle)
+        if (td >= 0 && tle >= 0 && td > tle && !Unchanged("TrackDrop", "TrackLoopEnd"))
         {
             errors.Add(Str.ErrTrackDropAfterLoop);
         }
 
-        var pd = Pos("PostDrop");
-        if (pd >= 0 && prle >= 0 && pd > prle)
+        var postDrop = UsesTrackBreakDown ? "TrackBreakDown" : "PostDrop";
+        var pd = Pos(postDrop);
+        if (pd >= 0 && prle >= 0 && pd > prle && !Unchanged(postDrop, "PostRaceLoopEnd"))
         {
-            errors.Add(Str.ErrPostDropAfterLoop);
+            errors.Add(UsesTrackBreakDown ? Str.ErrBreakDownAfterLoop : Str.ErrPostDropAfterLoop);
         }
 
         return errors;
@@ -390,6 +468,11 @@ public sealed partial class EditWindowViewModel : ObservableObject
         if (track.UsesFileSource)
         {
             track.GainDb = Math.Abs(GainDb) < 0.05 ? null : GainDb;
+        }
+
+        if (ShowNormalization && track.UsesFileSource && !track.IsFileSourceFsb)
+        {
+            track.Normalization = UseGlobalNormalization ? null : ReadNormalizationDraft();
         }
 
         if (!CanEditMarkers)

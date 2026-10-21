@@ -23,6 +23,9 @@ public sealed class PackTrack
     [JsonPropertyName("sampleLength")] public long SampleLength { get; set; }
     [JsonPropertyName("sampleRate")] public int SampleRate { get; set; }
     [JsonPropertyName("gainDb")] public double? GainDb { get; set; }
+    [JsonPropertyName("normalization")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public NormalizationOverride? Normalization { get; set; }
     [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
     [JsonPropertyName("role")] public string Role { get; set; } = "custom";
     [JsonPropertyName("markers")] public Dictionary<string, long>? Markers { get; set; }
@@ -32,7 +35,7 @@ public sealed record ExportItem(
     string? FileSource, int SubIndex,
     string? DisplayName, string? Artist,
     long SampleLength, int SampleRate, double? GainDb, bool Enabled,
-    string Role, Dictionary<string, long>? Markers);
+    string Role, Dictionary<string, long>? Markers, NormalizationOverride? Normalization = null);
 
 public sealed record ImportedPack(PackManifest Manifest, string Dir);
 
@@ -94,6 +97,8 @@ public static class TrackPack
                 SampleLength = t.SampleLength,
                 SampleRate = t.SampleRate,
                 GainDb = t.GainDb,
+                Normalization = srcPath is not null && !srcPath.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase)
+                    ? t.Normalization : null,
                 Enabled = t.Enabled,
                 Role = t.Role,
                 Markers = t.Markers is { } m && m.Count > 0 ? new Dictionary<string, long>(m) : null,
@@ -224,6 +229,12 @@ public static class TrackPack
                 {
                     throw new InvalidDataException($"track {track.Id} has an invalid gain");
                 }
+                if (track.Normalization is { } normalization &&
+                    (!double.IsFinite(normalization.TargetLufs) || normalization.TargetLufs is < -30 or > -9 ||
+                     !double.IsFinite(normalization.TargetTruePeak) || normalization.TargetTruePeak is < -9 or > 0))
+                {
+                    throw new InvalidDataException($"track {track.Id} has invalid normalization settings");
+                }
                 var entryName = AudioEntryName(track.File);
                 if (!audioEntries.TryGetValue(entryName, out var audio))
                 {
@@ -252,6 +263,7 @@ public static class TrackPack
                     $"entry=\"{item.EntryName}\" -> \"{dest}\", bytes={item.Entry.Length}, " +
                     $"frames={item.Track.SampleLength}, rate={item.Track.SampleRate}, " +
                     $"gain={item.Track.GainDb?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none"}, " +
+                    $"normalization={JsonSerializer.Serialize(item.Track.Normalization)}, " +
                     $"markers={item.Track.Markers?.Count ?? 0}");
             }
         }

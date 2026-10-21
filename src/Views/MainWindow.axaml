@@ -173,13 +173,14 @@
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_revert.png" Width="26" Height="26"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Button>
-                                            <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipReplaceAudio}" Click="OnReplace" Tag="{Binding}"
-                                                    IsVisible="{Binding CanReplace}">
+                                            <Button Classes="act" ToolTip.Tip="{Binding ReplaceTip}" ToolTip.ShowOnDisabled="True"
+                                                    Click="OnReplace" Tag="{Binding}" IsEnabled="{Binding CanReplace}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_replace.png" Width="24" Height="24"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"
                                                        RenderTransformOrigin="50%,50%"/>
                                             </Button>
-                                            <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipMarkers}" Click="OnMarkers" Tag="{Binding}">
+                                            <Button Classes="act" ToolTip.Tip="{Binding MarkersTip}" ToolTip.ShowOnDisabled="True"
+                                                    Click="OnMarkers" Tag="{Binding}" IsEnabled="{Binding CanEditMarkers}">
                                                 <Panel>
                                                     <Image Source="avares://FH6RB/Assets/icons/icon_pin.png" Width="18" Height="18"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
@@ -190,12 +191,14 @@
                                                            IsVisible="{Binding MarkersLoading}"/>
                                                 </Panel>
                                             </Button>
-                                            <Button Classes="act" ToolTip.Tip="{x:Static assets:Str.TipEdit}" Click="OnEdit" Tag="{Binding}">
+                                            <Button Classes="act" ToolTip.Tip="{Binding EditTip}" ToolTip.ShowOnDisabled="True"
+                                                    IsEnabled="{Binding CanEdit}" Click="OnEdit" Tag="{Binding}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Button>
                                             <Button Classes="act" Click="OnToggle" Tag="{Binding}"
-                                                    ToolTip.Tip="{Binding Enabled, Converter={x:Static cv:Conv.ToggleToolTip}}">
+                                                    IsEnabled="{Binding CanToggle}" ToolTip.ShowOnDisabled="True"
+                                                    ToolTip.Tip="{Binding ToggleTip}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_toggle.png" Width="24" Height="24"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"
                                                        Opacity="{Binding Enabled, Converter={x:Static cv:Conv.EnabledOpacity}}"/>
@@ -216,8 +219,8 @@
         <Border Grid.Row="2" Background="{DynamicResource Bg2}"
                 BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="16,16">
             <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                <Button Grid.Column="0" Classes="big" Width="100" MaxWidth="100" Click="OnAddTrack" IsEnabled="{Binding !IsBuilding}" HorizontalContentAlignment="Center"
-                        Padding="0" Height="48" MaxHeight="48" ToolTip.Tip="{x:Static assets:Str.TipAddTrack}">
+                <Button Grid.Column="0" Classes="big" Width="100" MaxWidth="100" Click="OnAddTrack" IsEnabled="{Binding CanAddTracks}" HorizontalContentAlignment="Center"
+                        Padding="0" Height="48" MaxHeight="48" ToolTip.Tip="{Binding AddTracksTip}" ToolTip.ShowOnDisabled="True">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Image Source="avares://FH6RB/Assets/icons/icon_add.png" Width="20" Height="20"
                                HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"/>
@@ -271,7 +274,7 @@
                 </Grid>
 
                 <Button Grid.Column="2" Classes="big primary" Width="100" MaxWidth="100" Click="OnBuild" IsEnabled="{Binding CanBuild}" HorizontalContentAlignment="Center"
-                        Height="48" MaxHeight="48" Padding="0" ToolTip.Tip="{x:Static assets:Str.TipBuildBank}">
+                        Height="48" MaxHeight="48" Padding="0" ToolTip.Tip="{Binding BuildTip}" ToolTip.ShowOnDisabled="True">
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Image Source="avares://FH6RB/Assets/icons/icon_build.png" Width="16" Height="16"
                                HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"/>

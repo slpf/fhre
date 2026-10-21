@@ -19,7 +19,9 @@ public sealed record BuildItem(
     IReadOnlyDictionary<string, long>? Markers = null,
     bool IsReplacement = false,
     bool RestoreFromBak = false,
-    int MarkerSampleRate = 0);
+    int MarkerSampleRate = 0,
+    NormalizationOverride? Normalization = null,
+    ulong? BankId = null);
 
 public sealed record AddedSample(string SoundName, long Frames, int SampleRate, string? DisplayName, string? Artist, bool Enabled, bool IsReplacement = false);
 
@@ -125,7 +127,7 @@ public static class BankBuildService
         var seen = new HashSet<ulong>();
         foreach (var item in items)
         {
-            var hash = Lookup.SoundNameToId(item.SoundName);
+            var hash = BankIdFor(item);
             PlannedSample entry;
             if (item.IsNewCustom || item.IsReplacement && !skel.Empty)
             {
@@ -192,11 +194,21 @@ public static class BankBuildService
         {
             var entry = plan[i];
             var item = entry.Item;
+            var rawSource = entry.Source is null && !IsFsbSource(item.SourcePath);
+            var effectiveSettings = rawSource ? NormalizationOverride.Resolve(settings, item.Normalization) : settings;
             Action<string>? trackLog = log is null ? null : message => log($"[track={i} sound={JsonSerializer.Serialize(item.SoundName)}] {message}");
             var trackTimer = Stopwatch.StartNew();
             Diagnostic(trackLog, "track.plan", new { item.DisplayName, item.Artist, item.SourcePath,
                 item.IsNewCustom, item.IsReplacement, item.RestoreFromBak, item.Enabled, item.GainDb,
-                item.MarkerSampleRate, item.Markers, sourceBank = entry.Source?.Path, sourceIndex = entry.Index });
+                item.MarkerSampleRate, item.Markers, item.Normalization, item.BankId, sourceBank = entry.Source?.Path, sourceIndex = entry.Index });
+            Diagnostic(trackLog, "track.normalization", new { requestedOverride = item.Normalization,
+                appliesToRawSource = rawSource,
+                effective = rawSource ? new
+                {
+                    effectiveSettings.LoudnessNormalize, effectiveSettings.TargetLufs,
+                    effectiveSettings.TargetTruePeak, effectiveSettings.DynamicNormalization
+                } : null,
+                bypass = rawSource ? null : entry.Source is not null ? "existing bank audio" : "encoded FSB import" });
             if (entry.Source is { } original && original.Skeleton.Mode == targetMode)
             {
                 var sample = original.Samples[entry.Index];
@@ -246,7 +258,7 @@ public static class BankBuildService
                     }
                     else
                     {
-                        await EncodeAsync(item, wav, settings, trackLog).ConfigureAwait(false);
+                        await CreateInputWavAsync(item, wav, effectiveSettings, trackLog).ConfigureAwait(false);
                     }
 
                     var pcm = AudioBuildValidation.Inspect(wav);
@@ -263,8 +275,8 @@ public static class BankBuildService
                     }
                     prepared[i] = ReadPreparedSample(fsb, targetMode);
                     await ValidateFsbAsync(fsb, prepared[i], wav, verifiedWav, trackLog, pcm,
-                        entry.Source is null && settings.LoudnessNormalize
-                            ? AppSettings.ClampTargetTruePeak(settings.TargetTruePeak) : null).ConfigureAwait(false);
+                        rawSource && effectiveSettings.LoudnessNormalize
+                            ? effectiveSettings.TargetTruePeak : null).ConfigureAwait(false);
                     if (entry.Source is { } converted)
                     {
                         var originalSample = converted.Samples[entry.Index];
@@ -321,7 +333,7 @@ public static class BankBuildService
             targetHeader = ReadPreparedSample(fsb, targetMode).FsbHeader;
         }
 
-        var stbl = plan.Select((p, i) => (Lookup.SoundNameToId(p.Item.SoundName), i));
+        var stbl = plan.Select((p, i) => (BankIdFor(p.Item), i));
         var stblPayload = FevBank.BuildStbl(stbl);
         var audioBytes = prepared.Sum(p => p.Header.Length + p.Data.Length + (0x20 - p.Data.Length % 0x20) % 0x20);
         log?.Invoke($"prepared audio: {BankSize.Mb(audioBytes)} ({prepared.Length} samples)");
@@ -433,7 +445,7 @@ public static class BankBuildService
         {
             var expected = prepared[i];
             var stored = actual[i];
-            if (!ids.TryGetValue(i, out var id) || id != Lookup.SoundNameToId(plan[i].Item.SoundName))
+            if (!ids.TryGetValue(i, out var id) || id != BankIdFor(plan[i].Item))
             {
                 throw new InvalidDataException($"Assembled bank STBL mapping differs for sample {i}.");
             }
@@ -677,7 +689,9 @@ public static class BankBuildService
         }
     }
 
-    private static async Task EncodeAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)
+    private static ulong BankIdFor(BuildItem item) => item.BankId ?? Lookup.SoundNameToId(item.SoundName);
+
+    private static async Task CreateInputWavAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)
     {
         if (item.SourcePath is null || !File.Exists(item.SourcePath))
         {
@@ -717,7 +731,8 @@ public static class BankBuildService
         }
         var sourcePath = item.SourcePath;
         Diagnostic(log, "wav.encode.start", new { sourcePath, normalize = settings.LoudnessNormalize,
-            settings.DynamicNormalization, settings.TargetLufs, settings.TargetTruePeak, item.GainDb });
+            settings.DynamicNormalization, settings.TargetLufs, settings.TargetTruePeak, item.GainDb,
+            requestedOverride = item.Normalization });
         await Loudnorm.RenderAsync(sourcePath, wav, settings, item.GainDb ?? 0, log).ConfigureAwait(false);
     }
 }

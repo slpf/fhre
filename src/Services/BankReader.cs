@@ -47,6 +47,7 @@ public static class BankReader
         var replaced = new HashSet<ulong>();
         var enabled = new HashSet<ulong>();
         var usesMilliseconds = radio?.StationByNumber(stationNumber)?.UsesMilliseconds == true;
+        var usesTrackBreakDown = radio?.StationByNumber(stationNumber)?.UsesTrackBreakDown == true;
 
         if (usesMilliseconds)
         {
@@ -133,6 +134,7 @@ public static class BankReader
             result.Add(new RadioTrack
             {
                 SoundName = soundName,
+                BankId = t.Id,
                 Origin = isCustom ? TrackOrigin.Custom : TrackOrigin.Original,
                 Enabled = enabled.Contains(t.Id),
                 DisplayName = hasMeta ? m.Dn ?? soundName : soundName,
@@ -142,6 +144,7 @@ public static class BankReader
                 SubIndex = hasAudio ? t.Index : -1,
                 Replaced = replaced.Contains(t.Id),
                 UsesMilliseconds = usesMilliseconds,
+                UsesTrackBreakDown = usesTrackBreakDown,
                 Markers = markers,
             });
         }

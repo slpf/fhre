@@ -28,6 +28,7 @@ try
     TestTrackPacks(temp);
     TestImportedMarkers(temp);
     await NormalizationChecks.RunAsync(temp);
+    await NormalizationOverrideChecks.RunAsync(temp, path => WriteEmptyBank(path));
     var inputs = GenerateInputs(temp);
     await TestPreviewMarkersAsync(inputs[0]);
     await TestBuildAsync(temp, inputs, false);

@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using System.Xml;
+using System.Xml.Linq;
 
 namespace FH6RB.Services;
 
@@ -118,10 +120,11 @@ public static partial class GameScanner
         try
         {
             return Directory
-                .EnumerateFiles(gamePath, "ForzaHorizon*.exe", SearchOption.TopDirectoryOnly)
+                .EnumerateFiles(gamePath, "ForzaHorizon*.exe", FileEnumeration)
                 .FirstOrDefault()
-                ?? Directory.EnumerateFiles(gamePath, "forza_durango_*.exe", SearchOption.TopDirectoryOnly)
-                    .FirstOrDefault();
+                ?? Directory.EnumerateFiles(gamePath, "forza_durango_*.exe", FileEnumeration)
+                    .FirstOrDefault()
+                ?? FindHorizon3Executable(gamePath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -143,8 +146,43 @@ public static partial class GameScanner
             return 2;
         }
 
+        if (name.Equals("forza_x64_release_final", StringComparison.OrdinalIgnoreCase)
+            && FindHorizon3Executable(gamePath) is not null)
+        {
+            return 3;
+        }
+
         var m = Regex.Match(name, @"\d+$");
         return m.Success && int.TryParse(m.Value, out var v) ? v : 0;
+    }
+
+    private static string? FindHorizon3Executable(string gamePath)
+    {
+        try
+        {
+            var manifest = Directory.EnumerateFiles(gamePath, "AppxManifest.xml", FileEnumeration).FirstOrDefault();
+            if (manifest is null) return null;
+            using var reader = XmlReader.Create(manifest, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null
+            });
+            var document = XDocument.Load(reader);
+            if (!document.Descendants().Any(e => e.Name.LocalName == "Identity"
+                    && string.Equals((string?) e.Attribute("Name"), "Microsoft.OpusPG", StringComparison.Ordinal)))
+            {
+                return null;
+            }
+            var declared = document.Descendants().FirstOrDefault(e => e.Name.LocalName == "Application"
+                && string.Equals((string?) e.Attribute("Executable"), "forza_x64_release_final.exe",
+                    StringComparison.OrdinalIgnoreCase));
+            return declared is null ? null
+                : Directory.EnumerateFiles(gamePath, "forza_x64_release_final.exe", FileEnumeration).FirstOrDefault();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or XmlException)
+        {
+            return null;
+        }
     }
 
     public static bool IsGameProcessRunning(string gamePath)
@@ -186,12 +224,10 @@ public static partial class GameScanner
 
     private static List<string> CollectLanguageFiles(string gamePath, ScanStats? stats)
     {
-        return SafeEnumerate(gamePath, "RadioInfo_*.xml", stats: stats)
-            .Select(Path.GetFileName)
-            .Where(n => n is not null)
-            .Select(n => n!)
+        return SafeEnumerate(gamePath, LanguagePatterns, stats: stats)
+            .Select(LogicalFileName)
             .Where(IsLanguageFile)
-            .Distinct()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.Ordinal)
             .ToList();
     }
@@ -210,7 +246,10 @@ public static partial class GameScanner
 
     public static string? RadioInfoPathByFile(string gamePath, string fileName)
     {
-        return SafeEnumerate(gamePath, fileName).FirstOrDefault();
+        var logical = LogicalFileName(fileName);
+        if (!IsLanguageFile(logical)) return null;
+        return SafeEnumerate(gamePath, logical).FirstOrDefault()
+               ?? SafeEnumerate(gamePath, Fh3FileNameCodec.Encode(logical)).FirstOrDefault();
     }
 
     public static List<string> RadioBankNames(string gamePath)
@@ -220,23 +259,13 @@ public static partial class GameScanner
 
     private static List<string> CollectBankNames(string gamePath, ScanStats? stats)
     {
-        var names = new List<string>();
-
-        const string assets = ".assets.bank";
-        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks_*.assets.bank", stats: stats)
-            .Select(f => Path.GetFileName(f)[..^assets.Length])
-            .Where(n => VariantBankRegex().IsMatch(n)));
-
-        const string bank = ".bank";
-        names.AddRange(SafeEnumerate(gamePath, "R*_Tracks.bank", stats: stats)
-            .Select(f => Path.GetFileName(f)[..^bank.Length])
-            .Where(n => PlainBankRegex().IsMatch(n)));
-
-        names.AddRange(SafeEnumerate(gamePath, "HZ2_MX_Radio_*_Tracks.bank", stats: stats)
-            .Select(f => Path.GetFileName(f)[..^bank.Length])
-            .Where(n => Horizon2BankRegex().IsMatch(n)));
-
-        var result = names.Distinct().OrderBy(x => x).ToList();
+        var result = SafeEnumerate(gamePath, BankPatterns, stats: stats)
+            .Select(path => BankNameFromFile(LogicalFileName(path)))
+            .Where(name => name is not null)
+            .Select(name => name!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
         Log.Line($"GameScanner: radio banks = {result.Count} [{string.Join(", ", result)}]");
 
         return result;
@@ -244,11 +273,87 @@ public static partial class GameScanner
 
     public static string? BankPath(string gamePath, string bankName)
     {
-        var path = SafeEnumerate(gamePath, $"{bankName}.assets.bank").FirstOrDefault()
-                   ?? SafeEnumerate(gamePath, $"{bankName}.bank").FirstOrDefault();
+        var canonical = BankNameFromFile(bankName + ".bank");
+        if (!string.Equals(canonical, bankName, StringComparison.OrdinalIgnoreCase)) canonical = null;
+        string? path = null;
+        if (canonical is not null)
+        {
+            foreach (var suffix in new[] { ".assets.bank", ".bank" })
+            {
+                var fileName = canonical + suffix;
+                path = SafeEnumerate(gamePath, fileName).FirstOrDefault()
+                       ?? SafeEnumerate(gamePath, Fh3FileNameCodec.Encode(fileName)).FirstOrDefault();
+                if (path is not null) break;
+            }
+        }
         Log.Line($"GameScanner: BankPath({bankName}) -> {path ?? "NOT FOUND"}");
         return path;
     }
+
+    public static List<string> BackupFiles(string gamePath) => SafeEnumerate(gamePath, "*.bak")
+        .Where(path => IsRadioResource(LogicalFileName(path[..^4])))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    public static string LogicalFileName(string pathOrName)
+    {
+        ArgumentNullException.ThrowIfNull(pathOrName);
+        var name = Path.GetFileName(pathOrName);
+        var logical = name;
+        if (name.EndsWith(".]gb", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".`l8s", StringComparison.OrdinalIgnoreCase))
+        {
+            var decoded = Fh3FileNameCodec.Decode(name.ToLowerInvariant());
+            if (IsRadioResource(decoded)) logical = decoded;
+        }
+        if (IsLanguageFile(logical)) return $"RadioInfo_{logical[10..^4].ToUpperInvariant()}.xml";
+        var bank = BankNameFromFile(logical);
+        if (bank is null) return name;
+        var suffix = logical.EndsWith(".assets.bank", StringComparison.OrdinalIgnoreCase) ? ".assets.bank" : ".bank";
+        return bank + suffix;
+    }
+
+    private static bool IsRadioResource(string name) => IsLanguageFile(name) || BankNameFromFile(name) is not null;
+
+    private static string? BankNameFromFile(string fileName)
+    {
+        var suffixLength = fileName.EndsWith(".assets.bank", StringComparison.OrdinalIgnoreCase) ? 12
+            : fileName.EndsWith(".bank", StringComparison.OrdinalIgnoreCase) ? 5 : 0;
+        if (suffixLength == 0) return null;
+        var bank = fileName[..^suffixLength];
+        var match = TrackBankRegex().Match(bank);
+        if (match.Success)
+        {
+            var suffix = match.Groups[2].Value;
+            if (suffix.Length == 0) return $"R{match.Groups[1].Value}_Tracks";
+            if (suffix.Equals("Disk", StringComparison.OrdinalIgnoreCase)) suffix = "Disk";
+            else if (Regex.IsMatch(suffix, @"^(?:PDLC|CU)\d+$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                suffix = suffix.ToUpperInvariant();
+            return $"R{match.Groups[1].Value}_Tracks_{suffix}";
+        }
+        match = Horizon2BankRegex().Match(bank);
+        return match.Success ? $"HZ2_MX_Radio_{match.Groups[1].Value}_Tracks" : null;
+    }
+
+    private static readonly EnumerationOptions FileEnumeration = new()
+    {
+        MatchCasing = MatchCasing.CaseInsensitive,
+        IgnoreInaccessible = false,
+        AttributesToSkip = 0
+    };
+
+    private static readonly string[] LanguagePatterns =
+    [
+        "RadioInfo_*.xml",
+        Fh3FileNameCodec.Encode("RadioInfo_*.xml")
+    ];
+
+    private static readonly string[] BankPatterns =
+    [
+        "R*_Tracks*.bank",
+        Fh3FileNameCodec.Encode("R*_Tracks*.bank"),
+        "HZ2_MX_Radio_*_Tracks.bank"
+    ];
 
     private static readonly HashSet<string> SkipDirs = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -257,6 +362,9 @@ public static partial class GameScanner
     };
 
     private static IEnumerable<string> SafeEnumerate(string root, string pattern,
+        int maxDepth = 8, ScanStats? stats = null) => SafeEnumerate(root, new[] { pattern }, maxDepth, stats);
+
+    private static IEnumerable<string> SafeEnumerate(string root, IReadOnlyList<string> patterns,
         int maxDepth = 8, ScanStats? stats = null)
     {
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
@@ -271,20 +379,23 @@ public static partial class GameScanner
         {
             var (dir, depth) = stack.Pop();
 
-            string[] files;
-            try
+            foreach (var pattern in patterns)
             {
-                files = Directory.GetFiles(dir, pattern, SearchOption.TopDirectoryOnly);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                RecordIssue(stats, dir, ex);
-                files = [];
-            }
+                string[] files;
+                try
+                {
+                    files = Directory.GetFiles(dir, pattern, FileEnumeration);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    RecordIssue(stats, dir, ex);
+                    files = [];
+                }
 
-            foreach (var f in files)
-            {
-                yield return f;
+                foreach (var f in files)
+                {
+                    yield return f;
+                }
             }
 
             if (depth >= maxDepth)
@@ -334,12 +445,9 @@ public static partial class GameScanner
         }
     }
 
-    [GeneratedRegex(@"^R\d+_Tracks_.+$")]
-    private static partial Regex VariantBankRegex();
+    [GeneratedRegex(@"^R(\d+)_Tracks(?:_([A-Za-z0-9_-]+))?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TrackBankRegex();
 
-    [GeneratedRegex(@"^R\d+_Tracks$")]
-    private static partial Regex PlainBankRegex();
-
-    [GeneratedRegex(@"^HZ2_MX_Radio_\d+_Tracks$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^HZ2_MX_Radio_(\d+)_Tracks$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Horizon2BankRegex();
 }

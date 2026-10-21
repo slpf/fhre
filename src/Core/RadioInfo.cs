@@ -17,6 +17,8 @@ public sealed class RadioTrack
     public int SubIndex { get; set; } = -1;
     public bool Replaced { get; set; }
     public bool UsesMilliseconds { get; init; }
+    public bool UsesTrackBreakDown { get; init; }
+    public ulong? BankId { get; init; }
     public long BankBytes { get; set; }
     public IReadOnlyDictionary<string, long>? Markers { get; set; }
 
@@ -121,6 +123,11 @@ public sealed class RadioStationEditor(XElement station)
     public bool UsesMilliseconds => station.Elements("Playlist")
         .Any(pl => (string?) pl.Attribute("Type") is "FreeroamTracks" or "EventTracks");
 
+    public bool UsesTrackBreakDown => UsesMilliseconds || station.Elements("SampleList")
+        .Where(sl => (string?) sl.Attribute("Type") == "Track")
+        .SelectMany(sl => sl.Elements("Sample"))
+        .Any(sample => sample.Attribute("TrackBreakDown") is not null && sample.Attribute("PostDrop") is null);
+
     private XElement TrackList => station.Elements("SampleList")
         .First(sl => (string?) sl.Attribute("Type") == "Track");
 
@@ -150,7 +157,8 @@ public sealed class RadioStationEditor(XElement station)
                 {
                     yield return (entry, null);
                 }
-                else if (node is XComment comment && ReadDisabledEntry(comment) is { } disabled)
+                else if (node is XComment comment && ReadDisabledEntry(comment) is { } disabled
+                         && disabled.Attribute("SoundName") is not null)
                 {
                     yield return (disabled, comment);
                 }
@@ -163,7 +171,8 @@ public sealed class RadioStationEditor(XElement station)
         try
         {
             var entry = RadioInfo.ParseElement(comment.Value.Trim());
-            return entry.Name == "Entry" && entry.Attribute("SoundName") is not null ? entry : null;
+            return entry.Name == "Entry" && (entry.Attribute("SoundName") is not null || entry.Attribute("Name") is not null)
+                ? entry : null;
         }
         catch (System.Xml.XmlException)
         {
@@ -259,6 +268,7 @@ public sealed class RadioStationEditor(XElement station)
     public List<RadioTrack> ReadTracks()
     {
         var fr = FreeRoamPlaylist;
+        var usesTrackBreakDown = UsesTrackBreakDown;
         
         var live = fr?.Elements("Entry")
             .Select(e => (string?)e.Attribute(UsesMilliseconds ? "SoundName" : "Name"))
@@ -283,6 +293,7 @@ public sealed class RadioStationEditor(XElement station)
                 SampleRate = UsesMilliseconds ? 1000 : (int?) s.Attribute("SampleRate") ?? 0,
                 Replaced = (string?) s.Attribute("Replaced") == "true",
                 UsesMilliseconds = UsesMilliseconds,
+                UsesTrackBreakDown = usesTrackBreakDown,
                 Markers = ReadMarkers(s),
             });
         }
@@ -297,22 +308,27 @@ public sealed class RadioStationEditor(XElement station)
 
     public void SetEnabled(string soundName, bool enabled)
     {
-        var template = UsesMilliseconds ? FindSample(soundName) : null;
+        if (!UsesMilliseconds)
+        {
+            if (FindSample(soundName) is null) return;
+            if (FreeRoamPlaylist is { } freeRoam &&
+                freeRoam.Elements("Entry").Any(e => (string?) e.Attribute("Name") == soundName) == enabled)
+            {
+                return;
+            }
+            var playlists = MusicPlaylists.ToList();
+            var hasDisabled = playlists.Any(pl => pl.Nodes().OfType<XComment>()
+                .Any(c => (string?) ReadDisabledEntry(c)?.Attribute("Name") == soundName));
+            foreach (var playlist in playlists)
+            {
+                if (enabled) EnableIn(playlist, soundName, !hasDisabled);
+                else DisableIn(playlist, soundName);
+            }
+            return;
+        }
+        var template = FindSample(soundName);
         foreach (var playlist in MusicPlaylists)
         {
-            if (!UsesMilliseconds)
-            {
-                if (enabled)
-                {
-                    EnableIn(playlist, soundName);
-                }
-                else
-                {
-                    DisableIn(playlist, soundName);
-                }
-                continue;
-            }
-
             var entries = playlist.Elements("Entry").Where(e => (string?) e.Attribute("SoundName") == soundName).ToList();
             var disabled = playlist.Nodes().OfType<XComment>()
                 .Where(c => (string?) ReadDisabledEntry(c)?.Attribute("SoundName") == soundName).ToList();
@@ -343,28 +359,33 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
-    private static void DisableIn(XElement playlist, string name)
+    private static void DisableIn(XElement playlist, string name, bool preserveEntry = true)
     {
         foreach (var e in playlist.Elements("Entry")
                      .Where(e => (string?)e.Attribute("Name") == name).ToList())
         {
-            e.Remove();
+            if (preserveEntry) e.ReplaceWith(new XComment(DisabledMarkup(e)));
+            else e.Remove();
         }
+        if (preserveEntry) return;
         foreach (var c in playlist.Nodes().OfType<XComment>()
-                     .Where(c => c.Value.Contains($"Name=\"{name}\"")).ToList())
+                     .Where(c => (string?) ReadDisabledEntry(c)?.Attribute("Name") == name
+                                 || c.Value.Contains($"Name=\"{name}\"", StringComparison.Ordinal)).ToList())
         {
             c.Remove();
         }
     }
 
-    private static void EnableIn(XElement playlist, string name)
+    private static void EnableIn(XElement playlist, string name, bool createIfMissing = true)
     {
+        var active = playlist.Elements("Entry").Any(e => (string?) e.Attribute("Name") == name);
         foreach (var c in playlist.Nodes().OfType<XComment>()
-                     .Where(c => c.Value.Contains($"Name=\"{name}\"")).ToList())
+                     .Where(c => (string?) ReadDisabledEntry(c)?.Attribute("Name") == name).ToList())
         {
-            c.Remove();
+            if (active) c.Remove();
+            else c.ReplaceWith(ReadDisabledEntry(c)!);
         }
-        if (playlist.Elements("Entry").All(e => (string?) e.Attribute("Name") != name))
+        if (createIfMissing && playlist.Elements("Entry").All(e => (string?) e.Attribute("Name") != name))
         {
             playlist.Add(new XElement("Entry", new XAttribute("Name", name)));
         }
@@ -400,6 +421,7 @@ public sealed class RadioStationEditor(XElement station)
             SoundName = soundName, Origin = TrackOrigin.Custom, Enabled = true,
             DisplayName = displayName ?? soundName, Artist = artist,
             SampleLength = sampleLength, SampleRate = sampleRate, UsesMilliseconds = UsesMilliseconds,
+            UsesTrackBreakDown = UsesTrackBreakDown,
         };
     }
 
@@ -423,7 +445,7 @@ public sealed class RadioStationEditor(XElement station)
             sample.SetAttributeValue("IsXCloudModeSafe", "true");
         }
         sample.SetAttributeValue("Replaced", null);
-        ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate);
+        ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate, UsesTrackBreakDown);
         sample.Elements("BPM").Remove();
     }
 
@@ -447,17 +469,17 @@ public sealed class RadioStationEditor(XElement station)
     public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength, int sampleRate) =>
         MarkerDefaults.Compute(sampleLength, sampleRate);
 
-    public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength, int sampleRate, bool usesMilliseconds)
+    public static Dictionary<string, long> ComputeAutoMarkers(long sampleLength, int sampleRate, bool usesMilliseconds,
+        bool usesTrackBreakDown = false)
     {
         var markers = ComputeAutoMarkers(sampleLength, sampleRate);
+        if (usesMilliseconds || usesTrackBreakDown)
+        {
+            UseNativeBreakdown(markers);
+        }
         if (!usesMilliseconds)
         {
             return markers;
-        }
-
-        if (markers.TryGetValue("PostDrop", out var breakdown))
-        {
-            markers["TrackBreakDown"] = breakdown;
         }
 
         if (markers.TryGetValue("DJStart", out var dj))
@@ -525,11 +547,21 @@ public sealed class RadioStationEditor(XElement station)
 
     public bool SetMarkers(string soundName, IReadOnlyDictionary<string, long> markers, int sampleRate = 0)
     {
+        var usesTrackBreakDown = UsesTrackBreakDown;
         return EditSamples(soundName, sample =>
         {
             var targetRate = UsesMilliseconds ? 1000 : (int?) sample.Attribute("SampleRate") ?? sampleRate;
             var positions = markers.ToDictionary(m => m.Key,
                 m => sampleRate > 0 && targetRate > 0 ? ScalePosition(m.Value, sampleRate, targetRate) : m.Value);
+            if (usesTrackBreakDown)
+            {
+                UseNativeBreakdown(positions);
+            }
+            var current = ReadMarkers(sample);
+            if (positions.All(m => current.TryGetValue(m.Key, out var value) && value == m.Value))
+            {
+                return;
+            }
             if (UsesMilliseconds)
             {
                 positions = positions.Where(m => MillisecondMarkerNames.Contains(m.Key)).ToDictionary();
@@ -539,9 +571,53 @@ public sealed class RadioStationEditor(XElement station)
             {
                 ApplyXmlMarkerRules(positions, (long?) sample.Attribute("SampleLength") ?? 0);
             }
+            if (usesTrackBreakDown)
+            {
+                NormalizeBreakdownSchema(sample, true);
+            }
             WriteMarkers(sample, positions);
         });
     }
+
+    private static void UseNativeBreakdown(IDictionary<string, long> markers)
+    {
+        if (!markers.ContainsKey("TrackBreakDown") && markers.TryGetValue("PostDrop", out var value))
+        {
+            markers["TrackBreakDown"] = value;
+        }
+        markers.Remove("PostDrop");
+    }
+
+    private static void NormalizeBreakdownSchema(XElement sample, bool usesTrackBreakDown)
+    {
+        var target = usesTrackBreakDown ? "TrackBreakDown" : "PostDrop";
+        var source = usesTrackBreakDown ? "PostDrop" : "TrackBreakDown";
+        if (sample.Attribute(target) is null && sample.Attribute(source) is { } attribute)
+        {
+            sample.SetAttributeValue(target, attribute.Value);
+        }
+        if (usesTrackBreakDown)
+        {
+            sample.SetAttributeValue(source, null);
+        }
+        foreach (var marker in sample.Elements("Marker").Where(m => (string?) m.Attribute("Name") == source).ToList())
+        {
+            if (!sample.Elements("Marker").Any(m => (string?) m.Attribute("Name") == target))
+            {
+                var copy = new XElement(marker);
+                copy.SetAttributeValue("Name", target);
+                sample.Add(copy);
+            }
+            if (usesTrackBreakDown)
+            {
+                marker.Remove();
+            }
+        }
+    }
+
+    private bool UsesTrackBreakDownForCopy(RadioStationEditor reference) => UsesTrackBreakDown ||
+        !station.Elements("SampleList").Where(sl => (string?) sl.Attribute("Type") == "Track")
+            .SelectMany(sl => sl.Elements("Sample")).Any() && reference.UsesTrackBreakDown;
 
     private static void ClampMarkers(IDictionary<string, long> markers, long length)
     {
@@ -598,7 +674,7 @@ public sealed class RadioStationEditor(XElement station)
 
     public bool ResetMarkersAuto(string soundName, long sampleLength, int sampleRate = 0)
     {
-        return EditSamples(soundName, sample => ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate));
+        return EditSamples(soundName, sample => ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate, UsesTrackBreakDown));
     }
 
     public bool ApplyReplacement(string soundName, long sampleLength, int sampleRate)
@@ -609,7 +685,7 @@ public sealed class RadioStationEditor(XElement station)
             sample.SetAttributeValue("SampleLength", xmlLength);
             sample.SetAttributeValue("SampleRate", UsesMilliseconds ? null : sampleRate);
             sample.SetAttributeValue("Replaced", "true");
-            ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate);
+            ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate, UsesTrackBreakDown);
             sample.Elements("BPM").Remove();
         });
     }
@@ -655,7 +731,8 @@ public sealed class RadioStationEditor(XElement station)
     private static long ScalePosition(long position, int sourceRate, int destinationRate) =>
         position < 0 ? position : checked((long) Math.Round(position * (decimal) destinationRate / sourceRate, MidpointRounding.AwayFromZero));
 
-    private static void ApplyCustomMarkers(XElement sample, long sampleLength, bool usesMilliseconds, int sampleRate = 0)
+    private static void ApplyCustomMarkers(XElement sample, long sampleLength, bool usesMilliseconds, int sampleRate = 0,
+        bool usesTrackBreakDown = false)
     {
         if (usesMilliseconds)
         {
@@ -675,8 +752,12 @@ public sealed class RadioStationEditor(XElement station)
         }
 
         var rate = int.TryParse((string?) sample.Attribute("SampleRate"), out var r) && r > 0 ? r : 48000;
-        var pos = ComputeAutoMarkers(sampleLength, rate);
+        var pos = ComputeAutoMarkers(sampleLength, rate, false, usesTrackBreakDown);
         ApplyXmlMarkerRules(pos, sampleLength);
+        if (usesTrackBreakDown)
+        {
+            NormalizeBreakdownSchema(sample, true);
+        }
         var markerElems = sample.Elements("Marker").ToList();
 
         if (markerElems.Count > 0)
@@ -786,7 +867,7 @@ public sealed class RadioStationEditor(XElement station)
 
         foreach (var playlist in MusicPlaylists)
         {
-            DisableIn(playlist, soundName);
+            DisableIn(playlist, soundName, preserveEntry: false);
         }
     }
 
@@ -816,6 +897,7 @@ public sealed class RadioStationEditor(XElement station)
         }
 
         var sourcePlaylists = reference.MusicPlaylists.Select(p => new XElement(p)).ToList();
+        var usesTrackBreakDown = UsesTrackBreakDownForCopy(reference);
         if (UsesMilliseconds || station.Elements("SampleList").Any(sl => (string?) sl.Attribute("Type") == "Track"))
         {
             PurgeSoundName(soundName);
@@ -830,7 +912,9 @@ public sealed class RadioStationEditor(XElement station)
                 station.Add(trackList);
             }
 
-            trackList.Add(new XElement(sample));
+            var restored = new XElement(sample);
+            NormalizeBreakdownSchema(restored, usesTrackBreakDown);
+            trackList.Add(restored);
         }
 
         foreach (var source in sourcePlaylists)
@@ -840,7 +924,8 @@ public sealed class RadioStationEditor(XElement station)
                 XElement entry => (string?) entry.Attribute(reference.UsesMilliseconds ? "SoundName" : "Name") == soundName,
                 XComment comment => reference.UsesMilliseconds
                     ? (string?) ReadDisabledEntry(comment)?.Attribute("SoundName") == soundName
-                    : comment.Value.Contains($"Name=\"{soundName}\"", StringComparison.Ordinal),
+                    : (string?) ReadDisabledEntry(comment)?.Attribute("Name") == soundName
+                      || comment.Value.Contains($"Name=\"{soundName}\"", StringComparison.Ordinal),
                 _ => false,
             }).ToList();
             if (nodes.Count == 0)
@@ -872,6 +957,77 @@ public sealed class RadioStationEditor(XElement station)
         return true;
     }
 
+    private static List<XNode> ModernPlaylistNodes(XElement playlist, string soundName) => playlist.Nodes()
+        .Where(node => node switch
+        {
+            XElement entry => (string?) entry.Attribute("Name") == soundName,
+            XComment comment => (string?) ReadDisabledEntry(comment)?.Attribute("Name") == soundName,
+            _ => false,
+        }).ToList();
+
+    private static XNode CopyPlaylistNode(XNode node) => node switch
+    {
+        XElement entry => new XElement(entry),
+        XComment comment => new XComment(comment.Value),
+        _ => throw new InvalidOperationException("Unsupported playlist node."),
+    };
+
+    private static void SyncModernPlaylist(XElement target, XElement? source, string soundName)
+    {
+        var current = ModernPlaylistNodes(target, soundName);
+        List<XNode> expected = source is not null ? ModernPlaylistNodes(source, soundName) : [];
+        if (current.Count == expected.Count && current.Zip(expected).All(pair => XNode.DeepEquals(pair.First, pair.Second)))
+        {
+            return;
+        }
+        var copies = expected.Select(CopyPlaylistNode).ToArray();
+        if (current.Count > 0)
+        {
+            current[0].AddBeforeSelf(copies);
+            foreach (var node in current) node.Remove();
+        }
+        else
+        {
+            target.Add(copies);
+        }
+    }
+
+    private void SyncModernCustomFrom(RadioStationEditor reference, XElement sample, bool usesTrackBreakDown)
+    {
+        var soundName = (string) sample.Attribute("SoundName")!;
+        var copy = new XElement(sample);
+        NormalizeBreakdownSchema(copy, usesTrackBreakDown);
+        var existing = TrackList.Elements("Sample")
+            .Where(s => (string?) s.Attribute("SoundName") == soundName).ToList();
+        if (existing.Count > 0)
+        {
+            if (!XNode.DeepEquals(existing[0], copy)) existing[0].ReplaceWith(copy);
+            foreach (var duplicate in existing.Skip(1)) duplicate.Remove();
+        }
+        else
+        {
+            TrackList.Add(copy);
+        }
+
+        var targets = MusicPlaylists.ToList();
+        var sources = reference.MusicPlaylists.ToList();
+        foreach (var source in sources)
+        {
+            var target = targets.FirstOrDefault(p => (string?) p.Attribute("Type") == (string?) source.Attribute("Type"));
+            if (target is null && ModernPlaylistNodes(source, soundName).Count > 0)
+            {
+                target = new XElement(source.Name, source.Attributes());
+                station.Add(target);
+                targets.Add(target);
+            }
+            if (target is not null) SyncModernPlaylist(target, source, soundName);
+        }
+        foreach (var target in targets.Where(t => sources.All(s => (string?) s.Attribute("Type") != (string?) t.Attribute("Type"))))
+        {
+            SyncModernPlaylist(target, null, soundName);
+        }
+    }
+
     public void SyncCustomsFrom(RadioStationEditor reference)
     {
         if (ReferenceEquals(station, reference.Station))
@@ -881,6 +1037,7 @@ public sealed class RadioStationEditor(XElement station)
         var referenceSamples = reference.TrackSamples()
             .Where(s => ((string?) s.Attribute("SoundName"))?.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal) == true).ToList();
         var referenceNames = referenceSamples.Select(s => (string) s.Attribute("SoundName")!).ToHashSet(StringComparer.Ordinal);
+        var usesTrackBreakDown = UsesTrackBreakDownForCopy(reference);
         foreach (var soundName in CustomSoundNames().Where(sn => !referenceNames.Contains(sn)).ToList())
         {
             PurgeSoundName(soundName);
@@ -888,6 +1045,11 @@ public sealed class RadioStationEditor(XElement station)
         foreach (var sample in referenceSamples)
         {
             var soundName = (string) sample.Attribute("SoundName")!;
+            if (!UsesMilliseconds && !reference.UsesMilliseconds)
+            {
+                SyncModernCustomFrom(reference, sample, usesTrackBreakDown);
+                continue;
+            }
             PurgeSoundName(soundName);
             if (UsesMilliseconds && reference.UsesMilliseconds)
             {
@@ -914,7 +1076,9 @@ public sealed class RadioStationEditor(XElement station)
             }
             else
             {
-                TrackList.Add(new XElement(sample));
+                var copy = new XElement(sample);
+                NormalizeBreakdownSchema(copy, usesTrackBreakDown);
+                TrackList.Add(copy);
                 SetEnabled(soundName, reference.IsCustomEnabled(soundName));
             }
         }

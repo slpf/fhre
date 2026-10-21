@@ -5,36 +5,7 @@ namespace FH6RB.Services;
 
 public static class BackupService
 {
-    private static readonly string[] Patterns =
-    [
-        "R*_Tracks_*.assets.bank.bak",
-        "R*_Tracks.bank.bak",
-        "HZ2_MX_Radio_*_Tracks.bank.bak",
-        "RadioInfo_*.xml.bak",
-    ];
-
-    private static List<string> Find(string gamePath)
-    {
-        var result = new List<string>();
-        
-        if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
-        {
-            return result;
-        }
-
-        foreach (var pattern in Patterns)
-        {
-            try
-            { 
-                result.AddRange(Directory.EnumerateFiles(gamePath, pattern, SearchOption.AllDirectories));
-            }
-            catch
-            {
-            }
-        }
-
-        return result;
-    }
+    private static List<string> Find(string gamePath) => GameScanner.BackupFiles(gamePath);
 
     public static bool Has(string gamePath) => Find(gamePath).Count > 0;
 

@@ -16,11 +16,13 @@ public sealed class BackupTrack
     public string SoundName { get; set; } = "";
     public string Role { get; set; } = "";
     public string Bank { get; set; } = "";
+    public ulong? BankId { get; set; }
     public string? DisplayName { get; set; }
     public string? Artist { get; set; }
     public long SampleLength { get; set; }
     public int SampleRate { get; set; }
     public double? GainDb { get; set; }
+    public NormalizationOverride? Normalization { get; set; }
     public bool Enabled { get; set; } = true;
     public Dictionary<string, long>? Markers { get; set; }
     public string Audio { get; set; } = "";
@@ -61,7 +63,9 @@ public sealed record BackupTrackSource(
     int SampleRate,
     double? GainDb,
     bool Enabled,
-    Dictionary<string, long>? Markers);
+    Dictionary<string, long>? Markers,
+    NormalizationOverride? Normalization = null,
+    ulong? BankId = null);
 
 public static class StationBackupService
 {
@@ -222,11 +226,13 @@ public static class StationBackupService
                     SoundName = s.SoundName,
                     Role = role,
                     Bank = bankName,
+                    BankId = s.BankId,
                     DisplayName = s.DisplayName,
                     Artist = s.Artist,
                     SampleLength = s.SampleLength,
                     SampleRate = s.SampleRate,
                     GainDb = s.GainDb,
+                    Normalization = ext.Equals(".fsb", StringComparison.OrdinalIgnoreCase) ? null : s.Normalization,
                     Enabled = s.Enabled,
                     Markers = s.Markers is { Count: > 0 } ? new Dictionary<string, long>(s.Markers) : null,
                     Audio = rel,
@@ -238,7 +244,7 @@ public static class StationBackupService
             {
                 Variant = v,
                 BankName = bankName,
-                BankFile = Path.GetFileName(bankPath),
+                BankFile = GameScanner.LogicalFileName(bankPath),
             });
             log?.Invoke($"backup: {bankName}: {tracks.Count - before} track(s)");
         }
@@ -311,7 +317,8 @@ public static class StationBackupService
             log?.Invoke($"backup: read failed {Path.GetFileName(bankPath)}: {err}");
         }
         
-        var named = result.Tracks.Where(t => !t.SoundName.StartsWith("sound_", StringComparison.Ordinal)).ToList();
+        var named = result.Tracks.Where(t => t.BankId is not null
+            || !t.SoundName.StartsWith("sound_", StringComparison.Ordinal)).ToList();
 
         if (named.Count < result.Tracks.Count)
         {
@@ -333,7 +340,8 @@ public static class StationBackupService
                 SampleRate: t.SampleRate,
                 GainDb: null,
                 Enabled: t.Enabled,
-                Markers: t.Markers is { Count: > 0 } ? new Dictionary<string, long>(t.Markers) : null))
+                Markers: t.Markers is { Count: > 0 } ? new Dictionary<string, long>(t.Markers) : null,
+                BankId: t.BankId))
             .ToList();
     }
 
@@ -381,6 +389,12 @@ public static class StationBackupService
     public static async Task<(int Banks, int Langs)> RestoreAsync(BackupEntry e, string gamePath,
         AppSettings settings, Action<string>? log = null)
     {
+        var missingTools = Tools.MissingForBuild().ToList();
+        if (missingTools.Count > 0)
+        {
+            throw new InvalidOperationException($"Backup restore: missing {string.Join(", ", missingTools)}.");
+        }
+
         var m = e.Manifest;
 
         var tracks = m.Tracks;
@@ -441,7 +455,7 @@ public static class StationBackupService
             if (editor is not null)
             {
                 var reference = LoadBackupStation(e, path, m.StationNumber);
-                foreach (var track in tracks.Where(t => t.Role != "custom"))
+                foreach (var track in tracks.Where(t => t.Role != "custom" && !IsBankOnlyTrack(t)))
                 {
                     var restored = reference is not null && editor.RestoreTrackFrom(reference, track.SoundName);
                     if (!restored && editor.GetSampleMeta(track.SoundName) is null)
@@ -481,7 +495,9 @@ public static class StationBackupService
                     Enabled: t.Enabled,
                     Markers: t.Markers,
                     IsReplacement: t.Role == "replacement" || t.Role == "default",
-                    MarkerSampleRate: t.SampleRate))
+                    MarkerSampleRate: t.SampleRate,
+                    Normalization: t.Normalization,
+                    BankId: t.BankId))
                 .ToList();
 
             EnsureOriginal(bankPath);
@@ -547,7 +563,7 @@ public static class StationBackupService
                     {
                         editor.RegisterBank(bank);
 
-                        foreach (var t in bankTracks)
+                        foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                         {
                             var frames = framesByName.TryGetValue(t.SoundName, out var f) ? f : t.SampleLength;
                             var sampleRate = sampleRatesByName.GetValueOrDefault(t.SoundName, t.SampleRate);
@@ -564,7 +580,7 @@ public static class StationBackupService
                             }
                         }
 
-                        foreach (var t in bankTracks)
+                        foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                         {
                             if (t.Markers is not null)
                             {
@@ -620,6 +636,10 @@ public static class StationBackupService
             throw;
         }
     }
+
+    private static bool IsBankOnlyTrack(BackupTrack track) => track.BankId is { } id
+        && track.SoundName.StartsWith("sound_", StringComparison.Ordinal)
+        && id != Lookup.SoundNameToId(track.SoundName);
 
     private static void TryDelete(string path)
     {
@@ -721,6 +741,7 @@ public static class StationBackupService
             while (occupied.Contains(newName) || !assigned.Add(newName));
 
             t.SoundName = newName;
+            t.BankId = null;
             log?.Invoke($"restore: custom {original} renamed to {newName} (conflict)");
         }
     }
@@ -930,8 +951,13 @@ public static class StationBackupService
         }
     }
 
-    public static string LangCode(string fileName) =>
-        fileName.Replace("RadioInfo_", "").Replace(".xml", "");
+    public static string LangCode(string fileName)
+    {
+        var logical = GameScanner.LogicalFileName(fileName);
+        return logical.StartsWith("RadioInfo_", StringComparison.OrdinalIgnoreCase)
+            && logical.EndsWith(".xml", StringComparison.OrdinalIgnoreCase)
+            ? logical[10..^4] : Path.GetFileNameWithoutExtension(logical);
+    }
 
     private static string GameLabel(string gamePath)
     {
@@ -956,7 +982,8 @@ public static class StationBackupService
         var bank = GameScanner.RadioBankNames(gamePath).FirstOrDefault();
         var path = bank is null ? null : GameScanner.BankPath(gamePath, bank);
 
-        return path is not null && path.EndsWith(".assets.bank") ? "FH5/6" : "FH4";
+        return path is not null && GameScanner.LogicalFileName(path).EndsWith(".assets.bank", StringComparison.OrdinalIgnoreCase)
+            ? "FH5/6" : "FH4";
     }
 
     private static string Sanitize(string s)
