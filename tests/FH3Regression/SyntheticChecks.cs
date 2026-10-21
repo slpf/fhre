@@ -145,9 +145,10 @@ internal static class SyntheticChecks
 
     private static void CheckMinimums(string root)
     {
-        foreach (var minimum in new[] { 12, 18, 20, 21 })
+        const int minimum = 12;
+        foreach (var originalCount in new[] { 12, 18, 20, 21 })
         {
-            var game = Path.Combine(root, "minimum-" + minimum);
+            var game = Path.Combine(root, "minimum-" + originalCount);
             var audio = Path.Combine(game, "media", "audio");
             Directory.CreateDirectory(audio);
             File.WriteAllBytes(Path.Combine(game, "forza_x64_release_final.exe"), []);
@@ -156,30 +157,30 @@ internal static class SyntheticChecks
             var path = Path.Combine(audio, "RadioInfo_EN.xml");
             var station = new XElement("RadioStation", new XAttribute("Number", 1), new XAttribute("Name", "Minimum"),
                 new XElement("Banks", new XElement("Bank", new XAttribute("Name", "R1_Tracks"))),
-                new XElement("SampleList", new XAttribute("Type", "Track"), Enumerable.Range(0, minimum).Select(i =>
+                new XElement("SampleList", new XAttribute("Type", "Track"), Enumerable.Range(0, originalCount).Select(i =>
                     new XElement("Sample", new XAttribute("SoundName", "MIN_" + i), new XAttribute("SampleLength", 480000),
                         new XAttribute("SampleRate", 48000), new XAttribute("TrackBreakDown", 300000)))),
-                new XElement("PlayList", new XAttribute("Type", "FreeRoam"), Enumerable.Range(0, minimum).Select(i => new XElement("Entry", new XAttribute("Name", "MIN_" + i)))),
+                new XElement("PlayList", new XAttribute("Type", "FreeRoam"), Enumerable.Range(0, originalCount).Select(i => new XElement("Entry", new XAttribute("Name", "MIN_" + i)))),
                 new XElement("PlayList", new XAttribute("Type", "Event")));
             new XDocument(new XElement("Radio", new XElement("RadioStations", station))).Save(path);
             var main = CreateVm(game, "RadioInfo_EN.xml");
             try
             {
                 Method("UpdatePlaylistMinimum").Invoke(main, null);
-                Check(main.MinimumActiveTracks == minimum, "FH3 did not use the stock FreeRoam minimum.");
+                Check(main.MinimumActiveTracks == minimum, "FH3 did not use the fixed 12-track minimum.");
                 foreach (var track in RadioInfo.Load(path).StationByNumber(1)!.ReadTracks().Take(minimum - 4)) main.Tracks.Add(new TrackItemViewModel(track));
                 Set(main, "_otherBanksActive", 4);
                 main.Recount();
                 Check(!main.PlaylistLow, "FH3 minimum ignored active tracks in another bank.");
                 main.Tracks[0].Enabled = false;
                 main.Recount();
-                Check(main.PlaylistLow, "FH3 allowed fewer active tracks than the stock station.");
+                Check(main.PlaylistLow, "FH3 allowed fewer than 12 active tracks.");
                 File.Copy(path, path + ".bak");
                 var edited = RadioInfo.Load(path);
                 edited.StationByNumber(1)!.AddCustom(Naming.MakeSoundName(1), 480000, 48000, "Custom", null);
                 edited.Save(path);
                 Method("UpdatePlaylistMinimum").Invoke(main, null);
-                Check(main.MinimumActiveTracks == minimum, "A saved custom track raised the original FH3 minimum.");
+                Check(main.MinimumActiveTracks == minimum, "A saved custom track or original backup changed the fixed FH3 minimum.");
             }
             finally { ReleaseVm(main); }
             File.Delete(Path.Combine(game, "forza_x64_release_final.exe"));
@@ -189,7 +190,7 @@ internal static class SyntheticChecks
             try
             {
                 Method("UpdatePlaylistMinimum").Invoke(modern, null);
-                Check(modern.MinimumActiveTracks == 20, "The FH3 stock-minimum exception changed another game's minimum.");
+                Check(modern.MinimumActiveTracks == 20, "The FH3 minimum changed another game's minimum.");
                 for (var i = 0; i < 19; i++) modern.Tracks.Add(new TrackItemViewModel(new RadioTrack
                 {
                     SoundName = "KNOWN_" + i, Origin = TrackOrigin.Original, Enabled = true,

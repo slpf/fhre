@@ -16,6 +16,7 @@ try
     TestModernXml(temp);
     TestMarkerEditor(temp);
     TestStagedAudio(temp);
+    TestPlaylistMinimums(temp);
     if (args.Length > 0)
     {
         await TestInstallationAsync(Path.GetFullPath(args[0]), temp, args.Length > 1 ? Path.GetFullPath(args[1]) : null);
@@ -413,6 +414,51 @@ static MainWindowViewModel CreateXmlWriter(string game, IReadOnlyList<string> la
     Set("<Languages>k__BackingField", new ObservableCollection<LangOption>(languageFiles.Select(f => new LangOption(StationBackupService.LangCode(f), f))));
     Set("_selectedLanguage", new LangOption("ALL", MainWindowViewModel.AllLanguagesFile));
     return vm;
+}
+
+static void TestPlaylistMinimums(string temp)
+{
+    var updateMinimum = typeof(MainWindowViewModel).GetMethod("UpdatePlaylistMinimum", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new MissingMethodException(nameof(MainWindowViewModel), "UpdatePlaylistMinimum");
+    foreach (var (version, minimum) in new[] { (2, 20), (3, 12), (4, 20), (5, 20), (6, 20) })
+    {
+        var game = Path.Combine(temp, "playlist-minimum-FH" + version);
+        Directory.CreateDirectory(game);
+        var executable = version switch
+        {
+            2 => "forza_durango_release_final.exe",
+            3 => "forza_x64_release_final.exe",
+            _ => $"ForzaHorizon{version}.exe",
+        };
+        File.WriteAllBytes(Path.Combine(game, executable), []);
+        if (version == 3)
+        {
+            File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), """<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="Microsoft.OpusPG"/><Applications><Application Executable="forza_x64_release_final.exe"/></Applications></Package>""");
+        }
+        Check(GameScanner.DetectVersion(game) == version, "Playlist fixture has an incorrect game version.");
+        var vm = CreateXmlWriter(game, ["RadioInfo_EN.xml"]);
+        var tracks = new ObservableCollection<TrackItemViewModel>(Enumerable.Range(0, minimum - 1).Select(i =>
+            new TrackItemViewModel(new RadioTrack { SoundName = $"FH{version}_MIN_{i}", Origin = TrackOrigin.Original, Enabled = true })));
+        var tracksField = typeof(MainWindowViewModel).GetField("<Tracks>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new MissingFieldException(nameof(MainWindowViewModel), "Tracks");
+        tracksField.SetValue(vm, tracks);
+        updateMinimum.Invoke(vm, null);
+        Check(vm.MinimumActiveTracks == minimum, $"FH{version} uses an incorrect playlist minimum.");
+        vm.Recount();
+        Check(vm.PlaylistLow, $"FH{version} allowed {minimum - 1} active tracks below its minimum.");
+        var boundary = new TrackItemViewModel(new RadioTrack { SoundName = Naming.MakeSoundName(version), Origin = TrackOrigin.Custom, Enabled = true });
+        tracks.Add(boundary);
+        vm.Recount();
+        Check(!vm.PlaylistLow, $"FH{version} rejected exactly {minimum} active tracks including a custom track.");
+        boundary.Enabled = false;
+        vm.Recount();
+        Check(vm.PlaylistLow, $"FH{version} counted a disabled track toward its minimum.");
+        var otherBanksField = typeof(MainWindowViewModel).GetField("_otherBanksActive", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new MissingFieldException(nameof(MainWindowViewModel), "_otherBanksActive");
+        otherBanksField.SetValue(vm, 1);
+        vm.Recount();
+        Check(!vm.PlaylistLow, $"FH{version} ignored active tracks in other station banks.");
+    }
 }
 
 static async Task TestCopiedWorkflowAsync(string originalGame, string temp, string originalBank,

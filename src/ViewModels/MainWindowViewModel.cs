@@ -102,8 +102,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool HasStatusDetail => !string.IsNullOrEmpty(StatusDetail);
     private const int MinActiveTracksPerStation = 20;
+    private const int MinActiveTracksHorizon2 = 20;
+    private const int MinActiveTracksHorizon3 = 12;
     private int _minimumActiveTracks = MinActiveTracksPerStation;
-    private bool _usesOriginalPlaylistMinimum;
     public int MinimumActiveTracks => _minimumActiveTracks > 0 ? _minimumActiveTracks : MinActiveTracksPerStation;
     private const long WarnBankBytes = 1900L * 1024 * 1024;
     private int _otherBanksActive;
@@ -363,26 +364,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void UpdatePlaylistMinimum()
     {
-        var minimum = MinActiveTracksPerStation;
-        _usesOriginalPlaylistMinimum = SelectedStation is not null && GameScanner.DetectVersion(Settings.GamePath) == 3;
-        if (SelectedStation is { } station && _usesOriginalPlaylistMinimum)
+        var minimum = GameScanner.DetectVersion(Settings.GamePath) switch
         {
-            var original = _radio?.StationByNumber(station.Number);
-            var file = ViewLanguageFile();
-            var path = file is null ? null : GameScanner.RadioInfoPathByFile(Settings.GamePath, file);
-            if (path is not null && File.Exists(path + ".bak"))
-            {
-                try { original = RadioInfo.Load(path + ".bak").StationByNumber(station.Number); }
-                catch (Exception ex)
-                {
-                    Log.Line($"playlist.minimum.failed path=\"{path}.bak\": {ex.Message}");
-                    original = null;
-                }
-            }
-            var count = original?.ReadTracks().Count(t => t.Enabled
-                && !t.SoundName.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal)) ?? 0;
-            if (count > 0) minimum = count;
-        }
+            2 => MinActiveTracksHorizon2,
+            3 => MinActiveTracksHorizon3,
+            _ => MinActiveTracksPerStation
+        };
         if (_minimumActiveTracks == minimum) return;
         _minimumActiveTracks = minimum;
         OnPropertyChanged(nameof(MinimumActiveTracks));
@@ -680,8 +667,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         PlaylistLow = stationActive < MinimumActiveTracks;
         BankSizeHigh = _projectedTotalBytes > WarnBankBytes;
-        PlaylistTip = string.Format(_usesOriginalPlaylistMinimum ? Str.TipStatusPlaylistOriginal : Str.TipStatusPlaylist,
-            stationActive, MinimumActiveTracks);
+        PlaylistTip = string.Format(Str.TipStatusPlaylist, stationActive, MinimumActiveTracks);
     }
 
     public void RecalcProjectedSize()

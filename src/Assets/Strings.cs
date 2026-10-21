@@ -186,7 +186,6 @@ public static class Str
     public const string DlgFilesInUseTitle = "Files in use";
     public const string DlgFilesInUseBody = "Some game files are in use. Forza Horizon is most likely running. Close the game before building, otherwise saving and building will fail.";
     public const string TipStatusPlaylist = "Forza Horizon crashes radio stations with fewer than {1} enabled tracks in the playlist.";
-    public const string TipStatusPlaylistOriginal = "Keep at least {1} enabled tracks, matching the station's original playlist.";
     public const string TipStatusPlaylistNoLimit = "The station's total enabled tracks across all its banks.";
     public const string TipStatusSize = "Banks larger than 2 GB do not work correctly.";
     public const string DlgGameRunningTitle = "Game is running";
