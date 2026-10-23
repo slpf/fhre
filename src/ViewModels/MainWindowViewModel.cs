@@ -42,12 +42,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty] private bool _isImporting;
 
     public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting || IsExporting || IsImporting;
-    public bool CanBuild => !IsBusy && !PlaylistLow && Tools.CanBuild;
-    public bool CanAddTracks => !IsBusy && Tools.CanAddTracks;
-    public string AddTracksTip => Tools.CanAddTracks ? Str.TipAddTrack
-        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForAddTracks()));
-    public string BuildTip => Tools.CanBuild ? Str.TipBuildBank
-        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForBuild()));
+    private string? _resourceError;
+    public bool HasResourceError => _resourceError is not null;
+    public bool CanBuild => _resourceError is null && !IsBusy && !PlaylistLow && Tools.CanBuild;
+    public bool CanAddTracks => _resourceError is null && !IsBusy && Tools.CanAddTracks;
+    public string AddTracksTip => _resourceError ?? (Tools.CanAddTracks ? Str.TipAddTrack
+        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForAddTracks())));
+    public string BuildTip => _resourceError ?? (Tools.CanBuild ? Str.TipBuildBank
+        : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForBuild())));
+
+    private void SetResourceError(string? error)
+    {
+        _resourceError = error;
+        OnPropertyChanged(nameof(HasResourceError));
+        RefreshToolAvailability();
+    }
 
     public void RefreshToolAvailability()
     {
@@ -62,8 +71,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public bool IsGameRunning()
     {
-        return GameScanner.IsValid(Settings.GamePath)
-            && GameScanner.IsGameProcessRunning(Settings.GamePath);
+        return GameScanner.IsGameProcessRunning(Settings.GamePath);
     }
 
     [ObservableProperty] private bool _hasUnsavedChanges;
@@ -264,6 +272,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void ReloadFromGameCore()
     {
+        _loadGen++;
         var wasSuppressed = _suppressReload;
         _suppressReload = true;
 
@@ -274,11 +283,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _radioForFile = null;
         _minimumActiveTracks = MinActiveTracksPerStation;
 
-        if (!GameScanner.IsValid(Settings.GamePath))
+        var scan = GameScanner.Scan(Settings.GamePath);
+        if (!scan.IsValid)
         {
+            SelectedLanguage = null;
+            SelectedStation = null;
+            SelectedVariant = null;
+            ClearLoadedTracks();
+            var error = SettingsWindowViewModel.FormatScanError(scan);
+            SetResourceError(error);
+            Status = error;
             _suppressReload = wasSuppressed;
             return;
         }
+
+        SetResourceError(null);
 
         foreach (var file in GameScanner.LanguageFiles(Settings.GamePath))
         {
@@ -332,6 +351,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             Log.Line($"RadioInfo load failed ({file}): {ex.Message}");
             _radio = null;
+            var error = string.Format(Str.ErrScanOtherErrorFmt, $"{file}: {ex.Message}");
+            SetResourceError(error);
+            Status = error;
         }
 
         _radioForFile = file;
@@ -350,6 +372,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private void RebuildStations()
     {
         EnsureRadio();
+        if (_radio is null)
+        {
+            _loadGen++;
+            Stations.Clear();
+            SelectedStation = null;
+            ClearLoadedTracks();
+            var error = _resourceError ?? Str.ErrScanLanguageMissing;
+            SetResourceError(error);
+            Status = error;
+            return;
+        }
         var current = SelectedStation?.Number;
         Stations.Clear();
 
@@ -360,6 +393,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         SelectedStation = Stations.FirstOrDefault(s => s.Number == current) ?? Stations.FirstOrDefault();
         UpdatePlaylistMinimum();
+    }
+
+    private void ClearLoadedTracks()
+    {
+        StopPlayback();
+        IsLoading = false;
+        Tracks.Clear();
+        FilteredTracks.Clear();
+        _loadedBankPath = null;
+        _otherBanksActive = 0;
+        _projectedTotalBytes = 0;
+        Recount();
     }
 
     private void UpdatePlaylistMinimum()
@@ -512,6 +557,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         EnsureRadio();
         var radio = _radio;
+        if (radio is null)
+        {
+            ClearLoadedTracks();
+            var error = _resourceError ?? Str.ErrScanLanguageMissing;
+            SetResourceError(error);
+            Status = error;
+            IsLoading = false;
+            return;
+        }
         var path = GameScanner.BankPath(Settings.GamePath, bank);
         _loadedBankPath = path;
 
@@ -588,6 +642,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Status = result.Error is { } err
                 ? string.Format(Str.StatusBankErrorFmt, bank, err)
                 : string.Format(Str.StatusLoadedFmt, bank);
+            SetResourceError(result.Error is null ? null : Status);
         });
 
         Settings.LastLanguage = SelectedLanguage.FileName;
@@ -1456,6 +1511,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         RefreshToolAvailability();
         if (IsBusy) return;
+        if (_resourceError is { } resourceError)
+        {
+            Status = resourceError;
+            return;
+        }
 
         if (SelectedStation is null || SelectedLanguage is null || SelectedVariant is null)
         {

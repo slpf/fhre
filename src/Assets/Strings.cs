@@ -139,10 +139,14 @@ public static class Str
     public const string ErrNoRadioInfo = "No RadioInfo_*.xml found. Check the game folder, or close the program.";
     public const string ErrScanEmptyPath = "Select the Forza Horizon installation folder.";
     public const string ErrScanDirectoryMissingFmt = "Folder not found: {0}";
-    public const string ErrScanExeMissingFmt = "No ForzaHorizon*.exe or forza_durango_*.exe in this folder: {0}";
+    public const string ErrScanExeMissingFmt = "No supported Forza Horizon executable was found in this folder: {0}";
     public const string ErrScanLanguageMissing = "No RadioInfo_*.xml in this folder. Point at the Forza Horizon installation, not a subfolder.";
-    public const string ErrScanAccessDeniedFmt = "Some subfolders are blocked ({0}). Close Forza / Steam / antivirus and try again.";
-    public const string ErrScanTransientLockFmt = "Some subfolders are temporarily locked ({0}). Try again in a moment.";
+    public const string ErrScanHorizon3Disabled = "Forza Horizon 3 support is currently disabled.";
+    public const string ErrScanAccessDeniedFmt = "Windows denied access while scanning game folders: {0}. Check that this installation is accessible to the current account.";
+    public const string ErrScanResourceReadDeniedFmt = "Windows denied read access to a required radio file: {0}. FHRE cannot load or edit this installation.";
+    public const string ErrScanEncryptedResourcesFmt = "Windows blocked access to an encrypted game resource: {0}. FHRE requires readable and writable game resources. Changing file permissions alone does not unlock an encrypted package.";
+    public const string ErrScanResourceReadErrorFmt = "Could not read a required radio file: {0}. FHRE cannot load or edit this installation.";
+    public const string ErrScanTransientLockFmt = "A game file or folder is in use by another process: {0}. Close the application using it and try again.";
     public const string ErrScanOtherErrorFmt = "Could not read game files ({0}).";
     public const string ErrScanPartialAccessFmt = "Found game files, but some subfolders are blocked ({0}).";
     public const string EditRestoredFmt = "Restored {0} file(s)";

@@ -11,6 +11,8 @@ internal static class SyntheticChecks
     {
         CheckCodec();
         foreach (var obfuscated in new[] { false, true }) CheckScanner(Path.Combine(root, obfuscated ? "obfuscated" : "normal"), obfuscated);
+        CheckGenericHorizon3Disabled(root);
+        AccessChecks.Run(root);
         CheckXml(root);
         CheckMinimums(root);
         CheckLegacyMarkerValidation();
@@ -79,7 +81,8 @@ internal static class SyntheticChecks
         File.WriteAllBytes(Path.Combine(banks, Physical("R1_LFE.bank")), []);
         Check(GameScanner.FindExe(game) == Path.Combine(game, "forza_x64_release_final.exe") && GameScanner.DetectVersion(game) == 3,
             "FH3 manifest/executable identity was not recognized.");
-        var scan = GameScanner.Scan(game);
+        CheckHorizon3Disabled(game);
+        var scan = ScanResources(game);
         Check(scan.IsValid && scan.LanguageFileCount == 2 && scan.BankCount == 4, "FH3 scanner lost languages or DLC banks.");
         Check(new HashSet<string>(GameScanner.RadioBankNames(game)).SetEquals(expected), "FH3 logical bank names changed with physical encoding.");
         var languages = GameScanner.LanguageFiles(game);
@@ -107,6 +110,21 @@ internal static class SyntheticChecks
         File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), Manifest.Replace("Microsoft.OpusPG", "Microsoft.OtherGame", StringComparison.Ordinal));
         Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid, "A shared executable name falsely identified another manifest as FH3.");
         File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), Manifest);
+    }
+
+    private static void CheckGenericHorizon3Disabled(string root)
+    {
+        var game = Path.Combine(root, "disabled-generic-fh3");
+        Directory.CreateDirectory(game);
+        File.WriteAllBytes(Path.Combine(game, "ForzaHorizon3.exe"), []);
+        var xml = Path.Combine(game, "RadioInfo_EN.xml");
+        var bank = Path.Combine(game, "R1_Tracks.bank");
+        File.WriteAllText(xml, Xml());
+        File.WriteAllBytes(bank, []);
+        using var xmlLock = new FileStream(xml, FileMode.Open, FileAccess.Read, FileShare.None);
+        using var bankLock = new FileStream(bank, FileMode.Open, FileAccess.Read, FileShare.None);
+        CheckHorizon3Disabled(game);
+        Check(!GameScanner.IsValid(game), "The public validity check bypassed disabled FH3 selection.");
     }
 
     private static void CheckXml(string root)

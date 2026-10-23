@@ -23,6 +23,29 @@ internal static class TestSupport
         if (Directory.Exists(full)) Directory.Delete(full, recursive: true);
     }
 
+    public static GameScanner.GameScanResult ScanResources(string game, Action<string>? readResource = null)
+    {
+        var method = typeof(GameScanner).GetMethod(nameof(GameScanner.Scan), BindingFlags.NonPublic | BindingFlags.Static,
+            binder: null, [typeof(string), typeof(Action<string>)], modifiers: null)
+            ?? throw new MissingMethodException(nameof(GameScanner), "Scan(string, Action<string>)");
+        readResource ??= path =>
+        {
+            using var input = File.OpenRead(path);
+            input.ReadByte();
+        };
+        return (GameScanner.GameScanResult) (method.Invoke(null, [game, readResource])
+            ?? throw new InvalidOperationException("The resource-read scan returned no result."));
+    }
+
+    public static void CheckHorizon3Disabled(string game)
+    {
+        var result = GameScanner.Scan(game);
+        Check(!result.IsValid && result.Issue == GameScanner.GameScanIssue.Horizon3Disabled
+            && result.ExePath == GameScanner.FindExe(game) && result.ExePath is not null
+            && result.LanguageFileCount == 0 && result.BankCount == 0,
+            "Selecting FH3 did not stop at the public disabled gate.");
+    }
+
     public static MainWindowViewModel CreateVm(string game, string language)
     {
         var vm = (MainWindowViewModel) RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));

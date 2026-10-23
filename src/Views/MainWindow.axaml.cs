@@ -149,7 +149,8 @@ public partial class MainWindow : Window
 
         await dialog.ShowDialog(this);
 
-        if (vm.Saved && !string.Equals(prevPath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase))
+        if (vm.Saved && (Vm.HasResourceError
+            || !string.Equals(prevPath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase)))
         {
             Vm.ReloadFromGame();
         }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
@@ -18,6 +19,10 @@ public static partial class GameScanner
         TransientLock,
         PartialAccess,
         OtherError,
+        ResourceReadDenied,
+        EncryptedResources,
+        ResourceReadError,
+        Horizon3Disabled,
     }
 
     public sealed record GameScanResult(
@@ -34,6 +39,7 @@ public static partial class GameScanner
         public int TransientLockDirs;
         public int OtherErrorDirs;
         public readonly List<string> Samples = new();
+        public readonly HashSet<string> ResourcePaths = new(StringComparer.OrdinalIgnoreCase);
     }
 
     private const int MaxScanDetailSamples = 3;
@@ -42,6 +48,16 @@ public static partial class GameScanner
 
     public static GameScanResult Scan(string gamePath)
     {
+        if (DetectVersion(gamePath) == 3)
+        {
+            return new GameScanResult(false, GameScanIssue.Horizon3Disabled, null, FindExe(gamePath), 0, 0);
+        }
+        return Scan(gamePath, ReadResource);
+    }
+
+    internal static GameScanResult Scan(string gamePath, Action<string> readResource)
+    {
+        ArgumentNullException.ThrowIfNull(readResource);
         if (string.IsNullOrWhiteSpace(gamePath))
         {
             return new GameScanResult(false, GameScanIssue.EmptyPath, null, null, 0, 0);
@@ -85,6 +101,28 @@ public static partial class GameScanner
             return new GameScanResult(false, issue, BuildDetail(stats), exe, 0, banks.Count);
         }
 
+        foreach (var path in stats.ResourcePaths.Order(StringComparer.Ordinal))
+        {
+            try
+            {
+                readResource(path);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                var attributes = ResourceAttributes(path);
+                var issue = ex is UnauthorizedAccessException
+                    ? attributes?.HasFlag(FileAttributes.Encrypted) == true
+                        ? GameScanIssue.EncryptedResources : GameScanIssue.ResourceReadDenied
+                    : (ex.HResult & 0xffff) is 32 or 33
+                        ? GameScanIssue.TransientLock : GameScanIssue.ResourceReadError;
+                var logical = LogicalFileName(path);
+                Log.Line($"GameScanner: resource.read.failed logical={JsonSerializer.Serialize(logical)} " +
+                    $"path={JsonSerializer.Serialize(path)} attributes={attributes} exception={ex.GetType().Name} " +
+                    $"hresult=0x{ex.HResult:X8} message={JsonSerializer.Serialize(ex.Message)}");
+                return new GameScanResult(false, issue, $"{logical}: {path}", exe, langs.Count, banks.Count);
+            }
+        }
+
         if (stats.AccessDeniedDirs > 0 || stats.TransientLockDirs > 0 || stats.OtherErrorDirs > 0)
         {
             return new GameScanResult(true, GameScanIssue.PartialAccess, BuildDetail(stats),
@@ -92,6 +130,18 @@ public static partial class GameScanner
         }
 
         return new GameScanResult(true, GameScanIssue.None, null, exe, langs.Count, banks.Count);
+    }
+
+    private static void ReadResource(string path)
+    {
+        using var stream = File.OpenRead(path);
+        _ = stream.ReadByte();
+    }
+
+    private static FileAttributes? ResourceAttributes(string path)
+    {
+        try { return File.GetAttributes(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     private static string? BuildDetail(ScanStats stats)
@@ -224,9 +274,12 @@ public static partial class GameScanner
 
     private static List<string> CollectLanguageFiles(string gamePath, ScanStats? stats)
     {
-        return SafeEnumerate(gamePath, LanguagePatterns, stats: stats)
-            .Select(LogicalFileName)
-            .Where(IsLanguageFile)
+        var files = SafeEnumerate(gamePath, LanguagePatterns, stats: stats)
+            .Select(path => (Path: path, Name: LogicalFileName(path)))
+            .Where(file => IsLanguageFile(file.Name))
+            .ToList();
+        stats?.ResourcePaths.UnionWith(files.Select(file => file.Path));
+        return files.Select(file => file.Name)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(x => x, StringComparer.Ordinal)
             .ToList();
@@ -259,10 +312,12 @@ public static partial class GameScanner
 
     private static List<string> CollectBankNames(string gamePath, ScanStats? stats)
     {
-        var result = SafeEnumerate(gamePath, BankPatterns, stats: stats)
-            .Select(path => BankNameFromFile(LogicalFileName(path)))
-            .Where(name => name is not null)
-            .Select(name => name!)
+        var files = SafeEnumerate(gamePath, BankPatterns, stats: stats)
+            .Select(path => (Path: path, Name: BankNameFromFile(LogicalFileName(path))))
+            .Where(file => file.Name is not null)
+            .ToList();
+        stats?.ResourcePaths.UnionWith(files.Select(file => file.Path));
+        var result = files.Select(file => file.Name!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
@@ -432,7 +487,7 @@ public static partial class GameScanner
             case UnauthorizedAccessException:
                 stats.AccessDeniedDirs++;
                 break;
-            case IOException:
+            case IOException when (ex.HResult & 0xffff) is 32 or 33:
                 stats.TransientLockDirs++;
                 break;
             default:

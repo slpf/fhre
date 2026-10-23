@@ -6,6 +6,13 @@ Environment.SetEnvironmentVariable("TEMP", scratch);
 Environment.SetEnvironmentVariable("TMP", scratch);
 try
 {
+    var blocked = Array.IndexOf(args, "--blocked-installation");
+    if (blocked >= 0)
+    {
+        if (blocked + 1 >= args.Length) throw new ArgumentException("--blocked-installation requires a source directory.");
+        AccessChecks.CheckBlockedInstallation(Path.GetFullPath(args[blocked + 1]));
+        return 0;
+    }
     await SyntheticChecks.RunAsync(scratch);
     var installation = Array.IndexOf(args, "--installation");
     if (installation >= 0)

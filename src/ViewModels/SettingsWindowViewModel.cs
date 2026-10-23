@@ -26,10 +26,18 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty] private string _scanningText = "";
 
     public bool ShowError => !IsValid && !Scanning;
-    [ObservableProperty] private string _exeLine = "";
-    [ObservableProperty] private string _langLine = "";
-    [ObservableProperty] private string _bankLine = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasScanDetails))]
+    private string _exeLine = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasScanDetails))]
+    private string _langLine = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasScanDetails))]
+    private string _bankLine = "";
     [ObservableProperty] private string _error = "";
+
+    public bool HasScanDetails => ExeLine.Length > 0 || LangLine.Length > 0 || BankLine.Length > 0;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TargetLufsText))]
@@ -120,10 +128,6 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public void Validate() => _ = ValidateAsync();
 
     private CancellationTokenSource? _validateCts;
-    
-    private static GameScan? _gameScanCache;
-    
-    private sealed record GameScan(string Path, GameScanner.GameScanResult Result);
 
     public async Task ValidateAsync()
     {
@@ -134,75 +138,57 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
         var path = GamePath;
         Error = "";
-
-        var cachedGame = _gameScanCache is { } gc && string.Equals(gc.Path, path, StringComparison.OrdinalIgnoreCase) ? gc : null;
-
-        if (cachedGame is not null)
-        {
-            ApplyGameScan(cachedGame);
-            Scanning = false;
-        }
-        else
-        {
-            Scanning = true;
-            IsValid = false;
-        }
+        ExeLine = "";
+        LangLine = "";
+        BankLine = "";
+        Scanning = true;
+        IsValid = false;
 
         try
         {
-            var r = await Task.Run(() =>
-            {
-                var scan = cachedGame?.Result ?? GameScanner.Scan(path);
-                return new GameScan(path, scan);
-            }, token);
+            var result = await Task.Run(() => GameScanner.Scan(path), token);
 
             if (token.IsCancellationRequested)
             {
                 return;
             }
 
-            _gameScanCache = r;
-
-            if (cachedGame is null)
-            {
-                ApplyGameScan(r);
-            }
+            ApplyGameScan(result);
         }
         catch (OperationCanceledException)
         {
 
         }
+        catch (Exception ex)
+        {
+            if (token.IsCancellationRequested) return;
+            Log.Line($"GameScanner failed for \"{path}\": {ex}");
+            ApplyGameScan(new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError,
+                ex.Message, null, 0, 0));
+        }
         finally
         {
             if (_validateCts == cts)
             {
+                _validateCts = null;
                 Scanning = false;
             }
+            cts.Dispose();
         }
     }
 
-    private void ApplyGameScan(GameScan game)
+    private void ApplyGameScan(GameScanner.GameScanResult result)
     {
-        var result = game.Result;
         IsValid = result.IsValid;
-
-        if (IsValid)
-        {
-            ExeLine = result.ExePath is null ? "" : string.Format(Str.FoundFmt, Path.GetFileName(result.ExePath));
-            LangLine = string.Format(Str.LocalizationsFmt, result.LanguageFileCount);
-            BankLine = string.Format(Str.RadioBanksFmt, result.BankCount);
-            Error = "";
-        }
-        else
-        {
-            ExeLine = "";
-            LangLine = "";
-            BankLine = "";
-            Error = FormatScanError(result);
-        }
+        var found = result.ExePath is not null || result.LanguageFileCount > 0 || result.BankCount > 0;
+        var showCounts = found && result.Issue != GameScanner.GameScanIssue.Horizon3Disabled;
+        ExeLine = result.ExePath is null ? "" : string.Format(Str.FoundFmt, Path.GetFileName(result.ExePath));
+        LangLine = showCounts ? string.Format(Str.LocalizationsFmt, result.LanguageFileCount) : "";
+        BankLine = showCounts ? string.Format(Str.RadioBanksFmt, result.BankCount) : "";
+        Error = IsValid ? "" : FormatScanError(result);
     }
 
-    private static string FormatScanError(GameScanner.GameScanResult r)
+    internal static string FormatScanError(GameScanner.GameScanResult r)
     {
         return r.Issue switch
         {
@@ -210,7 +196,11 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             GameScanner.GameScanIssue.DirectoryMissing => string.Format(Str.ErrScanDirectoryMissingFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.ExeMissing => string.Format(Str.ErrScanExeMissingFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.LanguageFilesMissing => Str.ErrScanLanguageMissing,
+            GameScanner.GameScanIssue.Horizon3Disabled => Str.ErrScanHorizon3Disabled,
             GameScanner.GameScanIssue.AccessDenied => string.Format(Str.ErrScanAccessDeniedFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.ResourceReadDenied => string.Format(Str.ErrScanResourceReadDeniedFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.EncryptedResources => string.Format(Str.ErrScanEncryptedResourcesFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.ResourceReadError => string.Format(Str.ErrScanResourceReadErrorFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.TransientLock => string.Format(Str.ErrScanTransientLockFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.PartialAccess => string.Format(Str.ErrScanPartialAccessFmt, r.Detail ?? ""),
             _ => string.Format(Str.ErrScanOtherErrorFmt, r.Detail ?? ""),
