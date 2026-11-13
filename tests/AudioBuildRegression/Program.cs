@@ -18,6 +18,11 @@ Environment.SetEnvironmentVariable("TEMP", temp);
 Environment.SetEnvironmentVariable("TMP", temp);
 try
 {
+    if (args.Contains("--ui-loudness", StringComparer.Ordinal))
+    {
+        await TrackLoudnessChecks.RunAsync(temp, path => WriteEmptyBank(path));
+        return 0;
+    }
     if (args.Contains("--benchmark-normalization", StringComparer.Ordinal))
     {
         await NormalizationBenchmark.RunAsync(temp);
@@ -25,9 +30,16 @@ try
     }
     TestFsbHeaders();
     TestAudioMeasurements(temp);
+    await TrackLoudnessChecks.RunAsync(temp, path => WriteEmptyBank(path));
     TestTrackPacks(temp);
     TestImportedMarkers(temp);
+    await XmaEncoderChecks.RunAsync(temp);
     await NormalizationChecks.RunAsync(temp);
+    await OutputLoudnessChecks.RunAsync(temp, path => WriteEmptyBank(path));
+    await LimiterSettingsChecks.RunAsync(temp);
+    await PeakLimiterChecks.RunAsync(temp, path => WriteEmptyBank(path));
+    await AudioSafetyChecks.RunAsync(temp, WriteEmptyBank);
+    await GainEnvelopeChecks.RunAsync(temp);
     await NormalizationOverrideChecks.RunAsync(temp, path => WriteEmptyBank(path));
     var inputs = GenerateInputs(temp);
     await TestPreviewMarkersAsync(inputs[0]);

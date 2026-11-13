@@ -1,7 +1,9 @@
 using System.Xml.Linq;
 using System.Reflection;
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using FH6RB.Core;
 using FH6RB.Services;
 using FH6RB.ViewModels;
@@ -245,6 +247,8 @@ static void TestModernXml(string temp)
 static async Task TestInstallationAsync(string game, string temp, string? previewDirectory)
 {
     Check(GameScanner.DetectVersion(game) == 2, "The supplied installation is not FH2.");
+    var xmaEncoder = await XmaEncoderService.CheckAsync(Console.WriteLine);
+    var expectedMainMode = xmaEncoder.Available ? 10 : 15;
     var languageFiles = GameScanner.LanguageFiles(game);
     Check(languageFiles.Count > 0, "FH2 installation has no language files.");
     var bankNames = GameScanner.RadioBankNames(game);
@@ -301,7 +305,11 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
     var added = await BankBuildService.BuildToFileAsync(source, output, items, settings, progress: Console.WriteLine);
     Check(added.Count == 0, "FH2 codec conversion reported retained originals as added or replaced.");
     var rebuilt = FevBank.ReadSkeleton(output);
-    Check(rebuilt.Mode == 15 && rebuilt.Stbl.Count == skel.Stbl.Count, "FH2 whole-bank conversion did not produce Vorbis or lost tracks.");
+    Check(rebuilt.Mode == expectedMainMode && rebuilt.Stbl.Count == skel.Stbl.Count, "FH2 whole-bank build selected an unexpected codec or lost tracks.");
+    if (xmaEncoder.Available)
+    {
+        for (var index = 0; index < tracks.Count; index++) CheckSampleDataEqual(source, output, index);
+    }
     Check(FevBank.ReadStblIdsFromFile(output).SetEquals(skel.Stbl.Select(t => t.Id)), "FH2 whole-bank conversion changed sound identifiers.");
     var convertedTracks = FevBank.ReadTrackInfoFromFile(output);
     Check(convertedTracks.All(t => t.Frames == tracks[t.Index].SampleLength && t.SampleRate == tracks[t.Index].SampleRate), "FH2 whole-bank conversion changed original sample dimensions.");
@@ -323,6 +331,7 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
         layout.Take(2).Select(t => new FevBank.DataRef(source, skel.DataStartAbs + t.DataOff, t.DataLen)).ToList());
     var wav = Path.Combine(temp, "new.wav");
     RunTool(Tools.FfmpegPath, $"-y -hide_banner -loglevel error -f lavfi -i sine=frequency=660:sample_rate=44100:duration=2 -ac 2 -c:a pcm_s16le \"{wav}\"");
+    await TestNativeXmaSettingsAsync(source, fsb, tracks.Single(t => t.SubIndex == 0), wav, temp, xmaEncoder.Available);
     var mp3 = Path.Combine(temp, "new.mp3");
     RunTool(Tools.FfmpegPath, $"-y -hide_banner -loglevel error -i \"{wav}\" -c:a libmp3lame \"{mp3}\"");
     var wavName = Naming.MakeSoundName(100);
@@ -335,7 +344,13 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
     var mixedOutput = Path.Combine(temp, "mixed-inputs.bank");
     var mixedAdded = await BankBuildService.BuildToFileAsync(miniSource, mixedOutput, mixedItems, settings, progress: Console.WriteLine);
     Check(mixedAdded.Count == 3 && mixedAdded.All(t => !t.IsReplacement), "FH2 input conversion returned incorrect added tracks.");
-    Check(FevBank.ReadSkeleton(mixedOutput).Mode == 15 && FevBank.ReadStblCountFromFile(mixedOutput) == 5, "FH2 WAV, MP3 or XMA import failed.");
+    Check(FevBank.ReadSkeleton(mixedOutput).Mode == expectedMainMode && FevBank.ReadStblCountFromFile(mixedOutput) == 5, "FH2 WAV, MP3 or XMA import failed.");
+    if (xmaEncoder.Available)
+    {
+        CheckSampleDataEqual(miniSource, mixedOutput, 0);
+        CheckSampleDataEqual(miniSource, mixedOutput, 1);
+        CheckSampleDataEqual(miniSource, mixedOutput, 0, 4);
+    }
     ApplyRadioInfo(radioForBuild, firstStation, bankNames[0], mixedAdded, mixedItems);
     var mixedTracks = BankReader.ReadTracks(mixedOutput, radioForBuild, firstStation.Number);
     Check(mixedTracks.Error is null && mixedTracks.Tracks.Count == 5, "FH2 converted bank metadata failed.");
@@ -348,6 +363,7 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
     var repeatItems = mixedTracks.Tracks.Select(t => new BuildItem(t.SoundName, false, null, t.DisplayName, t.Artist, null, t.Enabled, t.Markers, MarkerSampleRate: t.SampleRate)).ToList();
     var repeatOutput = Path.Combine(temp, "repeat.bank");
     Check((await BankBuildService.BuildToFileAsync(mixedOutput, repeatOutput, repeatItems, settings)).Count == 0, "FH2 repeated build unexpectedly encoded tracks.");
+    Check(FevBank.ReadSkeleton(repeatOutput).Mode == expectedMainMode, "FH2 repeated build changed the bank codec.");
     foreach (var track in mixedTracks.Tracks) CheckSampleDataEqual(mixedOutput, repeatOutput, track.SubIndex);
 
     var replacementItems = repeatItems.ToList();
@@ -369,10 +385,12 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
     var restoredLength = (long) Math.Round(tracks[0].SampleLength * 1000.0 / tracks[0].SampleRate, MidpointRounding.AwayFromZero);
     Check(restoredXml.SampleLength == restoredLength && !restoredXml.Replaced, "FH2 XMA backup restoration left replacement duration or flags in XML.");
     Check(originalXml.Markers!.All(m => restoredXml.Markers!.TryGetValue(m.Key, out var position) && position == m.Value), "FH2 XMA backup restoration changed original markers.");
-    Check(FevBank.ReadSkeleton(restoreOutput).Mode == 15, "FH2 backup restoration reverted the bank codec.");
+    Check(FevBank.ReadSkeleton(restoreOutput).Mode == expectedMainMode, "FH2 backup restoration changed the bank codec.");
+    if (xmaEncoder.Available) CheckSampleDataEqual(miniSource, restoreOutput, 0);
     DecodeAndCheck(restoreOutput, 0, Path.Combine(temp, "restored-first.wav"), tracks[0].SampleLength);
 
-    var emptySource = GameScanner.BankPath(game, bankNames[0] + "LFE")!;
+    var emptySource = Path.Combine(Path.GetDirectoryName(source)!, Path.GetFileNameWithoutExtension(source) + "LFE.bank");
+    Check(File.Exists(emptySource), "The FH2 empty LFE bank fixture is missing.");
     var emptyOutput = Path.Combine(temp, "filled-empty.bank");
     var singleItem = new BuildItem(wavName, true, wav, "Empty bank test", "Artist", null, true);
     var emptyAdded = await BankBuildService.BuildToFileAsync(emptySource, emptyOutput, [singleItem], settings);
@@ -398,7 +416,137 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
     RunTool(Tools.VgmstreamPath, $"-i -w -s 2 -o \"{fadpcmDecoded}\" \"{fadpcmOutput}\"");
     Check(WaveformService.Probe(fadpcmDecoded).Frames == fadpcmAdded[0].Frames, "Rebuilt FADPCM audio cannot be decoded.");
     await TestCopiedWorkflowAsync(game, temp, miniSource, firstStation, wav, mp3, settings);
-    Console.WriteLine($"Verified {languageFiles.Count} languages, {bankNames.Count} stations, {total} localized tracks, whole-bank Vorbis conversion, WAV/MP3/XMA imports, repeat builds, replacement and XMA backup restore.");
+    Console.WriteLine($"Verified {languageFiles.Count} languages, {bankNames.Count} stations, {total} localized tracks, whole-bank mode {expectedMainMode}, WAV/MP3/XMA imports, repeat builds, replacement and XMA backup restore.");
+}
+
+static async Task TestNativeXmaSettingsAsync(string source, string nativeFsb, RadioTrack stock, string wav, string temp, bool xmaEncoderAvailable)
+{
+    var sourceInfo = new FileInfo(source);
+    var sourceLength = sourceInfo.Length;
+    var sourceModified = sourceInfo.LastWriteTimeUtc;
+    var skeleton = FevBank.ReadSkeleton(source);
+    var (header, samples) = Fsb5.ReadLayout(skeleton.Fsb5HeaderRegion);
+    var sample = samples[stock.SubIndex];
+    var id = skeleton.Stbl.Single(entry => entry.Index == stock.SubIndex).Id;
+    var nativeBank = Path.Combine(temp, "native-policy-source.bank");
+    FevBank.AssembleToFile(nativeBank, skeleton.FmtChunk, skeleton.ListPayload, skeleton.StblRelOff, skeleton.StblOldSize,
+        FevBank.BuildStbl([(id, 0)]), header, [sample.Header],
+        [new FevBank.DataRef(source, skeleton.DataStartAbs + sample.DataOff, sample.DataLen)]);
+    var nativeWav = Path.Combine(temp, "native-policy-decoded.wav");
+    RunTool(Tools.VgmstreamPath, $"-i -W 4 -s 1 -o \"{nativeWav}\" \"{nativeFsb}\"");
+    var nativeInfo = AudioBuildValidation.Inspect(nativeWav);
+    Check(nativeInfo.Frames == sample.Frames && nativeInfo.SampleRate == sample.SampleRate && nativeInfo.Channels == sample.Channels,
+        "Native XMA decoding disagrees with its FSB metadata.");
+    var settings = new[]
+    {
+        new AppSettings { LoudnessNormalize = false, TargetLufs = -30, TargetTruePeak = 0, PeakLimiter = false, VorbisQuality = 15, EncodeParallelism = 1 },
+        new AppSettings { LoudnessNormalize = true, TargetLufs = -9, TargetTruePeak = -9, PeakLimiter = true, VorbisQuality = 95, EncodeParallelism = 1 },
+    };
+    var wavName = Naming.MakeSoundName(310);
+    var importName = Naming.MakeSoundName(311);
+    var outputs = new string[2];
+    var decoded = new string[2];
+    for (var i = 0; i < settings.Length; i++)
+    {
+        var gain = i == 0 ? -6d : 6d;
+        var stockGain = i == 0 ? -18d : 18d;
+        var items = new BuildItem[]
+        {
+            new(stock.SoundName, false, null, stock.DisplayName, stock.Artist, stockGain, true,
+                Normalization: new NormalizationOverride(true, -9, -9, true), BankId: id),
+            new(wavName, true, wav, "User WAV", null, gain, true),
+            new(importName, true, nativeFsb, "Saved native XMA", null, stockGain, true,
+                Normalization: new NormalizationOverride(true, -9, -9, true)),
+        };
+        var log = new ConcurrentQueue<string>();
+        outputs[i] = Path.Combine(temp, $"native-policy-mixed-{i}.bank");
+        var added = await BankBuildService.BuildToFileAsync(nativeBank, outputs[i], items, settings[i], log.Enqueue);
+        Check(added.Count == 2 && added.All(track => track.SoundName != stock.SoundName),
+            "Native conversion changed retained-track accounting.");
+        Check(FevBank.ReadSkeleton(outputs[i]).Mode == (xmaEncoderAvailable ? 10 : 15),
+            "Native XMA settings selected an unexpected bank codec.");
+        if (xmaEncoderAvailable)
+        {
+            Check(NativePolicyEvent(log, 0, "track.retained").GetProperty("Frames").GetInt64() == sample.Frames
+                && NativePolicyEvent(log, 2, "track.passthrough").GetProperty("Frames").GetInt64() == sample.Frames,
+                "Stock or saved XMA did not use native pass-through.");
+            CheckSampleDataEqual(nativeBank, outputs[i], 0);
+            CheckSampleDataEqual(nativeBank, outputs[i], 0, 2);
+            Check(!log.Any(line => (line.Contains("[track=0 ", StringComparison.Ordinal) || line.Contains("[track=2 ", StringComparison.Ordinal))
+                && (line.Contains("wav.prepared ", StringComparison.Ordinal) || line.Contains("$ " + Path.GetFileName(Tools.FsbankclPath) + " ", StringComparison.Ordinal))),
+                "Stock or saved XMA was rendered or re-encoded instead of being preserved.");
+        }
+        else
+        {
+            foreach (var index in new[] { 0, 2 })
+            {
+                var prepared = NativePolicyEvent(log, index, "wav.prepared");
+                Check(prepared.GetProperty("PcmSha256").GetString() == nativeInfo.PcmSha256
+                    && log.Any(line => line.Contains($"[track={index} ", StringComparison.Ordinal)
+                        && line.Contains("$ " + Path.GetFileName(Tools.FsbankclPath) + " ", StringComparison.Ordinal)
+                        && line.Contains("-quality 100", StringComparison.Ordinal)),
+                    "Stock or saved XMA used user gain, normalization, quantization or Vorbis quality.");
+            }
+        }
+        var expected = Path.Combine(temp, $"native-policy-user-{i}.wav");
+        await Loudnorm.RenderAsync(wav, expected, settings[i], gain);
+        Check(NativePolicyEvent(log, 1, "wav.prepared").GetProperty("PcmSha256").GetString() == AudioBuildValidation.Inspect(expected).PcmSha256
+            && log.Any(line => line.Contains("[track=1 ", StringComparison.Ordinal)
+                && line.Contains("$ " + Path.GetFileName(Tools.FsbankclPath) + " ", StringComparison.Ordinal)
+                && line.Contains(xmaEncoderAvailable ? "-format xma" : "-format vorbis", StringComparison.Ordinal)
+                && line.Contains($"-quality {settings[i].VorbisQuality}", StringComparison.Ordinal)),
+            "A new WAV ignored the user's normalization, gain or encoder quality.");
+        var layout = Fsb5.ReadLayout(FevBank.ReadSkeleton(outputs[i]).Fsb5HeaderRegion).Samples;
+        foreach (var index in new[] { 0, 2 })
+            Check(layout[index].Frames == sample.Frames && layout[index].SampleRate == sample.SampleRate && layout[index].Channels == sample.Channels,
+                "Stock or saved XMA conversion changed native frames, sample rate or channels.");
+        decoded[i] = Path.Combine(temp, $"native-policy-stock-{i}.wav");
+        File.WriteAllBytes(Path.Combine(temp, $"native-policy-stock-{i}.fsb"), TrackPack.ExtractSampleFsb(outputs[i], 0));
+        RunTool(Tools.VgmstreamPath, $"-i -W 4 -s 1 -o \"{decoded[i]}\" \"{Path.Combine(temp, $"native-policy-stock-{i}.fsb")}\"");
+        var comparison = AudioBuildValidation.Compare(nativeWav, decoded[i]);
+        Check(comparison.ChannelCorrelation.All(value => value > 0.98) && comparison.GainDb.All(value => Math.Abs(value) < 0.2),
+            "Native XMA conversion changed its decoded level or audio content.");
+        if (xmaEncoderAvailable)
+            Check(AudioBuildValidation.Inspect(decoded[i]).PcmSha256 == nativeInfo.PcmSha256,
+                "Native XMA pass-through changed its decoded PCM.");
+    }
+    CheckSampleDataEqual(outputs[0], outputs[1], 0);
+    CheckSampleDataEqual(outputs[0], outputs[1], 2);
+    Check(AudioBuildValidation.Inspect(decoded[0]).PcmSha256 == AudioBuildValidation.Inspect(decoded[1]).PcmSha256,
+        "Global options changed the decoded stock conversion.");
+    var userFirst = Path.Combine(temp, "native-policy-user-0.wav");
+    var userSecond = Path.Combine(temp, "native-policy-user-1.wav");
+    Check(AudioBuildValidation.Inspect(userSecond).RmsDb[0] > AudioBuildValidation.Inspect(userFirst).RmsDb[0] + 3,
+        "Radically different user settings did not affect the new WAV.");
+    for (var i = 0; i < outputs.Length; i++)
+    {
+        File.Copy(nativeBank, outputs[i] + ".bak");
+        var restored = Path.Combine(temp, $"native-policy-restored-{i}.bank");
+        var plan = new BuildItem[]
+        {
+            new(stock.SoundName, false, null, stock.DisplayName, stock.Artist, 24, true, RestoreFromBak: true, BankId: id),
+            new(wavName, false, null, null, null, 24, true, Normalization: new NormalizationOverride(true, -9, -9, true)),
+            new(importName, false, null, null, null, -24, true),
+        };
+        var added = await BankBuildService.BuildToFileAsync(outputs[i], restored, plan, settings[1 - i]);
+        Check(added.Count == 1 && added[0].IsReplacement && added[0].Frames == sample.Frames,
+            "Restoring stock XMA from .bak lost native dimensions or replacement accounting.");
+        for (var index = 0; index < 3; index++) CheckSampleDataEqual(outputs[i], restored, index);
+    }
+    sourceInfo.Refresh();
+    Check(sourceInfo.Length == sourceLength && sourceInfo.LastWriteTimeUtc == sourceModified,
+        "The native conversion regression changed the real source bank.");
+    Console.WriteLine(xmaEncoderAvailable
+        ? "Verified native XMA/FSB pass-through and backup restore preserve stock audio while new WAVs use user processing and XMA quality."
+        : "Verified fixed-quality native XMA/FSB conversion and backup restore ignore user options while new WAVs use them and existing Vorbis stays unchanged.");
+}
+
+static JsonElement NativePolicyEvent(IEnumerable<string> log, int index, string stage)
+{
+    var marker = stage + " ";
+    var line = log.Single(value => value.Contains($"[track={index} ", StringComparison.Ordinal) && value.Contains(marker, StringComparison.Ordinal));
+    using var document = JsonDocument.Parse(line[(line.IndexOf(marker, StringComparison.Ordinal) + marker.Length)..]);
+    return document.RootElement.Clone();
 }
 
 static MainWindowViewModel CreateXmlWriter(string game, IReadOnlyList<string> languageFiles)
@@ -431,6 +579,10 @@ static void TestPlaylistMinimums(string temp)
             _ => $"ForzaHorizon{version}.exe",
         };
         File.WriteAllBytes(Path.Combine(game, executable), []);
+        if (version == 2)
+        {
+            File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), """<Package><Identity Name="Anthem"/><Applications><Application Executable="forza_durango_release_final.exe"/></Applications></Package>""");
+        }
         if (version == 3)
         {
             File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), """<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="Microsoft.OpusPG"/><Applications><Application Executable="forza_x64_release_final.exe"/></Applications></Package>""");
@@ -464,6 +616,7 @@ static void TestPlaylistMinimums(string temp)
 static async Task TestCopiedWorkflowAsync(string originalGame, string temp, string originalBank,
     StationInfo station, string wav, string mp3, AppSettings settings)
 {
+    var expectedMainMode = XmaEncoderService.IsAvailable ? 10 : 15;
     var game = Path.Combine(temp, "workflow");
     var audio = Path.Combine(game, "media", "audio");
     var bankDirectory = Path.Combine(audio, "fmodanthem", "durango");
@@ -490,7 +643,7 @@ static async Task TestCopiedWorkflowAsync(string originalGame, string temp, stri
     var writeBank = typeof(MainWindowViewModel).GetMethod("BuildAndWriteBankAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
     var buildTask = (Task<(IReadOnlyList<AddedSample> Added, long Written)>) writeBank.Invoke(null, [bank, items, settings, (Action<string>) Console.WriteLine])!;
     var build = await buildTask;
-    Check(FevBank.ReadSkeleton(bank).Mode == 15 && FevBank.ReadSkeleton(bank + ".bak").Mode == 10, "FH2 workflow did not preserve the native XMA bank backup.");
+    Check(FevBank.ReadSkeleton(bank).Mode == expectedMainMode && FevBank.ReadSkeleton(bank + ".bak").Mode == 10, "FH2 workflow did not preserve the native XMA bank backup.");
     var vm = CreateXmlWriter(game, languages);
     var writeXml = typeof(MainWindowViewModel).GetMethod("WriteRadioInfosAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
     var xmlTask = (Task<(int SavedXml, int Dead)>) writeXml.Invoke(vm, [station, bankName, build.Added, items])!;
@@ -572,7 +725,7 @@ static async Task TestCopiedWorkflowAsync(string originalGame, string temp, stri
             Check(!editor.ReadTracks().Any(t => t.SoundName == otherTrack.SoundName), "FH2 manual backup restore left an omitted original in the playlist.");
         }
         var restoredAudio = FevBank.ReadTrackInfoFromFile(bank).Single(t => t.Id == Lookup.SoundNameToId(originalTrack.SoundName));
-        Check(restoredAudio.Frames == originalTrack.SampleLength && FevBank.ReadSkeleton(bank).Mode == 15, "FH2 manual backup restore changed original audio timing or reverted the codec.");
+        Check(restoredAudio.Frames == originalTrack.SampleLength && FevBank.ReadSkeleton(bank).Mode == expectedMainMode, "FH2 manual backup restore changed original audio timing or the codec.");
     }
     finally
     {
@@ -625,10 +778,10 @@ static void DecodeAndCheck(string bankPath, int index, string output, long frame
 {
     RunTool(Tools.VgmstreamPath, $"-i -w -s {index + 1} -o \"{output}\" \"{bankPath}\"");
     var decoded = WaveformService.Probe(output);
-    Check(decoded.SampleRate == 48000 && decoded.Frames == frames, $"Decoded Vorbis sample {index} has incorrect dimensions.");
+    Check(decoded.SampleRate == 48000 && decoded.Frames == frames, $"Decoded FSB sample {index} has incorrect dimensions.");
 }
 
-static void CheckSampleDataEqual(string firstPath, string secondPath, int index)
+static void CheckSampleDataEqual(string firstPath, string secondPath, int index, int? secondIndex = null)
 {
     static byte[] ReadSample(string path, int index)
     {
@@ -640,7 +793,7 @@ static void CheckSampleDataEqual(string firstPath, string secondPath, int index)
         stream.ReadExactly(data);
         return data;
     }
-    Check(ReadSample(firstPath, index).SequenceEqual(ReadSample(secondPath, index)), "FH2 repeat build changed existing Vorbis audio bytes.");
+    Check(ReadSample(firstPath, index).SequenceEqual(ReadSample(secondPath, secondIndex ?? index)), "FH2 build changed existing encoded audio bytes.");
 }
 
 static string Horizon2Xml() => """

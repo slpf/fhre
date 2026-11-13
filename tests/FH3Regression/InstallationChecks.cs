@@ -7,18 +7,22 @@ using static TestSupport;
 
 internal static class InstallationChecks
 {
-    public static async Task RunAsync(string sourceGame, string scratch)
+    public static async Task RunAsync(string sourceGame, string scratch, bool workflowOnly = false)
     {
         Check(GameScanner.DetectVersion(sourceGame) == 3, "The integration source is not an identified FH3 installation.");
+        var sourceExe = GameScanner.FindExe(sourceGame)!;
+        var xbox = Path.GetFileName(sourceExe).StartsWith("forza_durango_", StringComparison.OrdinalIgnoreCase);
+        Check(GameScanner.Scan(sourceGame).IsValid, "The real FH3 installation is unreadable.");
         var names = GameScanner.RadioBankNames(sourceGame);
         Check(names.Count == 10, "Expected eight base music banks and two DLC banks.");
         var languageFiles = GameScanner.LanguageFiles(sourceGame);
         Check(languageFiles.Count == 10, "Expected all ten real FH3 language files.");
+        NativeMetadataChecks.Run(sourceGame, names, languageFiles, scratch);
         var language = languageFiles.First(f => f.Equals("RadioInfo_EN.xml", StringComparison.OrdinalIgnoreCase));
         var sourceFiles = names.Select(n => GameScanner.BankPath(sourceGame, n)!)
             .Concat(languageFiles.Select(f => GameScanner.RadioInfoPathByFile(sourceGame, f)!)).ToArray();
-        var original = sourceFiles.ToDictionary(p => p, p => (new FileInfo(p).Length, File.GetLastWriteTimeUtc(p)));
-        var cache = Path.Combine(AppContext.BaseDirectory, "fixture-cache", "pristine-fh3");
+        var original = sourceFiles.ToDictionary(p => p, p => (new FileInfo(p).Length, File.GetLastWriteTimeUtc(p), Hash(p)));
+        var cache = Path.Combine(AppContext.BaseDirectory, "fixture-cache", xbox ? "pristine-fh3-xbox" : "pristine-fh3-uwp");
         var game = Path.Combine(scratch, "FH3-workspace-copy");
         Check(!Path.GetFullPath(game).StartsWith(Path.GetFullPath(sourceGame), StringComparison.OrdinalIgnoreCase), "The fixture overlaps the real installation.");
         Directory.CreateDirectory(game);
@@ -38,17 +42,31 @@ internal static class InstallationChecks
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.Copy(cached, destination);
         }
-        File.WriteAllBytes(Path.Combine(game, "forza_x64_release_final.exe"), []);
-        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), SyntheticChecks.Manifest);
+        File.WriteAllBytes(Path.Combine(game, Path.GetFileName(sourceExe)), []);
+        File.Copy(Path.Combine(sourceGame, "AppxManifest.xml"), Path.Combine(game, "AppxManifest.xml"));
+        Check(GameScanner.DetectVersion(game) == 3, "The copied executable and manifest lost FH3 identity.");
         var xml = GameScanner.RadioInfoPathByFile(game, language)!;
         var radio = RadioInfo.Load(xml);
         var localized = languageFiles.ToDictionary(f => f, f => RadioInfo.Load(GameScanner.RadioInfoPathByFile(game, f)!));
         var catalog = RadioCatalog.Build(game, radio);
         Check(catalog.Count == 8 && GameScanner.RadioBankNames(game).Count == 10, "Workspace fixture lost FH3 stations or DLC variants.");
+        var activeCounts = catalog.ToDictionary(s => s.Number, s => radio.StationByNumber(s.Number)!.FreeRoamActiveCount());
+        Check(activeCounts.Values.Min() == 12 && activeCounts[8] == 12, "The real FH3 minimum is no longer twelve active Timeless tracks.");
         var main = CreateVm(game, language);
-        try { Check(main.Stations.Count == 8 && main.Languages.Count == 1, "MainVM did not load the copied FH3 catalog."); }
+        try
+        {
+            Check(main.Stations.Count == 8 && main.Languages.Count == 1 && main.MinimumActiveTracks == 12,
+                "MainVM did not load the copied FH3 catalog or minimum.");
+        }
         finally { ReleaseVm(main); }
-        var settings = new AppSettings { GamePath = game, LoudnessNormalize = false, EncodeParallelism = 2, VorbisQuality = 95 };
+        var settings = new AppSettings { GamePath = game, LoudnessNormalize = false, EncodeParallelism = 4, VorbisQuality = 95 };
+        var xma = await XmaEncoderService.CheckAsync();
+        if (workflowOnly)
+        {
+            await CheckWorkflowsAsync(game, catalog, settings, scratch);
+            Check(original.All(pair => new FileInfo(pair.Key).Length == pair.Value.Length && File.GetLastWriteTimeUtc(pair.Key) == pair.Value.Item2 && Hash(pair.Key) == pair.Value.Item3), "A real source fixture changed during workspace-only integration.");
+            return;
+        }
         var records = 0;
         var orphans = 0;
         var validatedMarkers = 0;
@@ -80,9 +98,13 @@ internal static class InstallationChecks
                         "A real FH3 orphan row exposed operations requiring missing XML metadata.");
                 }
                 var output = Path.Combine(scratch, bankName + ".roundtrip.bank");
+                var sourceMode = FevBank.ReadSkeleton(bank).Mode;
+                var targetMode = sourceMode == 10 && !xma.Available ? 15 : sourceMode;
+                Console.WriteLine($"Checking {bankName}: {read.Tracks.Count} streams, codec {sourceMode} -> {targetMode}.");
                 var added = await BankBuildService.BuildToFileAsync(bank, output, items, settings);
-                CheckState(BankState(bank), BankState(output), bankName + " no-op");
-                Check(FevBank.ReadSkeleton(bank).Mode == FevBank.ReadSkeleton(output).Mode, "A no-op build changed native codec mode.");
+                if (sourceMode == targetMode) CheckState(BankState(bank), BankState(output), bankName + " no-op");
+                else CheckDimensions(BankState(bank), BankState(output), bankName + " XMA fallback");
+                Check(FevBank.ReadSkeleton(output).Mode == targetMode, "A no-op build used an unexpected codec mode.");
                 Apply(radio, station, bankName, added, items);
                 foreach (var local in localized.Values)
                 {
@@ -108,9 +130,15 @@ internal static class InstallationChecks
             Check(localizedSamples[file].SequenceEqual(after), file + " no-op changed localized names, artists or End markers.");
             CheckNativeXml(local, file);
         }
-        Console.WriteLine("Verified all ten real-bank no-op builds and all ten real language XMLs, all 156 STBL records including three orphans, compressed SHA256, native metadata, playlist composition and End markers.");
+        Console.WriteLine("Verified all ten real-bank builds and all ten real language XMLs, all 156 STBL records including three orphans, retained compressed SHA256 or converted native dimensions, playlist composition and End markers.");
+        await CheckWorkflowsAsync(game, catalog, settings, scratch);
+        Check(original.All(pair => new FileInfo(pair.Key).Length == pair.Value.Length && File.GetLastWriteTimeUtc(pair.Key) == pair.Value.Item2 && Hash(pair.Key) == pair.Value.Item3), "A real source fixture changed during workspace-only integration.");
+    }
+
+    private static async Task CheckWorkflowsAsync(string game, List<StationInfo> catalog, AppSettings settings, string scratch)
+    {
         foreach (var file in GameScanner.LanguageFiles(game)) File.Copy(GameScanner.RadioInfoPathByFile(game, file)!, GameScanner.RadioInfoPathByFile(game, file)! + ".bak");
-        foreach (var name in names)
+        foreach (var name in GameScanner.RadioBankNames(game))
         {
             var bank = GameScanner.BankPath(game, name)!;
             File.Copy(bank, bank + ".bak");
@@ -120,8 +148,7 @@ internal static class InstallationChecks
         await CheckEncodedWorkflowAsync(game, input, catalog.Single(s => s.Number == 1), "R1_Tracks", settings, scratch);
         await CheckEncodedWorkflowAsync(game, input, catalog.Single(s => s.Number == 6), "R6_Tracks_PDLC2", settings, scratch);
         await CheckBackupsAsync(game, catalog.Single(s => s.Number == 1), settings);
-        Check(original.All(pair => new FileInfo(pair.Key).Length == pair.Value.Length && File.GetLastWriteTimeUtc(pair.Key) == pair.Value.Item2), "A real source fixture changed during workspace-only integration.");
-        Console.WriteLine("Verified workspace-only FH3 encoding, replacement/custom markers and gains, FADPCM padding, inactive flags and station/original backup restores.");
+        Console.WriteLine("Verified workspace-only FH3 encoding, replacement/custom markers and gains, output frame counts, inactive flags and station/original backup restores.");
     }
 
     private static async Task CheckEncodedWorkflowAsync(string game, string input, StationInfo station, string bankName, AppSettings settings, string scratch)
@@ -146,13 +173,19 @@ internal static class InstallationChecks
         var temporary = Path.Combine(scratch, bankName + ".encoded.bank");
         var before = BankState(bank);
         var mode = FevBank.ReadSkeleton(bank).Mode;
+        var targetMode = mode == 10 && !XmaEncoderService.IsAvailable ? 15 : mode;
         var added = await BankBuildService.BuildToFileAsync(bank, temporary, items, settings, log.Enqueue);
         var state = BankState(temporary);
         Check(state.Count == before.Count + 1 && state.ContainsKey(originalId), "Adding/replacing audio lost original STBL identity.");
-        foreach (var (id, data) in before.Where(p => p.Key != originalId)) Check(state[id] == data, "Encoding a track changed an unrelated compressed sample.");
-        var frames = mode == 16 ? (expectedInfo.Frames + 255) / 256 * 256 : expectedInfo.Frames;
+        foreach (var (id, data) in before.Where(p => p.Key != originalId))
+        {
+            Check(mode == targetMode ? state[id] == data : state[id].Frames == data.Frames
+                && state[id].Rate == data.Rate && state[id].Channels == data.Channels,
+                "Encoding a track changed unrelated audio or its native dimensions.");
+        }
+        var frames = targetMode == 16 ? (expectedInfo.Frames + 255) / 256 * 256 : expectedInfo.Frames;
         Check(state[originalId].Frames == frames && state[originalId].Rate == 48000 && state[originalId].Channels == 2
-            && FevBank.ReadSkeleton(temporary).Mode == mode, "FH3 native codec or FADPCM padding changed.");
+            && FevBank.ReadSkeleton(temporary).Mode == targetMode, "FH3 target codec or FADPCM padding changed.");
         const string stage = "wav.prepared ";
         var prepared = log.Single(l => l.Contains($"[track={replacement} ", StringComparison.Ordinal) && l.Contains(stage, StringComparison.Ordinal));
         using (var json = JsonDocument.Parse(prepared[(prepared.IndexOf(stage, StringComparison.Ordinal) + stage.Length)..]))
@@ -177,6 +210,14 @@ internal static class InstallationChecks
         Check(!radio.StationByNumber(station.Number)!.ReadTracks().Single(t => t.SoundName == custom).Enabled, "An inactive FH3 custom track was enabled during commit.");
         radio.Save(xml);
         File.Move(temporary, bank, overwrite: true);
+        var repeatRadio = RadioInfo.Load(xml);
+        var repeatTracks = BankReader.ReadTracks(bank, repeatRadio, station.Number);
+        var repeat = Path.Combine(scratch, bankName + ".repeat.bank");
+        var repeatLog = new ConcurrentQueue<string>();
+        await BankBuildService.BuildToFileAsync(bank, repeat, repeatTracks.Tracks.Select(Item).ToArray(), settings, repeatLog.Enqueue);
+        CheckState(BankState(bank), BankState(repeat), bankName + " repeat");
+        Check(!repeatLog.Any(l => l.Contains("wav.prepared ", StringComparison.Ordinal)), "A repeat FH3 build unnecessarily decoded or encoded retained audio.");
+        File.Delete(repeat);
     }
 
     private static async Task CheckBackupsAsync(string game, StationInfo station, AppSettings settings)
@@ -188,6 +229,12 @@ internal static class InstallationChecks
         var read = BankReader.ReadTracks(bank, radio, station.Number);
         var sources = read.Tracks.Select(t => new BackupTrackSource(t.SoundName, t.Origin == TrackOrigin.Custom, false, t.Replaced,
             null, null, t.SubIndex, t.DisplayName, t.Artist, t.SampleLength, t.SampleRate, null, t.Enabled, t.Markers?.ToDictionary(), BankId: t.BankId)).ToArray();
+        var localizedFile = GameScanner.LanguageFiles(game).First(f => !f.Equals("RadioInfo_EN.xml", StringComparison.OrdinalIgnoreCase));
+        var localizedPath = GameScanner.RadioInfoPathByFile(game, localizedFile)!;
+        var localizedRadio = RadioInfo.Load(localizedPath);
+        var originalTrack = read.Tracks.First(t => t.Origin == TrackOrigin.Original && !t.Replaced && !t.SoundName.StartsWith("sound_", StringComparison.Ordinal));
+        localizedRadio.StationByNumber(station.Number)!.SetSampleMeta(originalTrack.SoundName, "Localized & <title> --", "Localized artist");
+        localizedRadio.Save(localizedPath);
         BackupEntry? backup = null;
         try
         {
@@ -197,13 +244,25 @@ internal static class InstallationChecks
             Check(backup.Manifest.Tracks.Count(t => t.SoundName.StartsWith("sound_", StringComparison.Ordinal) && t.BankId is not null) == 2,
                 "A station backup omitted orphan STBL identities.");
             var before = station.Variants.ToDictionary(v => v, v => BankState(GameScanner.BankPath(game, station.BankName(v))!));
+            var beforeModes = station.Variants.ToDictionary(v => v, v => FevBank.ReadSkeleton(GameScanner.BankPath(game, station.BankName(v))!).Mode);
             var custom = read.Tracks.Single(t => t.Origin == TrackOrigin.Custom);
             radio.StationByNumber(1)!.SetEnabled(custom.SoundName, true);
             radio.StationByNumber(1)!.SetSampleMeta(custom.SoundName, "Changed", "Changed");
             radio.Save(xml);
             var restored = await StationBackupService.RestoreAsync(backup, game, settings);
             Check(restored.Banks == 2 && restored.Langs == GameScanner.LanguageFiles(game).Count, "FH3 station restore missed a variant or language.");
-            foreach (var v in station.Variants) CheckState(before[v], BankState(GameScanner.BankPath(game, station.BankName(v))!), "Station backup restore");
+            var localizedMeta = RadioInfo.Load(localizedPath).StationByNumber(station.Number)!.GetSampleMeta(originalTrack.SoundName)!.Value;
+            Check(localizedMeta.DisplayName == "Localized & <title> --" && localizedMeta.Artist == "Localized artist",
+                "Station backup restore replaced localized original metadata with the reference language.");
+            foreach (var v in station.Variants)
+            {
+                var restoredBank = GameScanner.BankPath(game, station.BankName(v))!;
+                var restoredMode = FevBank.ReadSkeleton(restoredBank).Mode;
+                var expectedMode = beforeModes[v] == 10 && !XmaEncoderService.IsAvailable ? 15 : beforeModes[v];
+                Check(restoredMode == expectedMode, "Station backup restore used an unexpected codec: " + v);
+                if (beforeModes[v] == restoredMode) CheckState(before[v], BankState(restoredBank), "Station backup restore " + v);
+                else CheckDimensions(before[v], BankState(restoredBank), "Station backup codec conversion " + v);
+            }
             var track = RadioInfo.Load(xml).StationByNumber(1)!.ReadTracks().Single(t => t.SoundName == custom.SoundName);
             Check(!track.Enabled && track.DisplayName == "Custom & FH3" && track.Markers!.ContainsKey("TrackBreakDown") && !track.Markers.ContainsKey("PostDrop"), "FH3 station restore changed native marker metadata or inactive state.");
             Check(RadioInfo.Load(xml).Document.Descendants("Sample").All(s => !((string?) s.Attribute("SoundName") ?? "").StartsWith("sound_", StringComparison.Ordinal)), "Orphan station restore created invalid XML metadata.");
@@ -240,6 +299,14 @@ internal static class InstallationChecks
     {
         Check(expected.Count == actual.Count && expected.All(p => actual.TryGetValue(p.Key, out var found) && p.Value == found),
             label + " changed STBL identities, compressed bytes, frames, rate or channels.");
+    }
+
+    private static void CheckDimensions(Dictionary<ulong, (long Frames, int Rate, int Channels, string Hash)> expected,
+        Dictionary<ulong, (long Frames, int Rate, int Channels, string Hash)> actual, string label)
+    {
+        Check(expected.Count == actual.Count && expected.All(p => actual.TryGetValue(p.Key, out var found)
+            && found.Frames == p.Value.Frames && found.Rate == p.Value.Rate && found.Channels == p.Value.Channels),
+            label + " changed STBL identities, frames, rate or channels.");
     }
 
     private static void CheckNativeXml(RadioInfo radio, string file)

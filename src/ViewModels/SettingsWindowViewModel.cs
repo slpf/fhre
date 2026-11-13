@@ -28,6 +28,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public bool ShowError => !IsValid && !Scanning;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasScanDetails))]
+    [NotifyPropertyChangedFor(nameof(HasGameLine))]
+    private string _gameLine = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasScanDetails))]
     private string _exeLine = "";
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasScanDetails))]
@@ -37,7 +41,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private string _bankLine = "";
     [ObservableProperty] private string _error = "";
 
-    public bool HasScanDetails => ExeLine.Length > 0 || LangLine.Length > 0 || BankLine.Length > 0;
+    public bool HasGameLine => GameLine.Length > 0;
+    public bool HasScanDetails => HasGameLine || ExeLine.Length > 0 || LangLine.Length > 0 || BankLine.Length > 0;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TargetLufsText))]
@@ -51,9 +56,14 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     public string TargetTruePeakText => $"{TargetTruePeak:0.0} dBTP";
 
-    [ObservableProperty] private bool _loudnessNormalize;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanEditPeakLimiter))]
+    private bool _loudnessNormalize;
 
-    [ObservableProperty] private bool _dynamicNormalization;
+    [ObservableProperty] private bool _peakLimiter;
+    [ObservableProperty] private bool _measureTrackLoudness;
+
+    public bool CanEditPeakLimiter => LoudnessNormalize;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(VorbisQualityText))]
@@ -83,7 +93,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _targetLufs = AppSettings.ClampTargetLufs(settings.TargetLufs);
         _targetTruePeak = AppSettings.ClampTargetTruePeak(settings.TargetTruePeak);
         _loudnessNormalize = settings.LoudnessNormalize;
-        _dynamicNormalization = settings.DynamicNormalization;
+        _peakLimiter = settings.PeakLimiter;
+        _measureTrackLoudness = settings.MeasureTrackLoudness;
         _vorbisQuality = settings.VorbisQuality;
         _encodeParallelism = settings.EncodeParallelism > 0
             ? Math.Min(settings.EncodeParallelism, MaxThreads)
@@ -138,6 +149,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
         var path = GamePath;
         Error = "";
+        GameLine = "";
         ExeLine = "";
         LangLine = "";
         BankLine = "";
@@ -181,10 +193,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     {
         IsValid = result.IsValid;
         var found = result.ExePath is not null || result.LanguageFileCount > 0 || result.BankCount > 0;
-        var showCounts = found && result.Issue != GameScanner.GameScanIssue.Horizon3Disabled;
+        GameLine = result.GameName;
         ExeLine = result.ExePath is null ? "" : string.Format(Str.FoundFmt, Path.GetFileName(result.ExePath));
-        LangLine = showCounts ? string.Format(Str.LocalizationsFmt, result.LanguageFileCount) : "";
-        BankLine = showCounts ? string.Format(Str.RadioBanksFmt, result.BankCount) : "";
+        LangLine = found ? string.Format(Str.LocalizationsFmt, result.LanguageFileCount) : "";
+        BankLine = found ? string.Format(Str.RadioBanksFmt, result.BankCount) : "";
         Error = IsValid ? "" : FormatScanError(result);
     }
 
@@ -196,7 +208,6 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             GameScanner.GameScanIssue.DirectoryMissing => string.Format(Str.ErrScanDirectoryMissingFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.ExeMissing => string.Format(Str.ErrScanExeMissingFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.LanguageFilesMissing => Str.ErrScanLanguageMissing,
-            GameScanner.GameScanIssue.Horizon3Disabled => Str.ErrScanHorizon3Disabled,
             GameScanner.GameScanIssue.AccessDenied => string.Format(Str.ErrScanAccessDeniedFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.ResourceReadDenied => string.Format(Str.ErrScanResourceReadDeniedFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.EncryptedResources => string.Format(Str.ErrScanEncryptedResourcesFmt, r.Detail ?? ""),
@@ -219,7 +230,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.VorbisQuality = d.VorbisQuality;
         _settings.EncodeParallelism = d.EncodeParallelism;
         _settings.LoudnessNormalize = d.LoudnessNormalize;
-        _settings.DynamicNormalization = d.DynamicNormalization;
+        _settings.PeakLimiter = d.PeakLimiter;
+        _settings.MeasureTrackLoudness = d.MeasureTrackLoudness;
         _settings.MarkerDefaults = new();
         _settings.WaveformLabelRows = new();
         _settings.LoopAutoTune = d.LoopAutoTune;
@@ -239,7 +251,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         TargetTruePeak = _settings.TargetTruePeak;
         EncodeParallelism = AppSettings.RecommendedParallelism;
         LoudnessNormalize = _settings.LoudnessNormalize;
-        DynamicNormalization = _settings.DynamicNormalization;
+        PeakLimiter = _settings.PeakLimiter;
+        MeasureTrackLoudness = _settings.MeasureTrackLoudness;
         VorbisQuality = _settings.VorbisQuality;
 
         Saved = true;
@@ -254,7 +267,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.TargetTruePeak = TargetTruePeak;
         _settings.EncodeParallelism = EncodeParallelism;
         _settings.LoudnessNormalize = LoudnessNormalize;
-        _settings.DynamicNormalization = DynamicNormalization;
+        _settings.PeakLimiter = PeakLimiter;
+        _settings.MeasureTrackLoudness = MeasureTrackLoudness;
         _settings.VorbisQuality = VorbisQuality;
         SettingsService.Save(_settings);
         Saved = true;

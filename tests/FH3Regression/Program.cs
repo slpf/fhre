@@ -6,6 +6,13 @@ Environment.SetEnvironmentVariable("TEMP", scratch);
 Environment.SetEnvironmentVariable("TMP", scratch);
 try
 {
+    var measure = Array.IndexOf(args, "--measure");
+    if (measure >= 0)
+    {
+        if (measure + 2 >= args.Length) throw new ArgumentException("--measure requires a source directory and a report directory.");
+        await LoudnessChecks.RunAsync(Path.GetFullPath(args[measure + 1]), Path.GetFullPath(args[measure + 2]), scratch);
+        return 0;
+    }
     var blocked = Array.IndexOf(args, "--blocked-installation");
     if (blocked >= 0)
     {
@@ -18,7 +25,8 @@ try
     if (installation >= 0)
     {
         if (installation + 1 >= args.Length) throw new ArgumentException("--installation requires a source directory.");
-        await InstallationChecks.RunAsync(Path.GetFullPath(args[installation + 1]), scratch);
+        await InstallationChecks.RunAsync(Path.GetFullPath(args[installation + 1]), scratch,
+            args.Contains("--workflow-only", StringComparer.Ordinal));
     }
     Console.WriteLine("FH3 regression checks passed.");
     return 0;

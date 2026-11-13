@@ -34,11 +34,15 @@ public static class BankSize
 
     public static long EncodedBytes(double seconds, int mode, int vorbisQuality)
     {
-        if (seconds <= 0) return 0;
+        if (!double.IsFinite(seconds) || seconds <= 0) return 0;
 
-        long data = mode == 16
-            ? (long) Math.Ceiling(seconds * SampleRate * Channels * 0.5)
-            : (long) Math.Ceiling(seconds * VorbisBytesPerSec(vorbisQuality));
+        var bytesPerSecond = mode switch
+        {
+            10 => SampleRate * Channels * 2.0,
+            16 => SampleRate * Channels * 0.5,
+            _ => VorbisBytesPerSec(vorbisQuality)
+        };
+        var data = (long) Math.Ceiling(seconds * bytesPerSecond);
 
         data += (Align - (int)(data % Align)) % Align;
         return data + SampleHeaderBytes;

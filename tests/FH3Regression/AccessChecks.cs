@@ -33,7 +33,7 @@ internal static class AccessChecks
             File.WriteAllBytes(Path.Combine(banks, Physical("R1_LFE.bank")), []);
             var resources = new[] { english, french, emptyXml, bank, dlc };
             var contents = resources.ToDictionary(p => p, File.ReadAllBytes);
-            CheckHorizon3Disabled(game);
+            CheckReadable(GameScanner.Scan(game));
             CheckReadable(ScanResources(game));
 
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -77,7 +77,7 @@ internal static class AccessChecks
                 using (var exclusive = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.None))
                 {
                     Check(Directory.GetFiles(Path.GetDirectoryName(target)!).Contains(target), "A file sharing lock unexpectedly prevented directory enumeration.");
-                    CheckHorizon3Disabled(game);
+                    CheckFailure(GameScanner.Scan(game), GameScanner.GameScanIssue.TransientLock, target);
                     CheckFailure(ScanResources(game), GameScanner.GameScanIssue.TransientLock, target);
                 }
                 CheckReadable(ScanResources(game));
@@ -134,6 +134,7 @@ internal static class AccessChecks
     private static void CheckSettingsScanDetails(string game)
     {
         var vm = (SettingsWindowViewModel) RuntimeHelpers.GetUninitializedObject(typeof(SettingsWindowViewModel));
+        vm.GameLine = "";
         vm.ExeLine = "";
         vm.LangLine = "";
         vm.BankLine = "";
@@ -160,11 +161,6 @@ internal static class AccessChecks
                 "Invalid settings scan discarded discovered executable or language/bank counts.");
         }
         Check(changed.Contains(nameof(vm.HasScanDetails)), "Settings scan details did not notify the UI.");
-        apply.Invoke(vm, [new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.Horizon3Disabled, null, exe, 0, 0)]);
-        Check(!vm.IsValid && vm.ShowError && vm.HasScanDetails && vm.Error == Str.ErrScanHorizon3Disabled
-            && vm.ExeLine == string.Format(Str.FoundFmt, Path.GetFileName(exe))
-            && vm.LangLine.Length == 0 && vm.BankLine.Length == 0,
-            "Disabled FH3 selection lost executable details or displayed unprobed resource counts.");
         apply.Invoke(vm, [new GameScanner.GameScanResult(true, GameScanner.GameScanIssue.None, null, exe, 3, 2)]);
         Check(vm.IsValid && !vm.ShowError && vm.Error.Length == 0 && vm.HasScanDetails,
             "A successful rescan retained the previous resource error or hid discovered details.");
@@ -172,13 +168,13 @@ internal static class AccessChecks
 
     public static void CheckBlockedInstallation(string game)
     {
-        CheckHorizon3Disabled(game);
-        var result = ScanResources(game);
+        Check(GameScanner.DetectVersion(game) == 3, "The blocked package lost its UWP identity.");
+        var result = GameScanner.Scan(game);
         Check(!result.IsValid && result.Issue == GameScanner.GameScanIssue.EncryptedResources,
             "The blocked package was not classified as unreadable encrypted resources: " + JsonSerializer.Serialize(result));
         Check(result.ExePath is not null && result.LanguageFileCount > 0 && result.BankCount > 0,
             "Blocked-package diagnostics lost executable identity or enumerated file counts.");
-        Console.WriteLine("Blocked FH3 installation read-only check passed: public selection disabled; internal resource scan: " + JsonSerializer.Serialize(result));
+        Console.WriteLine("Blocked FH3 installation read-only check passed: " + JsonSerializer.Serialize(result));
     }
 
     private static void ReadOne(string path)

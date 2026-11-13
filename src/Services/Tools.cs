@@ -9,6 +9,7 @@ public static class Tools
     public static string FfmpegPath => Path.Combine(Root, "ffmpeg", Exe("ffmpeg"));
     public static string FfprobePath => Path.Combine(Root, "ffmpeg", Exe("ffprobe"));
     public static string FsbankclPath => Path.Combine(Root, "fsbank", Exe("fsbankcl"));
+    public static string XmaEncoderPath => Path.Combine(Path.GetDirectoryName(FsbankclPath)!, "xmaencoder64.dll");
     public static string VgmstreamPath => Path.Combine(Root, "vgmstream", Exe("vgmstream-cli"));
 
     public static string DemucsModelDir => Path.Combine(Root, "demucs");
@@ -26,6 +27,7 @@ public static class Tools
     public static bool HasFfmpeg => File.Exists(FfmpegPath);
     public static bool HasFfprobe => File.Exists(FfprobePath);
     public static bool HasFsbankcl => File.Exists(FsbankclPath);
+    public static bool HasXmaEncoderFile => OperatingSystem.IsWindows() && File.Exists(XmaEncoderPath);
     public static bool HasVgmstream => File.Exists(VgmstreamPath);
 
     public static bool CanAddTracks => HasFfmpeg && HasFfprobe;

@@ -37,15 +37,6 @@ internal static class TestSupport
             ?? throw new InvalidOperationException("The resource-read scan returned no result."));
     }
 
-    public static void CheckHorizon3Disabled(string game)
-    {
-        var result = GameScanner.Scan(game);
-        Check(!result.IsValid && result.Issue == GameScanner.GameScanIssue.Horizon3Disabled
-            && result.ExePath == GameScanner.FindExe(game) && result.ExePath is not null
-            && result.LanguageFileCount == 0 && result.BankCount == 0,
-            "Selecting FH3 did not stop at the public disabled gate.");
-    }
-
     public static MainWindowViewModel CreateVm(string game, string language)
     {
         var vm = (MainWindowViewModel) RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));

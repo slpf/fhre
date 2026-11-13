@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
@@ -65,6 +66,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(AddTracksTip));
         OnPropertyChanged(nameof(BuildTip));
         foreach (var track in Tracks) track.RefreshToolAvailability();
+        ScheduleLoudnessMeasurements();
     }
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
@@ -81,6 +83,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void NotifyBusyChanged()
     {
+        ScheduleLoudnessMeasurements();
         OnPropertyChanged(nameof(IsBusy));
         OnPropertyChanged(nameof(CanBuild));
         OnPropertyChanged(nameof(CanAddTracks));
@@ -155,7 +158,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     
     private readonly PlaybackService _player = new();
     private TrackItemViewModel? _nowPlaying;
-    private sealed record FilePreview(string Path, double GainDb, bool Normalize, bool Dynamic, double Lufs, double TruePeak);
+    private sealed record FilePreview(string Path, double GainDb, bool Normalize, bool PeakLimiter,
+        double Lufs, double TruePeak);
     private FilePreview? _requestedFilePreview;
     private double _previewResumeSeconds;
     private bool _previewResumePaused;
@@ -240,6 +244,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             ReleaseUnusedSourceLocks();
             RefreshFilter();
+            RefreshLoudnessTracking();
         };
 
         _seekDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
@@ -397,6 +402,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void ClearLoadedTracks()
     {
+        CancelLoudnessMeasurements();
         StopPlayback();
         IsLoading = false;
         Tracks.Clear();
@@ -610,6 +616,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             baseOverhead = overhead;
         }
 
+        if (baseMode == 10) await XmaEncoderService.CheckAsync(Log.Line);
+
         if (gen != _loadGen)
         {
             Log.Line($"LoadAsync #{gen}: superseded by #{_loadGen}, discarding");
@@ -729,8 +737,34 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (_baseBankMode == 10)
         {
+            if (BankBuildService.TargetMode(_baseBankMode, false, XmaEncoderService.IsAvailable) == 10)
+            {
+                long sampleBytes = 0;
+                var approximate = 0;
+                foreach (var track in Tracks)
+                {
+                    if (!track.UsesFileSource && !track.RestoreFromBak && track.RestoreFsbPath is null && track.BankBytes > 0)
+                    {
+                        sampleBytes += track.BankBytes;
+                        continue;
+                    }
+                    var source = track.UsesFileSource ? track.FileSource : track.RestoreFsbPath;
+                    if (TryProjectedXmaBytes(source, out var bytes))
+                    {
+                        sampleBytes += bytes;
+                        continue;
+                    }
+                    sampleBytes += BankSize.EncodedBytes(TrackDurationSeconds(track), 10, Settings.VorbisQuality);
+                    approximate++;
+                }
+                _projectedTotalBytes = _baseBankOverhead + sampleBytes;
+                _sizeIsApprox = approximate > 0;
+                Log.Line($"projected XMA bank size: {BankSize.Mb(_projectedTotalBytes)} ({approximate} conservative PCM16 estimate(s))");
+                Recount();
+                return;
+            }
             _projectedTotalBytes = _baseBankOverhead + Tracks.Sum(t =>
-                BankSize.EncodedBytes(TrackDurationSeconds(t), 15, Settings.VorbisQuality));
+                BankSize.EncodedBytes(TrackDurationSeconds(t), 15, ProjectedEncodingQuality(t)));
             _sizeIsApprox = Tracks.Count > 0;
             Log.Line($"projected Vorbis bank size: {BankSize.Mb(_projectedTotalBytes)} ({Tracks.Count} track(s))");
             Recount();
@@ -747,14 +781,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             {
                 var dur = TrackDurationSeconds(t);
                 if (dur <= 0) continue;
-                added += BankSize.EncodedBytes(dur, _baseBankMode, Settings.VorbisQuality);
+                added += BankSize.EncodedBytes(dur, _baseBankMode, ProjectedEncodingQuality(t));
                 n++;
             }
             else if (t.IsReplacing || t.RestoreFromBak)
             {
                 var dur = TrackDurationSeconds(t);
                 if (dur <= 0) continue;
-                added += BankSize.EncodedBytes(dur, _baseBankMode, Settings.VorbisQuality);
+                added += BankSize.EncodedBytes(dur, _baseBankMode, ProjectedEncodingQuality(t));
 
                 if (t.BankBytes > 0)
                 {
@@ -774,6 +808,57 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _sizeIsApprox = n > 0;
         Log.Line($"projected bank size: {BankSize.Mb(_projectedTotalBytes)} total = base {BankSize.Mb(_baseBankSize)} + {BankSize.Mb(added)} - {BankSize.Mb(removed)} over {n} staged track(s)");
         Recount();
+    }
+
+    private static bool TryProjectedXmaBytes(string? path, out long bytes)
+    {
+        bytes = 0;
+        if (path is null || !path.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase)) return false;
+        try
+        {
+            using var stream = File.OpenRead(path);
+            Span<byte> header = stackalloc byte[68];
+            stream.ReadExactly(header);
+            if (!header[..4].SequenceEqual("FSB5"u8)
+                || BinaryPrimitives.ReadUInt32LittleEndian(header[4..]) != 1
+                || BinaryPrimitives.ReadUInt32LittleEndian(header[8..]) != 1
+                || BinaryPrimitives.ReadUInt32LittleEndian(header[24..]) != 10) return false;
+            var headerBytes = BinaryPrimitives.ReadUInt32LittleEndian(header[12..]);
+            var nameBytes = BinaryPrimitives.ReadUInt32LittleEndian(header[16..]);
+            var dataBytes = BinaryPrimitives.ReadUInt32LittleEndian(header[20..]);
+            var dataOffset = (long) ((BinaryPrimitives.ReadUInt64LittleEndian(header[60..]) >> 7) & 0x07FFFFFF) * 0x20;
+            if (headerBytes < 8 || dataBytes <= dataOffset
+                || 60L + headerBytes + nameBytes + dataBytes > stream.Length) return false;
+            var length = dataBytes - dataOffset;
+            bytes = headerBytes + length + ((0x20 - length % 0x20) % 0x20);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private int ProjectedEncodingQuality(TrackItemViewModel track)
+    {
+        if (_baseBankMode is not (10 or 15)) return Settings.VorbisQuality;
+        var source = track.UsesFileSource ? track.FileSource : track.RestoreFsbPath;
+        if (source is null)
+        {
+            return _baseBankMode == 10 ? BankBuildService.OriginalAudioQuality : Settings.VorbisQuality;
+        }
+        if (source.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (BankBuildService.FsbMode(source) != _baseBankMode || _baseBankMode == 10 && !XmaEncoderService.IsAvailable)
+                    return BankBuildService.OriginalAudioQuality;
+            }
+            catch
+            {
+            }
+        }
+        return Settings.VorbisQuality;
     }
 
     private static bool IsProjectedNew(TrackItemViewModel t)
@@ -1001,7 +1086,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (!track.UsesFileSource || track.IsFileSourceFsb) return null;
         var settings = NormalizationOverride.Resolve(Settings, track.Normalization);
         return new FilePreview(track.FileSource!, track.GainDb ?? 0, settings.LoudnessNormalize,
-            settings.DynamicNormalization, settings.TargetLufs, settings.TargetTruePeak);
+            settings.PeakLimiter, settings.TargetLufs, settings.TargetTruePeak);
     }
 
     private async Task StartAsync(TrackItemViewModel track, double fromSec = 0, bool paused = false)
@@ -1048,7 +1133,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     var settings = new AppSettings
                     {
                         LoudnessNormalize = preview.Normalize,
-                        DynamicNormalization = preview.Dynamic,
+                        PeakLimiter = preview.PeakLimiter,
                         TargetLufs = preview.Lufs,
                         TargetTruePeak = preview.TruePeak
                     };
@@ -1128,6 +1213,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     
     public void Shutdown()
     {
+        _loudnessShutdown = true;
+        CancelLoudnessMeasurements();
+        if (_loudnessTracks is not null)
+            foreach (var track in _loudnessTracks) track.PropertyChanged -= OnLoudnessSourceChanged;
         StopPlayback();
         _player.Dispose();
         foreach (var stream in _sourceLocks.Values) stream.Dispose();
@@ -1557,6 +1646,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        await StopLoudnessAnalysisAsync();
         var lockedFiles = FileGuard.Locked(
             new string?[] { bankPath, radioPath }
                 .Concat(Languages.Select(l => GameScanner.RadioInfoPathByFile(Settings.GamePath, l.FileName))));
@@ -1768,7 +1858,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         foreach (var a in addedSamples.Where(a => a.IsReplacement))
         {
             ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
-            ed.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist);
+            ed.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist, clearMissingArtist: true);
         }
 
         foreach (var sn in restoredNames)
@@ -1813,14 +1903,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 && !string.Equals(cur.DisplayName, it.DisplayName, StringComparison.Ordinal)
                 && !(cur.DisplayName is null && string.Equals(it.DisplayName, it.SoundName, StringComparison.Ordinal));
 
+            var artist = it.Artist ?? (it.RestoreFromBak ? "" : null);
             var artistChanged =
-                it.Artist is not null
-                && !string.Equals(cur.Artist, it.Artist, StringComparison.Ordinal);
+                artist is not null
+                && !string.Equals(cur.Artist, artist, StringComparison.Ordinal);
 
             if (nameChanged || artistChanged)
             {
-                editor.SetSampleMeta(it.SoundName, it.DisplayName, it.Artist);
-                changed[it.SoundName] = (it.DisplayName, it.Artist);
+                editor.SetSampleMeta(it.SoundName, it.DisplayName, artist);
+                changed[it.SoundName] = (it.DisplayName, artist);
             }
         }
         return changed;
@@ -1909,7 +2000,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (a.IsReplacement)
             {
                 editor.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
-                editor.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist);
+                editor.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist, clearMissingArtist: true);
             }
             else
             {

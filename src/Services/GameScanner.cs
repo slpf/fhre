@@ -22,7 +22,6 @@ public static partial class GameScanner
         ResourceReadDenied,
         EncryptedResources,
         ResourceReadError,
-        Horizon3Disabled,
     }
 
     public sealed record GameScanResult(
@@ -31,7 +30,10 @@ public static partial class GameScanner
         string? Detail,
         string? ExePath,
         int LanguageFileCount,
-        int BankCount);
+        int BankCount)
+    {
+        public string GameName { get; init; } = "";
+    }
 
     private sealed class ScanStats
     {
@@ -48,11 +50,16 @@ public static partial class GameScanner
 
     public static GameScanResult Scan(string gamePath)
     {
-        if (DetectVersion(gamePath) == 3)
+        var result = Scan(gamePath, ReadResource);
+        if (result.ExePath is null) return result;
+        var name = DetectVersion(gamePath) switch
         {
-            return new GameScanResult(false, GameScanIssue.Horizon3Disabled, null, FindExe(gamePath), 0, 0);
-        }
-        return Scan(gamePath, ReadResource);
+            2 => "Forza Horizon 2 (Azimuth)",
+            3 => IsDurangoExecutable(result.ExePath) ? "Forza Horizon 3 (Azimuth)" : "Forza Horizon 3 (UWP)",
+            var version when version is >= 4 and <= 6 => $"Forza Horizon {version}",
+            _ => ""
+        };
+        return result with { GameName = name };
     }
 
     internal static GameScanResult Scan(string gamePath, Action<string> readResource)
@@ -171,9 +178,10 @@ public static partial class GameScanner
         {
             return Directory
                 .EnumerateFiles(gamePath, "ForzaHorizon*.exe", FileEnumeration)
-                .FirstOrDefault()
+                .FirstOrDefault(path => !Path.GetFileNameWithoutExtension(path)
+                    .Equals("ForzaHorizon3", StringComparison.OrdinalIgnoreCase))
                 ?? Directory.EnumerateFiles(gamePath, "forza_durango_*.exe", FileEnumeration)
-                    .FirstOrDefault()
+                    .FirstOrDefault(path => DetectDurangoVersion(path) != 0)
                 ?? FindHorizon3Executable(gamePath);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -191,9 +199,9 @@ public static partial class GameScanner
         }
 
         var name = Path.GetFileNameWithoutExtension(exe);
-        if (name.StartsWith("forza_durango_", StringComparison.OrdinalIgnoreCase))
+        if (IsDurangoExecutable(exe))
         {
-            return 2;
+            return DetectDurangoVersion(exe);
         }
 
         if (name.Equals("forza_x64_release_final", StringComparison.OrdinalIgnoreCase)
@@ -206,27 +214,64 @@ public static partial class GameScanner
         return m.Success && int.TryParse(m.Value, out var v) ? v : 0;
     }
 
+    private static bool IsDurangoExecutable(string exe) => Path.GetFileNameWithoutExtension(exe)
+        .StartsWith("forza_durango_", StringComparison.OrdinalIgnoreCase);
+
+    private static int DetectDurangoVersion(string exe)
+    {
+        var root = Path.GetDirectoryName(exe)!;
+        var manifest = Path.Combine(root, "AppxManifest.xml");
+        if (!File.Exists(manifest))
+        {
+            return SafeEnumerate(root, "HZ2_MX_Radio_*_Tracks.bank").Any() ? 2 : 0;
+        }
+        try
+        {
+            var document = ReadManifest(manifest);
+            if (!DeclaresExecutable(document, Path.GetFileName(exe))) return 0;
+            return PackageIdentity(document) switch
+            {
+                "Anthem" => 2,
+                "Opus" => 3,
+                _ => 0
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or XmlException)
+        {
+            Log.Line($"GameScanner: could not identify Xbox package {JsonSerializer.Serialize(manifest)}: {ex.Message}");
+            return 0;
+        }
+    }
+
+    private static XDocument ReadManifest(string path)
+    {
+        using var reader = XmlReader.Create(path, new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null
+        });
+        return XDocument.Load(reader);
+    }
+
+    private static string? PackageIdentity(XDocument document) => (string?) document.Root?.Elements()
+        .FirstOrDefault(e => e.Name.LocalName == "Identity")?.Attribute("Name");
+
+    private static bool DeclaresExecutable(XDocument document, string name) => document.Descendants()
+        .Any(e => e.Name.LocalName == "Application" && string.Equals((string?) e.Attribute("Executable"), name,
+            StringComparison.OrdinalIgnoreCase));
+
     private static string? FindHorizon3Executable(string gamePath)
     {
         try
         {
             var manifest = Directory.EnumerateFiles(gamePath, "AppxManifest.xml", FileEnumeration).FirstOrDefault();
             if (manifest is null) return null;
-            using var reader = XmlReader.Create(manifest, new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit,
-                XmlResolver = null
-            });
-            var document = XDocument.Load(reader);
-            if (!document.Descendants().Any(e => e.Name.LocalName == "Identity"
-                    && string.Equals((string?) e.Attribute("Name"), "Microsoft.OpusPG", StringComparison.Ordinal)))
+            var document = ReadManifest(manifest);
+            if (PackageIdentity(document) != "Microsoft.OpusPG")
             {
                 return null;
             }
-            var declared = document.Descendants().FirstOrDefault(e => e.Name.LocalName == "Application"
-                && string.Equals((string?) e.Attribute("Executable"), "forza_x64_release_final.exe",
-                    StringComparison.OrdinalIgnoreCase));
-            return declared is null ? null
+            return !DeclaresExecutable(document, "forza_x64_release_final.exe") ? null
                 : Directory.EnumerateFiles(gamePath, "forza_x64_release_final.exe", FileEnumeration).FirstOrDefault();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or XmlException)

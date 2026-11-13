@@ -206,10 +206,12 @@ public sealed partial class EditWindowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEditNormalization))]
     [NotifyPropertyChangedFor(nameof(CanEditNormalizationTargets))]
+    [NotifyPropertyChangedFor(nameof(CanEditPeakLimiter))]
     private bool _useGlobalNormalization;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEditNormalizationTargets))]
+    [NotifyPropertyChangedFor(nameof(CanEditPeakLimiter))]
     private bool _loudnessNormalize;
 
     [ObservableProperty]
@@ -220,10 +222,11 @@ public sealed partial class EditWindowViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(TargetTruePeakText))]
     private double _targetTruePeak;
 
-    [ObservableProperty] private bool _dynamicNormalization;
+    [ObservableProperty] private bool _peakLimiter;
 
     public bool CanEditNormalization => ShowNormalization && !UseGlobalNormalization;
     public bool CanEditNormalizationTargets => CanEditNormalization && LoudnessNormalize;
+    public bool CanEditPeakLimiter => CanEditNormalizationTargets;
     public string TargetLufsText => $"{TargetLufs:0.#} LUFS";
     public string TargetTruePeakText => $"{TargetTruePeak:0.0} dBTP";
 
@@ -284,7 +287,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
         var global = settings ?? new AppSettings();
         _globalNormalization = new NormalizationOverride(global.LoudnessNormalize,
             AppSettings.ClampTargetLufs(global.TargetLufs), AppSettings.ClampTargetTruePeak(global.TargetTruePeak),
-            global.DynamicNormalization);
+            global.PeakLimiter);
         _customNormalization = track.Normalization;
         _useGlobalNormalization = track.Normalization is null;
         SetNormalizationDraft(_customNormalization ?? _globalNormalization);
@@ -352,11 +355,11 @@ public sealed partial class EditWindowViewModel : ObservableObject
         LoudnessNormalize = settings.LoudnessNormalize;
         TargetLufs = AppSettings.ClampTargetLufs(settings.TargetLufs);
         TargetTruePeak = AppSettings.ClampTargetTruePeak(settings.TargetTruePeak);
-        DynamicNormalization = settings.DynamicNormalization;
+        PeakLimiter = settings.PeakLimiter;
     }
 
     private NormalizationOverride ReadNormalizationDraft() => new(LoudnessNormalize,
-        AppSettings.ClampTargetLufs(TargetLufs), AppSettings.ClampTargetTruePeak(TargetTruePeak), DynamicNormalization);
+        AppSettings.ClampTargetLufs(TargetLufs), AppSettings.ClampTargetTruePeak(TargetTruePeak), PeakLimiter);
 
     partial void OnUseGlobalNormalizationChanged(bool value)
     {

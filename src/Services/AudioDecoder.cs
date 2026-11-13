@@ -10,7 +10,7 @@ public static class AudioDecoder
 {
     private static readonly string Dir = Path.Combine(AppPaths.TempBase, "preview");
     private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
-    private const int NormScheme = 5;
+    private const int NormScheme = 10;
     private static int _purged;
 
     public static void ClearAll()
@@ -67,14 +67,14 @@ public static class AudioDecoder
         s = new AppSettings
         {
             LoudnessNormalize = s.LoudnessNormalize,
-            DynamicNormalization = s.DynamicNormalization,
+            PeakLimiter = s.PeakLimiter,
             TargetLufs = AppSettings.ClampTargetLufs(s.TargetLufs),
             TargetTruePeak = AppSettings.ClampTargetTruePeak(s.TargetTruePeak)
         };
         var norm = s.LoudnessNormalize;
         var i = s.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{s.DynamicNormalization}|{i}|{tp}|" +
+        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{s.PeakLimiter}|{i}|{tp}|" +
             $"{gainDb.ToString("R", CultureInfo.InvariantCulture)}|nv{NormScheme}");
         var outWav = Path.Combine(Dir, key + ".wav");
         var context = $"preview source \"{source}\"";
@@ -85,7 +85,7 @@ public static class AudioDecoder
             return outWav;
         }
 
-        Log.Line($"{context}: cache miss, normalize={norm}, dynamic={s.DynamicNormalization}, target_I={i}, " +
+        Log.Line($"{context}: cache miss, normalize={norm}, peakLimiter={s.PeakLimiter}, target_I={i}, " +
             $"target_TP={tp}, gainDb={gainDb.ToString("R", CultureInfo.InvariantCulture)}, source_stamp={Stamp(source)}");
 
         Directory.CreateDirectory(Dir);
@@ -95,7 +95,7 @@ public static class AudioDecoder
         try
         {
             Loudnorm.Render(source, part, s, gainDb, message => Log.Line($"{context}: {message}"), ct);
-            File.Move(part, outWav, overwrite: true);
+            Publish(part, outWav, context, ct);
             LogWave(context, outWav, cacheHit: false);
         }
         catch
@@ -109,6 +109,7 @@ public static class AudioDecoder
 
     public static string DecodeBank(string bankPath, int sub0, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (sub0 < 0) throw new ArgumentOutOfRangeException(nameof(sub0));
         var key = Key($"bank|{bankPath}|{Stamp(bankPath)}|{sub0}|bv3");
         var outWav = Path.Combine(Dir, key + ".wav");
@@ -152,7 +153,7 @@ public static class AudioDecoder
                 decodeIndex = 0;
             }
             Run(Tools.VgmstreamPath, $"-i -s {decodeIndex + 1} -o \"{part}\" \"{decodePath}\"", context, ct);
-            File.Move(part, outWav, overwrite: true);
+            Publish(part, outWav, context, ct);
             LogWave(context, outWav, cacheHit: false);
         }
         catch (Exception ex)
@@ -180,6 +181,20 @@ public static class AudioDecoder
     }
 
     private static string Key(string s) => Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(s)))[..16];
+
+    private static void Publish(string part, string output, string context, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            File.Move(part, output, overwrite: false);
+        }
+        catch (IOException) when (File.Exists(output))
+        {
+            File.Delete(part);
+            Log.Line($"{context}: cache publish winner reused, wav=\"{output}\"");
+        }
+    }
 
     private static void LogWave(string context, string path, bool cacheHit)
     {
@@ -212,6 +227,7 @@ public static class AudioDecoder
                 var detail = string.IsNullOrWhiteSpace(err) ? output.Trim() : err.Trim();
                 throw new InvalidOperationException($"{Path.GetFileName(exe)} exited {code}: {detail}");
             }
+            ct.ThrowIfCancellationRequested();
             return err;
         }
         catch (OperationCanceledException)

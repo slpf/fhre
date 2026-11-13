@@ -12,7 +12,7 @@ internal static class NormalizationBenchmark
         NormalizationChecks.WriteSignal(raw, 44100, 2, 180, limited: false, transients: false, seed: 2387);
         RunTool($"-y -hide_banner -loglevel error -i \"{raw}\" -c:a libmp3lame -b:a 256k \"{source}\"");
         File.Delete(raw);
-        var settings = new AppSettings { LoudnessNormalize = true, DynamicNormalization = false, TargetLufs = -23, TargetTruePeak = -1 };
+        var settings = new AppSettings { LoudnessNormalize = true, PeakLimiter = false, TargetLufs = -23, TargetTruePeak = -1 };
         Console.WriteLine(JsonSerializer.Serialize(new { stage = "normalization.benchmark.environment", durationSeconds = 180, sourceBytes = new FileInfo(source).Length,
             sourceSampleRate = 44100, channels = 2, mp3Kbps = 256, runtime = Environment.Version.ToString(), processors = Environment.ProcessorCount,
             settings.TargetLufs, settings.TargetTruePeak, cache = "OS file cache warm; measurement cache tested separately" }));

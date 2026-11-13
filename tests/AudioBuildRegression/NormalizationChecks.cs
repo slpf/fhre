@@ -9,18 +9,18 @@ internal static class NormalizationChecks
 {
     public static async Task RunAsync(string temp)
     {
-        Check(!new AppSettings().DynamicNormalization, "Dynamic normalization is enabled by default.");
+        Check(!new AppSettings().PeakLimiter, "Peak limiting is enabled by default.");
         var legacySettings = JsonSerializer.Deserialize<AppSettings>("{\"LoudnessNormalize\":true,\"TargetLufs\":-23}")!;
-        Check(!legacySettings.DynamicNormalization, "Existing settings unexpectedly enabled dynamic normalization.");
+        Check(!legacySettings.PeakLimiter, "Existing settings unexpectedly enabled peak limiting.");
         var persisted = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(new AppSettings
         {
-            DynamicNormalization = true, TargetLufs = -20.5, TargetTruePeak = -2.5,
+            PeakLimiter = true, TargetLufs = -20.5, TargetTruePeak = -2.5,
         }))!;
-        Check(persisted.DynamicNormalization && persisted.TargetLufs == -20.5 && persisted.TargetTruePeak == -2.5,
+        Check(persisted.PeakLimiter && persisted.TargetLufs == -20.5 && persisted.TargetTruePeak == -2.5,
             "Normalization options did not survive settings serialization.");
         var rich = Path.Combine(temp, "normalization-rich.wav");
         WriteSignal(rich, 48000, 2, 8, limited: false, transients: false);
-        var settings = new AppSettings { LoudnessNormalize = true, DynamicNormalization = false, TargetLufs = -23, TargetTruePeak = -1 };
+        var settings = new AppSettings { LoudnessNormalize = true, PeakLimiter = false, TargetLufs = -23, TargetTruePeak = -1 };
         var rendered = Path.Combine(temp, "normalization-rich-rendered.wav");
         await Loudnorm.RenderAsync(rich, rendered, settings);
         CheckConstantGain(rich, rendered);
@@ -75,21 +75,24 @@ internal static class NormalizationChecks
         Check(AudioBuildValidation.Compare(plain, plainTrim).GainDb.All(g => Math.Abs(g + 3) < 0.01), "Disabling normalization also disabled manual trim.");
         Check(!HasAnalysisStatus(noNormLog, "miss"), "Disabled normalization still ran an analysis pass.");
 
-        var dynamic = Path.Combine(temp, "normalization-dynamic.wav");
-        var dynamicSettings = new AppSettings { LoudnessNormalize = true, DynamicNormalization = true, TargetLufs = -23, TargetTruePeak = -1 };
-        var dynamicLog = new List<string>();
-        await Loudnorm.RenderAsync(rich, dynamic, dynamicSettings, log: dynamicLog.Add);
-        var dynamicInfo = AudioBuildValidation.Inspect(dynamic);
-        Check(dynamicInfo.Frames == 48000 * 8 && dynamicInfo.SampleRate == 48000 && dynamicInfo.Channels == 2, "Explicit dynamic normalization changed duration or output dimensions.");
-        Check(dynamicLog.Any(l => l.Contains("\"mode\":\"dynamic\"", StringComparison.Ordinal)) && Measure(dynamic).TruePeak <= -0.9,
-            "Explicit dynamic mode was not used or exceeded its true peak ceiling.");
-        var dynamicStable = Path.Combine(temp, "normalization-dynamic-stable.wav");
-        await Loudnorm.RenderAsync(limited, dynamicStable, dynamicSettings);
-        Check(Math.Abs(Measure(dynamicStable).Integrated + 23) < 0.5, "Dynamic normalization missed the target on a stable loud master.");
+        var limiter = Path.Combine(temp, "normalization-limiter.wav");
+        var varying = Path.Combine(temp, "normalization-varying-source.wav");
+        GainEnvelopeChecks.WriteVaryingFixture(varying);
+        var limiterSettings = new AppSettings { LoudnessNormalize = true, PeakLimiter = true, TargetLufs = -23, TargetTruePeak = -1 };
+        var limiterLog = new List<string>();
+        await Loudnorm.RenderAsync(varying, limiter, limiterSettings, log: limiterLog.Add);
+        var limiterInfo = AudioBuildValidation.Inspect(limiter);
+        Check(limiterInfo.Frames == 48000 * 32 && limiterInfo.SampleRate == 48000 && limiterInfo.Channels == 2, "Explicit peak limiting changed duration or output dimensions.");
+        Check(limiterLog.Any(l => l.Contains("\"mode\":\"constant\"", StringComparison.Ordinal)) && Measure(limiter).TruePeak <= -0.9,
+            "An attainable target did not preserve constant gain or exceeded its true peak ceiling.");
+        CheckConstantGain(varying, limiter);
+        var limiterStable = Path.Combine(temp, "normalization-limiter-stable.wav");
+        await Loudnorm.RenderAsync(limited, limiterStable, limiterSettings);
+        Check(Math.Abs(Measure(limiterStable).Integrated + 23) < 0.5, "Peak limiting missed the target on a stable loud master.");
 
         await CheckSilenceAndErrorsAsync(temp, settings);
         await CheckCacheAsync(temp, rich, settings);
-        Console.WriteLine("Verified constant gain, rich stereo dynamics, -6 LUFS limited audio, true peak caps, trims, mono/surround resampling, explicit dynamic mode, silence, errors and cache invalidation.");
+        Console.WriteLine("Verified constant gain, rich stereo dynamics, -6 LUFS limited audio, true peak caps, trims, mono/surround resampling, optional peak limiter, silence, errors and cache invalidation.");
     }
 
     private static async Task CheckSilenceAndErrorsAsync(string temp, AppSettings settings)
@@ -124,14 +127,14 @@ internal static class NormalizationChecks
         foreach (var mode in new[]
         {
             new AppSettings { LoudnessNormalize = false },
-            new AppSettings { LoudnessNormalize = true, DynamicNormalization = true },
+            new AppSettings { LoudnessNormalize = true, PeakLimiter = true },
         })
         {
             var failed = false;
             try { await Loudnorm.RenderAsync(nonfinite, output, mode); }
             catch (InvalidDataException) { failed = true; }
             catch (InvalidOperationException) { failed = true; }
-            Check(failed, "Manual or dynamic rendering accepted non-finite source samples.");
+            Check(failed, "Manual or limiter rendering accepted non-finite source samples.");
         }
         var shortClip = Path.Combine(temp, "normalization-short.wav");
         WriteSignal(shortClip, 48000, 2, 0.1, limited: false, transients: false);
@@ -162,8 +165,8 @@ internal static class NormalizationChecks
         Check(AudioDecoder.DecodeAdded(input, targetSettings) != preview, "Preview cache ignored its loudness target.");
         var peakSettings = new AppSettings { LoudnessNormalize = true, TargetLufs = -23, TargetTruePeak = -3 };
         Check(AudioDecoder.DecodeAdded(input, peakSettings) != preview, "Preview cache ignored its true peak ceiling.");
-        var dynamicSettings = new AppSettings { LoudnessNormalize = true, DynamicNormalization = true, TargetLufs = -23, TargetTruePeak = -1 };
-        Check(AudioDecoder.DecodeAdded(input, dynamicSettings) != preview, "Preview cache ignored dynamic normalization mode.");
+        var limiterSettings = new AppSettings { LoudnessNormalize = true, PeakLimiter = true, TargetLufs = -23, TargetTruePeak = -1 };
+        Check(AudioDecoder.DecodeAdded(input, limiterSettings) != preview, "Preview cache ignored peak limiting mode.");
         WriteSignal(input, 48000, 2, 8, limited: false, transients: false, seed: 19);
         File.SetLastWriteTimeUtc(input, DateTime.UtcNow.AddSeconds(2));
         var changedLog = new List<string>();

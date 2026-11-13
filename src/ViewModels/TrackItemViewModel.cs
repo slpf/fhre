@@ -34,7 +34,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
     public int SubIndex { get; set; } = -1;
     public long BankBytes { get; set; }
     public int RestoreBakIndex { get; set; } = -1;
-    public string? RestoreFsbPath { get; set; }
+    [ObservableProperty] private string? _restoreFsbPath;
     
     public bool CanPlay => HasDecoder
         && (UsesFileSource || RestoreFsbPath is not null || SubIndex >= 0 && SampleLength > 0);
@@ -72,7 +72,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowPlayIcon));
     }
     
-    public string? SourcePath { get; set; }
+    [ObservableProperty] private string? _sourcePath;
 
     [ObservableProperty] private string? _replacementPath;
 
@@ -145,6 +145,18 @@ public sealed partial class TrackItemViewModel : ObservableObject
     [ObservableProperty] private double? _gainDb;
     [ObservableProperty] private NormalizationOverride? _normalization;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(InfoLine))]
+    [NotifyPropertyChangedFor(nameof(LoudnessTip))]
+    private string _loudnessText = Str.TrackLoudnessPending;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LoudnessTip))]
+    private string? _loudnessError;
+
+    public string? LoudnessTip => LoudnessText.Length == 0 ? null
+        : LoudnessError is { } error ? Str.TipTrackLoudness + "\n\n" + error : Str.TipTrackLoudness;
+
     public bool HasArtist => !string.IsNullOrWhiteSpace(Artist);
 
     public TrackItemViewModel(RadioTrack track, double? gainDb = null)
@@ -213,6 +225,7 @@ public sealed partial class TrackItemViewModel : ObservableObject
             }
 
             parts.Add(SoundName);
+            if (LoudnessText.Length > 0) parts.Add(LoudnessText);
             return string.Join("   ·   ", parts);
         }
     }

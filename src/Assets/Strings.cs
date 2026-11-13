@@ -24,7 +24,7 @@ public static class Str
     public const string LblTargetTruePeak = "True peak ceiling";
     public const string LblEncodingThreads = "Encoding threads";
     public const string LblLoudnessNormalize = "Normalize loudness";
-    public const string LblDynamicNormalization = "Use dynamic normalization";
+    public const string LblPeakLimiter = "Use peak limiter";
     public const string LblUseGlobalNormalization = "Use global normalization settings";
     
     public const string BtnCancel = "Cancel";
@@ -85,12 +85,17 @@ public static class Str
     public const string TimeZero = "0:00 / 0:00";
     public const string NoBackups = "No backups to restore.";
     public const string HintLoudness = "Targets this level while respecting the peak ceiling. Constant gain preserves dynamics.";
+    public const string TrackLoudnessPending = "LUFS: …";
+    public const string LblMeasureTrackLoudness = "Measure track loudness";
+    public const string TipMeasureTrackLoudness = "Measures and displays LUFS in the track list. Turn off to reduce background CPU and decoding activity. Does not affect normalization or build validation.";
+    public const string TrackLoudnessUnavailable = "LUFS: --";
+    public const string TipTrackLoudness = "Integrated loudness of the source file or bank audio, before pending normalization and volume compensation.";
     public const string HintTruePeak = "Peak ceiling before encoding. Lower values leave more headroom for audio compression.";
-    public const string HintDynamicNormalization = "May compress loudness differences to reach the target. Off preserves the track's dynamics.";
+    public const string HintPeakLimiter = "Applies constant gain toward the loudness target, then attenuates only peaks that exceed the ceiling. No automatic gain is added after limiting.";
     public const string HintEncoding = "Parallel jobs while building. Higher is faster but uses more CPU, RAM and disk.";
     public const string SecQuality = "QUALITY";
-    public const string LblVorbisQuality = "Vorbis quality";
-    public const string HintQuality = "Higher = better audio, larger bank. Game defaults sit around 90-95%.";
+    public const string LblEncodingQuality = "Encoding quality";
+    public const string HintQuality = "Applies to newly encoded Vorbis and XMA audio. Higher quality usually creates larger banks. Existing encoded audio that needs codec conversion uses 100%.";
     public const string HintRestore = "Reverts banks and RadioInfo to their pre-build state.";
     
     public const string PickAddAudio = "Select audio files to add";
@@ -141,7 +146,6 @@ public static class Str
     public const string ErrScanDirectoryMissingFmt = "Folder not found: {0}";
     public const string ErrScanExeMissingFmt = "No supported Forza Horizon executable was found in this folder: {0}";
     public const string ErrScanLanguageMissing = "No RadioInfo_*.xml in this folder. Point at the Forza Horizon installation, not a subfolder.";
-    public const string ErrScanHorizon3Disabled = "Forza Horizon 3 support is currently disabled.";
     public const string ErrScanAccessDeniedFmt = "Windows denied access while scanning game folders: {0}. Check that this installation is accessible to the current account.";
     public const string ErrScanResourceReadDeniedFmt = "Windows denied read access to a required radio file: {0}. FHRE cannot load or edit this installation.";
     public const string ErrScanEncryptedResourcesFmt = "Windows blocked access to an encrypted game resource: {0}. FHRE requires readable and writable game resources. Changing file permissions alone does not unlock an encrypted package.";

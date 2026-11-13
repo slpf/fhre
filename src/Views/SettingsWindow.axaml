@@ -29,6 +29,8 @@
                     BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8"
                     Padding="12" IsVisible="{Binding HasScanDetails}">
                 <StackPanel Spacing="3">
+                    <TextBlock Text="{Binding GameLine}" Foreground="{DynamicResource Header}" FontSize="12.5"
+                               FontWeight="SemiBold" IsVisible="{Binding HasGameLine}"/>
                     <TextBlock Text="{Binding ExeLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
                     <TextBlock Text="{Binding LangLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
                     <TextBlock Text="{Binding BankLine}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
@@ -71,9 +73,13 @@
                                 TickFrequency="0.1" IsSnapToTickEnabled="True" IsEnabled="{Binding LoudnessNormalize}" Margin="0, -12, 0, 0"/>
                         <TextBlock Text="{x:Static assets:Str.HintTruePeak}"
                                    Foreground="{DynamicResource TxtFaint}" FontSize="11.5" TextWrapping="Wrap"/>
-                        <CheckBox IsChecked="{Binding DynamicNormalization}" IsEnabled="{Binding LoudnessNormalize}"
-                                  Content="{x:Static assets:Str.LblDynamicNormalization}" Margin="0,6,0,0"
-                                  ToolTip.Tip="{x:Static assets:Str.HintDynamicNormalization}"
+                        <CheckBox IsChecked="{Binding PeakLimiter}" IsEnabled="{Binding CanEditPeakLimiter}"
+                                  Content="{x:Static assets:Str.LblPeakLimiter}" Margin="0,6,0,0"
+                                  ToolTip.Tip="{x:Static assets:Str.HintPeakLimiter}"
+                                  Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                        <CheckBox IsChecked="{Binding MeasureTrackLoudness}"
+                                  Content="{x:Static assets:Str.LblMeasureTrackLoudness}" Margin="0,6,0,0"
+                                  ToolTip.Tip="{x:Static assets:Str.TipMeasureTrackLoudness}"
                                   Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
                     </StackPanel>
                 </Border>
@@ -83,7 +89,7 @@
                         BorderThickness="1" CornerRadius="8" Padding="12">
                     <StackPanel Spacing="6">
                         <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblVorbisQuality}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
+                            <TextBlock Grid.Column="0" Text="{x:Static assets:Str.LblEncodingQuality}" Foreground="{DynamicResource TxtMute}" FontSize="12.5"/>
                             <TextBlock Grid.Column="1" Text="{Binding VorbisQualityText}" Foreground="{DynamicResource Header}"
                                        FontFamily="{DynamicResource MonoFont}" FontSize="12.5"/>
                         </Grid>

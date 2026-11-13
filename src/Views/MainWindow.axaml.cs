@@ -156,6 +156,7 @@ public partial class MainWindow : Window
         }
         else if (vm.Saved)
         {
+            Vm.RefreshToolAvailability();
             Vm.RecalcProjectedSize();
             Vm.RefreshNowPlaying();
         }
@@ -420,6 +421,7 @@ public partial class MainWindow : Window
 
         try
         {
+            await Vm.StopLoudnessAnalysisAsync();
             var (banks, langs) = await Task.Run(
                 async () => await StationBackupService.RestoreAsync(target, gamePath, settings, Log.Line));
             await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
@@ -489,6 +491,7 @@ public partial class MainWindow : Window
 
         try
         {
+            await Vm.StopLoudnessAnalysisAsync();
             var (banks, langs) = await Task.Run(() => BackupService.RestoreStation(gamePath, station, Log.Line));
             await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
             status = string.Format(Str.StatusRestoreStationFmt, station.Name, banks, langs);
@@ -543,6 +546,7 @@ public partial class MainWindow : Window
 
         try
         {
+            await Vm.StopLoudnessAnalysisAsync();
             var (restored, failed) = await Task.Run(() => BackupService.Restore(gamePath, Log.Line));
             await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
             status = failed == 0

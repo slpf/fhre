@@ -484,7 +484,7 @@ public sealed class RadioStationEditor(XElement station)
 
         if (markers.TryGetValue("DJStart", out var dj))
         {
-            markers["StingerStart"] = Math.Max(0, dj - sampleRate);
+            markers["StingerStart"] = dj < 0 ? -1 : Math.Max(0, dj - sampleRate);
         }
         var result = markers.Where(m => MillisecondMarkerNames.Contains(m.Key)).ToDictionary();
         foreach (var name in MillisecondMarkerNames)
@@ -499,7 +499,7 @@ public sealed class RadioStationEditor(XElement station)
     {
         if (markers.TryGetValue("DJStart", out var dj))
         {
-            markers["StingerStart"] = Math.Max(0, dj - 1000);
+            markers["StingerStart"] = dj < 0 ? -1 : Math.Max(0, dj - 1000);
         }
 
         if (markers.TryGetValue("PostDrop", out var pdForBreak))
@@ -695,7 +695,7 @@ public sealed class RadioStationEditor(XElement station)
         return EditSamples(soundName, s => s.SetAttributeValue("Replaced", null));
     }
 
-    public bool SetSampleMeta(string soundName, string? displayName, string? artist)
+    public bool SetSampleMeta(string soundName, string? displayName, string? artist, bool clearMissingArtist = false)
     {
         return EditSamples(soundName, sample =>
         {
@@ -704,7 +704,7 @@ public sealed class RadioStationEditor(XElement station)
                 sample.SetAttributeValue("DisplayName", displayName);
             }
 
-            if (artist is not null)
+            if (artist is not null || clearMissingArtist)
             {
                 sample.SetAttributeValue("Artist", artist);
             }

@@ -27,7 +27,7 @@ internal static class NormalizationOverrideChecks
             new("inherit", source, null, Settings(true, -23, -1)),
             new("off", source, new(false), Settings(false, -23, -1), -4),
             new("own-target", source, new(true, -27, -3), Settings(true, -27, -3)),
-            new("dynamic", source, new(true, -25, -2, true), Settings(true, -25, -2, true)),
+            new("limiter", source, new(true, -25, -2, true), Settings(true, -25, -2, true)),
             new("peak-cap", transients, new(true, -9, -6), Settings(true, -9, -6), 20),
         ];
         var bank = await CheckMixedBankAsync(temp, "override-global-on", cases, global, writeEmptyBank);
@@ -52,12 +52,12 @@ internal static class NormalizationOverrideChecks
         Check(Math.Abs(NormalizationChecks.Measure(AudioDecoder.DecodeBank(reverseBank, 1)).Integrated + 26) < 0.5,
             "A track could not enable normalization while the global option was disabled.");
         await CheckEncodedPreservationAsync(temp, bank, writeEmptyBank);
-        Console.WriteLine("Verified per-track inheritance, independent LUFS/peak/dynamic options, editor cancel/save/reset, pack compatibility, preview PCM and mixed-bank levels.");
+        Console.WriteLine("Verified per-track inheritance, independent LUFS/peak/limiter options, editor cancel/save/reset, pack compatibility, preview PCM and mixed-bank levels.");
     }
 
-    private static AppSettings Settings(bool normalize, double lufs, double peak, bool dynamic = false) => new()
+    private static AppSettings Settings(bool normalize, double lufs, double peak, bool limiter = false) => new()
     {
-        LoudnessNormalize = normalize, TargetLufs = lufs, TargetTruePeak = peak, DynamicNormalization = dynamic,
+        LoudnessNormalize = normalize, TargetLufs = lufs, TargetTruePeak = peak, PeakLimiter = limiter,
         EncodeParallelism = 2, VorbisQuality = 95,
     };
 
@@ -95,11 +95,11 @@ internal static class NormalizationOverrideChecks
         editor.LoudnessNormalize = true;
         editor.TargetLufs = -26.5;
         editor.TargetTruePeak = -4.5;
-        editor.DynamicNormalization = true;
+        editor.PeakLimiter = true;
         editor.UseGlobalNormalization = true;
         Check(editor.TargetLufs == -22.5 && editor.TargetTruePeak == -2.5, "Returning to global settings retained the custom draft in the display.");
         editor.UseGlobalNormalization = false;
-        Check(editor.TargetLufs == -26.5 && editor.TargetTruePeak == -4.5 && editor.DynamicNormalization,
+        Check(editor.TargetLufs == -26.5 && editor.TargetTruePeak == -4.5 && editor.PeakLimiter,
             "Toggling inheritance discarded the unsaved custom settings.");
         editor.Apply(track);
         var saved = new NormalizationOverride(true, -26.5, -4.5, true);

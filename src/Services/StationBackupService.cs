@@ -447,6 +447,22 @@ public static class StationBackupService
                 "backup audio missing for: " + string.Join(", ", missing.Take(5)) + (missing.Count > 5 ? " …" : ""));
         }
 
+        var referenceStations = xmlTargets.ToDictionary(path => path,
+            path => LoadBackupStation(e, path, m.StationNumber), StringComparer.OrdinalIgnoreCase);
+        var metadataOverrides = new Dictionary<string, (bool Title, bool Artist)>(StringComparer.Ordinal);
+        foreach (var track in tracks.Where(t => t.Role == "default" && !IsBankOnlyTrack(t)))
+        {
+            var snapshots = referenceStations.Values.Where(station => station is not null)
+                .Select(station => station!.GetSampleMeta(track.SoundName)).Where(meta => meta.HasValue)
+                .Select(meta => meta!.Value).ToArray();
+            if (snapshots.Length == 0) continue;
+            metadataOverrides[track.SoundName] = (
+                track.DisplayName is not null && !snapshots.Any(meta =>
+                    string.Equals(meta.DisplayName, track.DisplayName, StringComparison.Ordinal)
+                    || meta.DisplayName is null && track.DisplayName == track.SoundName),
+                track.Artist is not null && !snapshots.Any(meta =>
+                    string.Equals(meta.Artist ?? "", track.Artist, StringComparison.Ordinal)));
+        }
         var radioDocuments = new Dictionary<string, RadioInfo>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in xmlTargets)
         {
@@ -454,7 +470,7 @@ public static class StationBackupService
             var editor = radio.StationByNumber(m.StationNumber);
             if (editor is not null)
             {
-                var reference = LoadBackupStation(e, path, m.StationNumber);
+                var reference = referenceStations[path];
                 foreach (var track in tracks.Where(t => t.Role != "custom" && !IsBankOnlyTrack(t)))
                 {
                     var restored = reference is not null && editor.RestoreTrackFrom(reference, track.SoundName);
@@ -576,7 +592,12 @@ public static class StationBackupService
                             {
                                 editor.ApplyReplacement(t.SoundName, frames, sampleRate);
                                 if (t.Role == "default") editor.ClearReplacement(t.SoundName);
-                                editor.SetSampleMeta(t.SoundName, t.DisplayName, t.Artist);
+                                if (t.Role == "default" && metadataOverrides.TryGetValue(t.SoundName, out var changed))
+                                {
+                                    editor.SetSampleMeta(t.SoundName, changed.Title ? t.DisplayName : null,
+                                        changed.Artist ? t.Artist : null, clearMissingArtist: changed.Artist);
+                                }
+                                else editor.SetSampleMeta(t.SoundName, t.DisplayName, t.Artist, clearMissingArtist: t.Role == "replacement");
                             }
                         }
 

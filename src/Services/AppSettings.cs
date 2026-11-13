@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FH6RB.Core;
 
 namespace FH6RB.Services;
@@ -12,7 +13,21 @@ public sealed class AppSettings
     public double TargetLufs { get; set; } = -23.0;
     public double TargetTruePeak { get; set; } = -1.0;
     public bool LoudnessNormalize { get; set; } = true;
-    public bool DynamicNormalization { get; set; } = false;
+    public bool MeasureTrackLoudness { get; set; } = true;
+    private bool? _peakLimiter;
+    private bool? _legacyDynamicNormalization;
+    public bool PeakLimiter
+    {
+        get => _peakLimiter ?? _legacyDynamicNormalization ?? false;
+        set => _peakLimiter = value;
+    }
+    [JsonPropertyName("DynamicNormalization")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? LegacyDynamicNormalization
+    {
+        get => null;
+        set => _legacyDynamicNormalization = value;
+    }
     public int VorbisQuality { get; set; } = 90;
 
 
@@ -60,7 +75,7 @@ public static class SettingsService
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
-    public const int CurrentSettingsVersion = 6;
+    public const int CurrentSettingsVersion = 7;
 
     public static AppSettings Load()
     {

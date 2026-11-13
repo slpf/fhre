@@ -11,12 +11,16 @@ internal static class SyntheticChecks
     {
         CheckCodec();
         foreach (var obfuscated in new[] { false, true }) CheckScanner(Path.Combine(root, obfuscated ? "obfuscated" : "normal"), obfuscated);
-        CheckGenericHorizon3Disabled(root);
+        CheckScanner(Path.Combine(root, "xboxone"), false, xbox: true);
+        CheckXboxIdentity(root);
+        CheckUnverifiedHorizon3(root);
         AccessChecks.Run(root);
         CheckXml(root);
         CheckMinimums(root);
         CheckLegacyMarkerValidation();
         await CheckEditorAndPackAsync(root);
+        await UwpBuildChecks.RunAsync(root);
+        await AzimuthPackChecks.RunAsync(root);
         Console.WriteLine("Verified FH3 names, manifest identity, logical scanner paths, variants, original backups, native XML and cross-game editor/import markers.");
     }
 
@@ -64,13 +68,15 @@ internal static class SyntheticChecks
         }
     }
 
-    private static void CheckScanner(string game, bool obfuscated)
+    private static void CheckScanner(string game, bool obfuscated, bool xbox = false)
     {
         Directory.CreateDirectory(game);
-        File.WriteAllBytes(Path.Combine(game, "forza_x64_release_final.exe"), []);
-        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), Manifest);
+        var executable = xbox ? "forza_durango_release_final.exe" : "forza_x64_release_final.exe";
+        var manifest = xbox ? XboxManifest : Manifest;
+        File.WriteAllBytes(Path.Combine(game, executable), []);
+        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), manifest);
         var audio = Path.Combine(game, obfuscated ? "gq6$l" : "media", obfuscated ? "l=6$h" : "audio");
-        var banks = Path.Combine(audio, obfuscated ? "vgh6hu=~" : "fmodopus", obfuscated ? "]j(" : "x64");
+        var banks = Path.Combine(audio, obfuscated ? "vgh6hu=~" : "fmodopus", xbox ? "xboxone" : obfuscated ? "]j(" : "x64");
         Directory.CreateDirectory(banks);
         string Physical(string name) => obfuscated ? Fh3FileNameCodec.Encode(name.ToLowerInvariant()) : name;
         var xml = Path.Combine(audio, Physical("RadioInfo_EN.xml"));
@@ -79,9 +85,11 @@ internal static class SyntheticChecks
         var expected = new[] { "R1_Tracks", "R1_Tracks_PDLC1", "R6_Tracks", "R6_Tracks_PDLC2" };
         foreach (var bank in expected) File.WriteAllBytes(Path.Combine(banks, Physical(bank + ".bank")), []);
         File.WriteAllBytes(Path.Combine(banks, Physical("R1_LFE.bank")), []);
-        Check(GameScanner.FindExe(game) == Path.Combine(game, "forza_x64_release_final.exe") && GameScanner.DetectVersion(game) == 3,
+        Check(GameScanner.FindExe(game) == Path.Combine(game, executable) && GameScanner.DetectVersion(game) == 3,
             "FH3 manifest/executable identity was not recognized.");
-        CheckHorizon3Disabled(game);
+        var publicScan = GameScanner.Scan(game);
+        Check(publicScan.IsValid && publicScan.LanguageFileCount == 2 && publicScan.BankCount == 4 && GameScanner.IsValid(game),
+            "A readable UWP or Xbox One FH3 installation was not accepted by the public scanner.");
         var scan = ScanResources(game);
         Check(scan.IsValid && scan.LanguageFileCount == 2 && scan.BankCount == 4, "FH3 scanner lost languages or DLC banks.");
         Check(new HashSet<string>(GameScanner.RadioBankNames(game)).SetEquals(expected), "FH3 logical bank names changed with physical encoding.");
@@ -107,24 +115,60 @@ internal static class SyntheticChecks
             Check(vm.SelectedVariant == "PDLC1", "Rebuilding the station list discarded a selected DLC variant.");
         }
         finally { ReleaseVm(vm); }
-        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), Manifest.Replace("Microsoft.OpusPG", "Microsoft.OtherGame", StringComparison.Ordinal));
+        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), manifest.Replace(xbox ? "Opus" : "Microsoft.OpusPG", "Microsoft.OtherGame", StringComparison.Ordinal));
         Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid, "A shared executable name falsely identified another manifest as FH3.");
-        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), Manifest);
+        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), xbox ? Manifest : XboxManifest);
+        Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid, "A UWP/Xbox manifest and executable mismatch was accepted.");
+        File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), manifest);
     }
 
-    private static void CheckGenericHorizon3Disabled(string root)
+    private static void CheckXboxIdentity(string root)
     {
-        var game = Path.Combine(root, "disabled-generic-fh3");
+        var game = Path.Combine(root, "shared-durango-executable");
+        Directory.CreateDirectory(game);
+        var executable = Path.Combine(game, "forza_durango_release_final.exe");
+        var manifest = Path.Combine(game, "AppxManifest.xml");
+        File.WriteAllBytes(executable, []);
+        File.WriteAllText(Path.Combine(game, "RadioInfo_EN.xml"), Xml());
+        foreach (var (identity, version) in new[] { ("Anthem", 2), ("Opus", 3) })
+        {
+            File.WriteAllText(manifest, XboxManifest.Replace("Opus", identity, StringComparison.Ordinal));
+            Check(GameScanner.DetectVersion(game) == version && GameScanner.Scan(game).IsValid,
+                "The shared Xbox executable ignored its package identity: " + identity);
+        }
+        foreach (var invalid in new[]
+        {
+            XboxManifest.Replace("Opus", "Other", StringComparison.Ordinal),
+            XboxManifest.Replace("Forza_Durango_Release_Final.exe", "other.exe", StringComparison.Ordinal),
+            XboxManifest.Replace("Name=\"Opus\"", "Name=\"Microsoft.OpusPG\"", StringComparison.Ordinal),
+            "<Package><Identity Name=\"Opus\">",
+            "<!DOCTYPE Package [<!ENTITY package 'Opus'>]><Package><Identity Name=\"&package;\"/></Package>"
+        })
+        {
+            File.WriteAllText(manifest, invalid);
+            Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid,
+                "An unknown, mismatched or invalid Xbox manifest was accepted.");
+        }
+        File.Delete(manifest);
+        File.WriteAllBytes(Path.Combine(game, "R1_Tracks.bank"), []);
+        Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid,
+            "An Xbox FH3 directory without a manifest was guessed to be FH2.");
+        File.WriteAllBytes(Path.Combine(game, "HZ2_MX_Radio_01_Tracks.bank"), []);
+        Check(GameScanner.DetectVersion(game) == 2 && GameScanner.Scan(game).IsValid,
+            "A legacy FH2 directory without a manifest lost its resource-based identity.");
+    }
+
+    private static void CheckUnverifiedHorizon3(string root)
+    {
+        var game = Path.Combine(root, "unverified-generic-fh3");
         Directory.CreateDirectory(game);
         File.WriteAllBytes(Path.Combine(game, "ForzaHorizon3.exe"), []);
         var xml = Path.Combine(game, "RadioInfo_EN.xml");
         var bank = Path.Combine(game, "R1_Tracks.bank");
         File.WriteAllText(xml, Xml());
         File.WriteAllBytes(bank, []);
-        using var xmlLock = new FileStream(xml, FileMode.Open, FileAccess.Read, FileShare.None);
-        using var bankLock = new FileStream(bank, FileMode.Open, FileAccess.Read, FileShare.None);
-        CheckHorizon3Disabled(game);
-        Check(!GameScanner.IsValid(game), "The public validity check bypassed disabled FH3 selection.");
+        Check(GameScanner.FindExe(game) is null && GameScanner.DetectVersion(game) == 0 && !GameScanner.IsValid(game),
+            "An unverified renamed executable was accepted as FH3.");
     }
 
     private static void CheckXml(string root)
@@ -159,18 +203,29 @@ internal static class SyntheticChecks
         Check(editor.GetMarkers("S&--")!.ContainsKey("TrackBreakDown") && !editor.GetMarkers("S&--")!.ContainsKey("PostDrop"), "FH3 replacement introduced PostDrop.");
         radio.Save(path);
         Check(XDocument.Load(path).Descendants("Sample").Single(e => (string?) e.Attribute("SoundName") == custom).Attribute("DisplayName")!.Value == "A & B", "FH3 XML metadata was incorrectly escaped.");
+        editor.SetMarkers("S&--", new Dictionary<string, long> { ["DJStart"] = -1 });
+        Check(editor.GetMarkers("S&--")!["StingerStart"] == -1, "An off FH3 DJStart enabled StingerStart at the beginning of the track.");
+        try
+        {
+            MarkerDefaults.Apply(new Dictionary<string, string> { ["DJStart"] = MarkerDefaults.Off });
+            Check(RadioStationEditor.ComputeAutoMarkers(480000, 48000, true)["StingerStart"] == -1,
+                "An off FH2 DJStart default enabled StingerStart.");
+        }
+        finally { MarkerDefaults.Reset(); }
     }
 
     private static void CheckMinimums(string root)
     {
         const int minimum = 12;
+        foreach (var xbox in new[] { false, true })
         foreach (var originalCount in new[] { 12, 18, 20, 21 })
         {
-            var game = Path.Combine(root, "minimum-" + originalCount);
+            var game = Path.Combine(root, $"minimum-{(xbox ? "xbox" : "uwp")}-{originalCount}");
             var audio = Path.Combine(game, "media", "audio");
             Directory.CreateDirectory(audio);
-            File.WriteAllBytes(Path.Combine(game, "forza_x64_release_final.exe"), []);
-            File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), Manifest);
+            var executable = Path.Combine(game, xbox ? "forza_durango_release_final.exe" : "forza_x64_release_final.exe");
+            File.WriteAllBytes(executable, []);
+            File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), xbox ? XboxManifest : Manifest);
             File.WriteAllBytes(Path.Combine(audio, "R1_Tracks.bank"), []);
             var path = Path.Combine(audio, "RadioInfo_EN.xml");
             var station = new XElement("RadioStation", new XAttribute("Number", 1), new XAttribute("Name", "Minimum"),
@@ -201,7 +256,7 @@ internal static class SyntheticChecks
                 Check(main.MinimumActiveTracks == minimum, "A saved custom track or original backup changed the fixed FH3 minimum.");
             }
             finally { ReleaseVm(main); }
-            File.Delete(Path.Combine(game, "forza_x64_release_final.exe"));
+            File.Delete(executable);
             File.Delete(Path.Combine(game, "AppxManifest.xml"));
             File.WriteAllBytes(Path.Combine(game, "ForzaHorizon4.exe"), []);
             var modern = CreateVm(game, "RadioInfo_EN.xml");
@@ -276,6 +331,8 @@ internal static class SyntheticChecks
     }
 
     public const string Manifest = """<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="Microsoft.OpusPG"/><Properties><DisplayName>Forza Horizon 3</DisplayName></Properties><Applications><Application Executable="forza_x64_release_final.exe"/></Applications></Package>""";
+
+    public const string XboxManifest = """<Package xmlns="http://schemas.microsoft.com/appx/2010/manifest"><Identity Name="Opus"/><Properties><DisplayName>Forza Horizon 3</DisplayName></Properties><Applications><Application Executable="Forza_Durango_Release_Final.exe"/></Applications></Package>""";
 
     public static string Xml() => """
     <Radio><RadioStations>

@@ -8,6 +8,8 @@ Your tracks can be added **alongside the original music**, while existing tracks
 
 FHRE supports:
 
+- **Forza Horizon 2** (XBO)
+- **Forza Horizon 3** (UWP, XBO)
 - **Forza Horizon 4**
 - **Forza Horizon 5**
 - **Forza Horizon 6**
@@ -99,6 +101,11 @@ Place the required tools in their corresponding subdirectories next to `fhre.exe
 You are responsible for obtaining and using these tools in accordance with their respective licenses.
 
 FMOD in particular is distributed under the FMOD license. Review its license terms before use.
+
+## Optional XMA encoder
+
+FH2 and Xbox One FH3 banks can retain XMA encoding when a compatible, separately obtained `xmaencoder64.dll` is placed in `fsbank\` next to `fsbankcl.exe`. FHRE verifies the encoder through a small FSBank encoding test in a separate process.
+If the encoder is absent or fails the test, FHRE builds the XMA bank as Vorbis. Existing encoded audio that needs codec conversion uses a fixed quality of 100%; this conversion remains lossy. The encoding quality setting applies to new source audio encoded as Vorbis or XMA. Unchanged tracks in an XMA bank retain their encoded data.
 
 # Build and run
 
