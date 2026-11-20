@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -29,9 +30,21 @@ public sealed class RadioInfo
     private readonly XDocument _doc;
     public XDocument Document => _doc;
 
-    private RadioInfo(XDocument doc) => _doc = doc;
+    internal byte[] SourceHash { get; }
 
-    public static RadioInfo Load(string path) => new(Parse(File.ReadAllText(path)));
+    private RadioInfo(XDocument doc, byte[] sourceHash)
+    {
+        _doc = doc;
+        SourceHash = sourceHash;
+    }
+
+    public static RadioInfo Load(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var reader = new StreamReader(stream);
+        return new RadioInfo(Parse(reader.ReadToEnd()), SHA256.HashData(bytes));
+    }
 
     private static readonly Regex RawAmpersand =
         new(@"<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9A-Fa-f]+;)", RegexOptions.Compiled);
@@ -69,28 +82,16 @@ public sealed class RadioInfo
         Atomic.Write(path, fs => _doc.Save(fs));
     }
 
-    public int MaxCustomSeq()
-    {
-        var max = -1;
-        var names = _doc.Descendants("Sample").Select(s => (string?) s.Attribute("SoundName"))
-            .Concat(_doc.Descendants("RadioStation").Select(st => new RadioStationEditor(st))
-                .Where(st => st.UsesMilliseconds).SelectMany(st => st.CustomSoundNames()));
-        foreach (var sn in names)
-        {
-            if (sn is null || !sn.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal))
-            {
-                continue;
-            }
+    internal IEnumerable<string> CustomSoundNames() =>
+        _doc.Descendants("Sample").Select(sample => (string?) sample.Attribute("SoundName"))
+            .OfType<string>().Where(name => name.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal))
+            .Concat(_doc.Descendants("RadioStation").Select(station => new RadioStationEditor(station))
+                .Where(station => station.UsesMilliseconds).SelectMany(station => station.CustomSoundNames()));
 
-            if (int.TryParse(sn[Naming.CustomPrefix.Length..], out var n) && n > max)
-            {
-                max = n;
-            }
-        }
+    public int MaxCustomSeq() => CustomSoundNames()
+        .Select(name => int.TryParse(name[Naming.CustomPrefix.Length..], out var seq) ? seq : -1)
+        .DefaultIfEmpty(-1).Max();
 
-        return max;
-    }
-    
     public RadioStationEditor? StationForBank(string bankName)
     {
         var registered = (from st in _doc.Descendants("RadioStation") where st.Descendants("Bank")
@@ -383,8 +384,7 @@ public sealed class RadioStationEditor(XElement station)
         }
         if (preserveEntry) return;
         foreach (var c in playlist.Nodes().OfType<XComment>()
-                     .Where(c => (string?) ReadDisabledEntry(c)?.Attribute("Name") == name
-                                 || c.Value.Contains($"Name=\"{name}\"", StringComparison.Ordinal)).ToList())
+                     .Where(c => (string?) ReadDisabledEntry(c)?.Attribute("Name") == name).ToList())
         {
             c.Remove();
         }
@@ -891,7 +891,7 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
-    private bool IsCustomEnabled(string soundName)
+    internal bool IsEnabled(string soundName)
     {
         var fr = FreeRoamPlaylist;
         return fr?.Elements("Entry").Any(e => (string?) e.Attribute(UsesMilliseconds ? "SoundName" : "Name") == soundName) == true;
@@ -944,8 +944,7 @@ public sealed class RadioStationEditor(XElement station)
                 XElement entry => (string?) entry.Attribute(reference.UsesMilliseconds ? "SoundName" : "Name") == soundName,
                 XComment comment => reference.UsesMilliseconds
                     ? (string?) ReadDisabledEntry(comment)?.Attribute("SoundName") == soundName
-                    : (string?) ReadDisabledEntry(comment)?.Attribute("Name") == soundName
-                      || comment.Value.Contains($"Name=\"{soundName}\"", StringComparison.Ordinal),
+                    : (string?) ReadDisabledEntry(comment)?.Attribute("Name") == soundName,
                 _ => false,
             }).ToList();
             if (nodes.Count == 0)
@@ -1002,17 +1001,24 @@ public sealed class RadioStationEditor(XElement station)
             foreach (var attribute in AudioDimensions.Concat(MarkerNames))
                 sample.SetAttributeValue(attribute, original.Attribute(attribute)?.Value);
 
-            foreach (var name in AudioElements)
-            {
-                var source = original.Elements(name).ToArray();
-                var current = sample.Elements(name).ToArray();
-                if (source.Length == current.Length && source.Zip(current).All(pair => XNode.DeepEquals(pair.First, pair.Second)))
-                    continue;
-                if (current.Length > 0 && source.Length > 0) current[0].AddBeforeSelf(source.Select(node => new XElement(node)));
-                else if (source.Length > 0) sample.Add(source.Select(node => new XElement(node)));
-                foreach (var node in current) node.Remove();
-            }
+            foreach (var name in AudioElements) CopyElements(original, sample, name);
         });
+    }
+
+    internal void RestoreTempoFrom(RadioStationEditor reference, string soundName)
+    {
+        if (reference.FindSample(soundName) is { } original)
+            EditSamples(soundName, sample => CopyElements(original, sample, "BPM"));
+    }
+
+    private static void CopyElements(XElement source, XElement target, string name)
+    {
+        var expected = source.Elements(name).ToArray();
+        var current = target.Elements(name).ToArray();
+        if (current.SequenceEqual(expected, XNode.EqualityComparer)) return;
+        if (current.Length > 0) current[0].AddBeforeSelf(expected.Select(node => new XElement(node)));
+        else target.Add(expected.Select(node => new XElement(node)));
+        foreach (var node in current) node.Remove();
     }
 
     private static List<XNode> ModernPlaylistNodes(XElement playlist, string soundName) => playlist.Nodes()
@@ -1141,7 +1147,7 @@ public sealed class RadioStationEditor(XElement station)
                 var copy = new XElement(sample);
                 NormalizeBreakdownSchema(copy, usesTrackBreakDown);
                 TrackList.Add(copy);
-                SetEnabled(soundName, reference.IsCustomEnabled(soundName));
+                SetEnabled(soundName, reference.IsEnabled(soundName));
             }
         }
     }

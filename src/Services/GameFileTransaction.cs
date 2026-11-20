@@ -16,6 +16,7 @@ internal sealed class GameFileTransaction : IDisposable
     private readonly string _root;
     private readonly string _journalPath;
     private readonly List<Change> _changes = [];
+    private readonly Dictionary<string, byte[]> _radioHashes = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<FileStream> _locks = [];
     private bool _journalOwnsStaging;
 
@@ -85,6 +86,7 @@ internal sealed class GameFileTransaction : IDisposable
             if (!File.Exists(staged)) throw new FileNotFoundException("Staged game file is missing.", staged);
         }
 
+        foreach (var (path, hash) in _radioHashes) VerifyRadio(path, path, hash);
         var journal = new Journal(_id, false, changes);
         WriteJournal(journal);
         EnsureGameClosed();
@@ -94,7 +96,12 @@ internal sealed class GameFileTransaction : IDisposable
             foreach (var change in changes)
             {
                 var staged = StagePath(change.Target, _id);
-                if (change.Existed) File.Replace(staged, change.Target, RollbackPath(change.Target, _id));
+                if (change.Existed)
+                {
+                    var rollback = RollbackPath(change.Target, _id);
+                    File.Replace(staged, change.Target, rollback);
+                    if (_radioHashes.TryGetValue(change.Target, out var hash)) VerifyRadio(rollback, change.Target, hash);
+                }
                 else File.Move(staged, change.Target);
             }
             WriteJournal(journal with { Settled = true });
@@ -182,8 +189,18 @@ internal sealed class GameFileTransaction : IDisposable
 
     private static string RollbackPath(string target, Guid id) => $"{target}.{id:N}.rollback";
 
+    public void ExpectRadio(string path, RadioInfo radio) => _radioHashes.Add(TargetPath(path), radio.SourceHash);
+
+    private static void VerifyRadio(string path, string target, byte[] expected)
+    {
+        using var stream = File.OpenRead(path);
+        if (!SHA256.HashData(stream).AsSpan().SequenceEqual(expected))
+            throw new IOException(string.Format(Assets.Str.StatusBuildRadioChangedFmt, Path.GetFileName(target)));
+    }
+
     public void StageRadio(RadioInfo radio, string path)
     {
+        _radioHashes.TryAdd(TargetPath(path), radio.SourceHash);
         var staged = Stage(path);
         StageOriginal(path, File.Exists(path + ".bak") && !File.ReadAllText(path).Contains(RadioInfo.XmlMarker + " edited"));
         radio.Save(staged);

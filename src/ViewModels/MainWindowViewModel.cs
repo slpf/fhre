@@ -152,6 +152,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private int? _gameVersion;
     private string? _radioForFile;
     private int _nextSeq;
+    private HashSet<ulong>? _occupiedTrackIds;
+    private RadioInfo? _loadedRadio;
     private readonly Dictionary<string, FileStream> _sourceLocks = new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressReload;
     private bool _confirmingSwitch;
@@ -465,6 +467,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         FilteredTracks.Clear();
         _loadedBankPath = null;
         _loadedBankSnapshot = null;
+        _loadedRadio = null;
+        _occupiedTrackIds = null;
         _otherBanksActive = 0;
         _projectedTotalBytes = 0;
         Recount();
@@ -665,6 +669,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _loadedSelection = selection;
             _loadedBankPath = path;
             _loadedBankSnapshot = result.Snapshot;
+            _loadedRadio = radio;
+            _occupiedTrackIds = null;
             Tracks.Reset(result.Tracks.Select(track => new TrackItemViewModel(track)));
 
             _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
@@ -1455,7 +1461,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public TrackItemViewModel CreateCustomStub(string sourcePath, string? title = null, string? artist = null,
                                                double durationSeconds = 0)
     {
-        var soundName = Naming.MakeSoundName(_nextSeq++);
+        var occupied = _occupiedTrackIds ??= CollectOccupiedTrackIds(
+            _radioResources ?? GameScanner.ReadRadioResources(Settings.GamePath), RadioInfo.Load);
+        string soundName;
+        do
+        {
+            soundName = Naming.MakeSoundName(_nextSeq);
+            _nextSeq = checked(_nextSeq + 1);
+        }
+        while (!occupied.Add(Lookup.SoundNameToId(soundName)));
         const int sampleRate = 48000;
         var version = GameScanner.DetectVersion(Settings.GamePath);
         var track = new RadioTrack
@@ -1783,6 +1797,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
     
+    private static HashSet<ulong> CollectOccupiedTrackIds(GameScanner.RadioResources resources, Func<string, RadioInfo> readRadio)
+    {
+        var occupied = new HashSet<ulong>();
+        foreach (var name in resources.Banks)
+            occupied.UnionWith(FevBank.ReadStblIdsFromFile(resources.BankPath(name)!));
+        foreach (var language in resources.Languages)
+            occupied.UnionWith(readRadio(resources.LanguagePath(language)!).CustomSoundNames().Select(Lookup.SoundNameToId));
+        return occupied;
+    }
+
+    private static ulong BuildItemId(BuildItem item) => item.BankId ?? Lookup.SoundNameToId(item.SoundName);
+
+    private static bool HasRadioIdentity(BuildItem item) =>
+        item.BankId is null || item.BankId == Lookup.SoundNameToId(item.SoundName);
+
     private async Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)> BuildGameFilesAsync(
         string gamePath, StationInfo station, string bankName, string bankPath, string refPath, IReadOnlyList<string> otherFiles,
         GameScanner.RadioResources resources, List<BuildItem> items, AppSettings settings, Action<string> progress)
@@ -1799,11 +1828,31 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (snapshot is not null && !snapshot.Ids.SetEquals(originalIds))
             throw new IOException(Str.StatusBuildBankChanged);
 
-        var refRadio = RadioInfo.Load(refPath);
+        var radios = new Dictionary<string, RadioInfo>(StringComparer.OrdinalIgnoreCase);
+        RadioInfo ReadRadio(string path)
+        {
+            if (radios.TryGetValue(path, out var radio)) return radio;
+            radio = RadioInfo.Load(path);
+            transaction.ExpectRadio(path, radio);
+            radios.Add(path, radio);
+            return radio;
+        }
+
+        var refRadio = ReadRadio(refPath);
+        if (_loadedRadio is { } loadedRadio && !refRadio.SourceHash.AsSpan().SequenceEqual(loadedRadio.SourceHash))
+            throw new IOException(string.Format(Str.StatusBuildRadioChangedFmt, Path.GetFileName(refPath)));
+
         var originalReference = new XDocument(refRadio.Document);
+        var newTracks = items.Where(item => item.IsNewCustom && !originalIds.Contains(BuildItemId(item))).ToArray();
+        if (newTracks.Length > 0)
+        {
+            var occupied = CollectOccupiedTrackIds(resources, ReadRadio);
+            if (newTracks.FirstOrDefault(item => occupied.Contains(BuildItemId(item))) is { } conflict)
+                throw new IOException($"Track ID is already in use: {conflict.SoundName}. Reload the station and add the track again.");
+        }
         var bankChanges = items.Count != originalIds.Count
             || items.Any(item => item.IsNewCustom || item.IsReplacement || item.RestoreFromBak)
-            || !originalIds.SetEquals(items.Select(item => item.BankId ?? Lookup.SoundNameToId(item.SoundName)));
+            || !originalIds.SetEquals(items.Select(BuildItemId));
         IReadOnlyList<AddedSample> addedSamples = [];
         var outputIds = originalIds;
         long written = 0;
@@ -1821,22 +1870,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var currentIds = outputIds;
         var idsByBank = new Dictionary<string, HashSet<ulong>?>(StringComparer.OrdinalIgnoreCase) { [bankName] = currentIds };
         var removed = originalIds.Where(id => !currentIds.Contains(id)).ToHashSet();
-        var bankIds = new HashSet<ulong>(currentIds);
-        bankIds.UnionWith(removed);
+        var refStation = refRadio.StationByNumber(station.Number)
+            ?? throw new InvalidOperationException($"station #{station.Number} not found in RadioInfo");
+        var enabled = items.Where(item => HasRadioIdentity(item) && refStation.IsEnabled(item.SoundName) != item.Enabled)
+            .ToDictionary(item => item.SoundName, item => item.Enabled);
+        RestoreMissingCustomMetadata(items, refStation, station.Number, refPath, bankPath, resources, ReadRadio);
+
+        var restored = items.Where(item => item.RestoreFromBak).Select(item => item.SoundName).ToHashSet(StringComparer.Ordinal);
+        var refBackup = ReadTempoBackup(refPath, restored);
         var (changedMeta, changedMarkers) = ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
-        var refStation = refRadio.StationByNumber(station.Number)!;
+        RestoreTempo(refStation, refBackup, restored);
         var dead = ReconcileStation(refStation, resources, idsByBank, refStation.TrackBankNames().Any() ? null : removed);
 
-        var enabled = items.Where(i => i.BankId is null || i.BankId == Lookup.SoundNameToId(i.SoundName))
-            .ToDictionary(i => i.SoundName, i => i.Enabled);
         var markerRates = items.ToDictionary(i => i.SoundName, i => i.MarkerSampleRate);
-        var restored = items.Where(i => i.RestoreFromBak).Select(i => i.SoundName).ToHashSet(StringComparer.Ordinal);
         var sharedChanges = addedSamples.Count > 0 || changedMarkers.Count > 0 || removed.Count > 0;
         if (sharedChanges)
         {
             foreach (var editor in refRadio.StationsForBank(bankName, station.Number))
             {
                 ApplySharedAudio(editor, addedSamples, changedMarkers, markerRates, restored);
+                RestoreTempo(editor, refBackup, restored);
                 if (removed.Count > 0) dead += ReconcileStation(editor, resources, idsByBank, removed);
             }
         }
@@ -1856,13 +1909,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         foreach (var path in requested.Union(sharedPaths, StringComparer.OrdinalIgnoreCase)
                      .Where(path => !string.Equals(path, refPath, StringComparison.OrdinalIgnoreCase)))
         {
-            var radio = RadioInfo.Load(path);
+            var radio = ReadRadio(path);
             var original = new XDocument(radio.Document);
+            var backup = ReadTempoBackup(path, restored);
             var editor = requested.Contains(path) ? radio.StationByNumber(station.Number) : null;
             if (editor is not null)
             {
-                ApplyLocalizedRadio(editor, refStation, bankName, items.Count > 0, bankIds, addedSamples,
+                ApplyLocalizedRadio(editor, refStation, bankName, items.Count > 0, currentIds, addedSamples,
                     changedMeta, changedMarkers, markerRates, enabled, restored);
+                RestoreTempo(editor, backup, restored);
                 dead += ReconcileStation(editor, resources, idsByBank, editor.TrackBankNames().Any() ? null : removed);
             }
             if (sharedChanges)
@@ -1870,6 +1925,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 foreach (var consumer in radio.StationsForBank(bankName, editor is null ? null : station.Number))
                 {
                     ApplySharedAudio(consumer, addedSamples, changedMarkers, markerRates, restored);
+                    RestoreTempo(consumer, backup, restored);
                     if (removed.Count > 0) dead += ReconcileStation(consumer, resources, idsByBank, removed);
                 }
             }
@@ -1884,6 +1940,43 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return (addedSamples, written, savedXml, dead);
     }
 
+    private static void RestoreMissingCustomMetadata(List<BuildItem> items, RadioStationEditor editor,
+        int stationNumber, string refPath, string bankPath, GameScanner.RadioResources resources, Func<string, RadioInfo> readRadio)
+    {
+        Dictionary<ulong, FevBank.BankTrack>? samples = null;
+        for (var index = 0; index < items.Count; index++)
+        {
+            var item = items[index];
+            if (item.IsNewCustom || !HasRadioIdentity(item) || !item.SoundName.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal)
+                || editor.GetSampleMeta(item.SoundName) is not null)
+                continue;
+
+            var title = item.DisplayName == item.SoundName ? null : item.DisplayName;
+            if (!item.Enabled && title is null && item.Artist is null && item.Markers is not { Count: > 0 }) continue;
+            var copied = resources.Languages.Select(file => resources.LanguagePath(file)!)
+                .Where(path => !string.Equals(path, refPath, StringComparison.OrdinalIgnoreCase))
+                .Select(path => readRadio(path).StationByNumber(stationNumber))
+                .OfType<RadioStationEditor>().Any(source => editor.RestoreTrackFrom(source, item.SoundName));
+            if (!copied)
+            {
+                samples ??= FevBank.ReadTrackInfoFromFile(bankPath).ToDictionary(sample => sample.Id);
+                if (!samples.TryGetValue(BuildItemId(item), out var sample) || sample.SampleRate <= 0)
+                    throw new InvalidDataException($"No audio is available for {item.SoundName}.");
+                editor.AddCustom(item.SoundName, sample.Frames, sample.SampleRate, title, item.Artist);
+            }
+            items[index] = item with { DisplayName = title };
+        }
+    }
+
+    private static RadioInfo? ReadTempoBackup(string path, IReadOnlySet<string> restoredNames) =>
+        restoredNames.Count > 0 && File.Exists(path + ".bak") ? RadioInfo.Load(path + ".bak") : null;
+
+    private static void RestoreTempo(RadioStationEditor editor, RadioInfo? backup, IReadOnlySet<string> restoredNames)
+    {
+        if (backup is null || editor.Number is not { } number || backup.StationByNumber(number) is not { } original) return;
+        foreach (var name in restoredNames) editor.RestoreTempoFrom(original, name);
+    }
+
     private static void ApplyLocalizedRadio(
         RadioStationEditor editor, RadioStationEditor reference, string bankName, bool bankHasContent,
         IReadOnlySet<ulong> bankIds, IReadOnlyList<AddedSample> addedSamples,
@@ -1894,14 +1987,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (bankHasContent) editor.RegisterBank(bankName);
         else editor.UnregisterBank(bankName);
-        editor.SyncCustomsFrom(reference, bankIds);
+        var copied = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in reference.CustomSoundNames())
+        {
+            if (bankIds.Contains(Lookup.SoundNameToId(name)) && editor.GetSampleMeta(name) is null
+                && editor.RestoreTrackFrom(reference, name))
+                copied.Add(name);
+        }
 
         foreach (var (soundName, isEnabled) in enabled) editor.SetEnabled(soundName, isEnabled);
 
-        foreach (var sample in addedSamples.Where(sample => sample.IsReplacement))
+        foreach (var sample in addedSamples.Where(sample => !copied.Contains(sample.SoundName)))
         {
-            editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate);
-            editor.SetSampleMeta(sample.SoundName, sample.DisplayName, sample.Artist, clearMissingArtist: true);
+            if (!editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate)) continue;
+            if (!sample.IsReplacement) editor.ClearReplacement(sample.SoundName);
+            editor.SetSampleMeta(sample.SoundName, sample.DisplayName, sample.Artist,
+                clearMissingArtist: sample.IsReplacement);
         }
         foreach (var soundName in restoredNames) editor.ClearReplacement(soundName);
 
@@ -1947,8 +2048,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             if (nameChanged || artistChanged)
             {
-                editor.SetSampleMeta(it.SoundName, it.DisplayName, artist);
-                changed[it.SoundName] = (it.DisplayName, artist);
+                var meta = (DisplayName: nameChanged ? it.DisplayName : null, Artist: artistChanged ? artist : null);
+                editor.SetSampleMeta(it.SoundName, meta.DisplayName, meta.Artist);
+                changed[it.SoundName] = meta;
             }
         }
         return changed;
@@ -1992,11 +2094,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         var changed = ApplySampleMeta(editor, items);
         var changedMarkers = new Dictionary<string, IReadOnlyDictionary<string, long>>();
-        var radioItems = items.Where(i => i.BankId is null || i.BankId == Lookup.SoundNameToId(i.SoundName)).ToList();
+        var radioItems = items.Where(HasRadioIdentity).ToList();
 
         foreach (var it in radioItems)
         {
-            editor.SetEnabled(it.SoundName, it.Enabled);
+            if (editor.IsEnabled(it.SoundName) != it.Enabled)
+                editor.SetEnabled(it.SoundName, it.Enabled);
         }
 
         foreach (var it in radioItems)
@@ -2008,9 +2111,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 {
                     changedMarkers[it.SoundName] = adapted;
                     editor.SetMarkers(it.SoundName, adapted, it.MarkerSampleRate);
+                    if (Log.IsVerbose)
+                    {
+                        Log.Line($"radio.track.markers sound={it.SoundName} sourceRate={it.MarkerSampleRate} " +
+                            $"xmlMilliseconds={editor.UsesMilliseconds} positions={JsonSerializer.Serialize(editor.GetMarkers(it.SoundName))}");
+                    }
                 }
-                Log.Line($"radio.track.markers sound={it.SoundName} sourceRate={it.MarkerSampleRate} " +
-                    $"xmlMilliseconds={editor.UsesMilliseconds} positions={System.Text.Json.JsonSerializer.Serialize(editor.GetMarkers(it.SoundName))}");
             }
         }
 

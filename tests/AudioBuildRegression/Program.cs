@@ -44,6 +44,7 @@ try
     await NormalizationOverrideChecks.RunAsync(temp, path => WriteEmptyBank(path));
     var inputs = GenerateInputs(temp);
     await TestGameWritesAsync(temp, inputs[1]);
+    await RadioBuildChecks.RunAsync(temp, inputs[1], Path.Combine(temp, "short-replacement.wav"), WriteEmptyBank);
     await TestPreviewMarkersAsync(inputs[0]);
     await TestBuildAsync(temp, inputs, false);
     await TestBuildAsync(temp, inputs, true);

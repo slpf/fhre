@@ -104,6 +104,15 @@ static void TestHorizon2Xml(string temp)
     Check(original.SampleLength / (double) original.SampleRate == 120, "FH2 duration units are incorrect.");
     Check(editor.FreeRoamActiveCount() == 1, "FH2 active count failed.");
 
+    var eventOnly = RadioInfo.Load(path);
+    eventOnly.Document.Descendants("Playlist").Single(p => (string?) p.Attribute("Type") == "FreeroamTracks").RemoveNodes();
+    var eventStation = new StationInfo(1, "Event only", ["Tracks"],
+        new Dictionary<string, string> { ["Tracks"] = "HZ2_MX_Radio_01_Tracks" });
+    ApplyRadioInfo(eventOnly, eventStation, "HZ2_MX_Radio_01_Tracks", [],
+        [new BuildItem(original.SoundName, false, null, original.DisplayName, original.Artist, null, false)]);
+    Check(eventOnly.Document.Descendants("Playlist").Single(p => (string?) p.Attribute("Type") == "EventTracks")
+        .Elements("Entry").Count() == 1, "A build without edits disabled a track used only in events.");
+
     editor.SetEnabled(original.SoundName, false);
     radio.Save(path);
     radio = RadioInfo.Load(path);
