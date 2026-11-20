@@ -433,9 +433,12 @@ public static partial class GameScanner
     }
 
     public static List<string> BackupFiles(string gamePath) => SafeEnumerate(gamePath, "*.bak")
-        .Where(path => IsRadioResource(LogicalFileName(path[..^4])))
+        .Where(IsRadioFile)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
+
+    internal static bool IsRadioFile(string path) => IsRadioResource(LogicalFileName(
+        path.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) ? path[..^4] : path));
 
     public static string LogicalFileName(string pathOrName)
     {

@@ -7,7 +7,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/FH6RB.csproj" />
-    <None Include="../../tools/ffmpeg/ffmpeg.exe;../../tools/ffmpeg/ffprobe.exe" Link="ffmpeg/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../tools/ffmpeg/ffmpeg.exe" Condition="Exists('../../tools/ffmpeg/ffmpeg.exe')" Link="ffmpeg/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../tools/ffmpeg/ffprobe.exe" Condition="Exists('../../tools/ffmpeg/ffprobe.exe')" Link="ffmpeg/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../tools/fsbank/*" Link="fsbank/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../tools/vgmstream/*" Link="vgmstream/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

@@ -170,16 +170,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private int _restoreAvailabilityGeneration;
     public bool CanRestoreAll { get; private set; }
     internal bool HasValidGamePath { get; private set; }
+    internal string? GameRecoveryError { get; private set; }
     public long ProjectedTotalBytes => _projectedTotalBytes;
 
-    public Task RefreshCanRestoreAllAsync() => RefreshCanRestoreAllAsync(null);
-
-    private async Task RefreshCanRestoreAllAsync(bool? isGameValid)
+    private async Task RefreshCanRestoreAllAsync(bool isGameValid)
     {
         var generation = ++_restoreAvailabilityGeneration;
         var gamePath = Settings.GamePath;
-        var has = isGameValid != false && await Task.Run(() =>
-            (isGameValid ?? GameScanner.IsValid(gamePath)) && BackupService.Has(gamePath));
+        var has = isGameValid && await Task.Run(() => BackupService.Has(gamePath));
         if (generation != _restoreAvailabilityGeneration
             || !string.Equals(gamePath, Settings.GamePath, StringComparison.OrdinalIgnoreCase)) return;
 
@@ -308,7 +306,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
             _radioForFile = null;
             _minimumActiveTracks = MinActiveTracksPerStation;
 
-            var scan = GameScanner.Scan(Settings.GamePath);
+            GameRecoveryError = null;
+            try { GameFileTransaction.RecoverPending(Settings.GamePath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException)
+            {
+                Log.Line("game file recovery failed: " + ex);
+                GameRecoveryError = string.Format(Str.StatusGameRecoveryFailedFmt, ex.Message);
+            }
+
+            var scan = GameRecoveryError is null ? GameScanner.Scan(Settings.GamePath)
+                : new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError, GameRecoveryError, null, 0, 0);
             _radioResources = scan.Resources;
             HasValidGamePath = scan.IsValid;
             _ = RefreshCanRestoreAllAsync(scan.IsValid);
@@ -319,7 +326,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 SelectedStation = null;
                 SelectedVariant = null;
                 ClearLoadedTracks();
-                var error = SettingsWindowViewModel.FormatScanError(scan);
+                var error = GameRecoveryError ?? SettingsWindowViewModel.FormatScanError(scan);
                 SetResourceError(error);
                 Status = error;
                 return;
@@ -1764,10 +1771,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             _radioForFile = null;
             _radioResources = resources;
+            _restoreAvailabilityGeneration++;
+            SetCanRestoreAll(true);
             try { await LoadAsync(); }
             catch (Exception ex) { Log.Line("reload after build failed: " + ex); }
             Status = status;
-            _ = RefreshCanRestoreAllAsync();
         }
         catch (BankTooLargeException ex)
         {
@@ -1795,7 +1803,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         using var transaction = new GameFileTransaction(gamePath);
         var stagedBank = transaction.Stage(bankPath);
-        var addedSamples = await BankBuildService.BuildToFileAsync(bankPath, stagedBank, items, settings, Log.Line, progress)
+        var addedSamples = await BankBuildService.BuildToFileAsync(bankPath, stagedBank, items, settings, Log.Line, progress,
+                Log.IsVerbose, useBackupSources: false)
             .ConfigureAwait(false);
         var written = new FileInfo(stagedBank).Length;
 

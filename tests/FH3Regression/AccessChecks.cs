@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FH6RB.Assets;
@@ -146,6 +147,48 @@ internal static class AccessChecks
         }
         Check(!Directory.EnumerateFiles(folder).Any(path => path.EndsWith(".stage") || path.EndsWith(".rollback")
             || path.EndsWith(".fhre-lock") || path.EndsWith(".fhre-write-lock")), "The failed transaction left staging files behind.");
+
+        CheckInterruptedTransaction(type, folder, bank, xml);
+    }
+
+    private static void CheckInterruptedTransaction(Type type, string folder, string bank, string xml)
+    {
+        var pending = Path.Combine(folder, ".fhre-transaction.json");
+        var backup = Path.Combine(folder, "RadioInfo_FR.xml.bak");
+        var originalXml = File.ReadAllText(xml);
+        var changes = new[]
+        {
+            new { Target = backup, Existed = false },
+            new { Target = bank, Existed = true },
+            new { Target = xml, Existed = true },
+        };
+        var recover = type.GetMethod("RecoverPending")!;
+
+        var id = Guid.NewGuid();
+        var stagedXml = $"{xml}.{id:N}.stage";
+        var rollback = $"{bank}.{id:N}.rollback";
+        File.WriteAllText(backup, "new backup");
+        File.WriteAllText(rollback, "live bank");
+        File.WriteAllText(bank, "partially committed bank");
+        File.WriteAllText(stagedXml, "staged XML");
+        File.WriteAllText(pending, JsonSerializer.Serialize(new { Id = id, Settled = false, Changes = changes }));
+        recover.Invoke(null, [folder]);
+
+        Check(File.ReadAllText(bank) == "live bank" && File.ReadAllText(xml) == originalXml && !File.Exists(backup),
+            "Recovery did not roll back the interrupted bank and its newly created backup.");
+        Check(!File.Exists(pending) && !File.Exists(stagedXml) && !File.Exists(rollback),
+            "Recovery left temporary files from the interrupted transaction.");
+
+        File.WriteAllText(rollback, "live bank");
+        File.WriteAllText(bank, "committed bank");
+        File.WriteAllText(xml, "committed XML");
+        File.WriteAllText(backup, "committed backup");
+        File.WriteAllText(pending, JsonSerializer.Serialize(new { Id = id, Settled = true, Changes = changes }));
+        recover.Invoke(null, [folder]);
+
+        Check(File.ReadAllText(bank) == "committed bank" && File.ReadAllText(xml) == "committed XML" && File.Exists(backup),
+            "Recovery rolled back a completed transaction.");
+        Check(!File.Exists(pending) && !File.Exists(rollback), "Recovery left temporary files from the completed transaction.");
     }
 
     private static void CheckMainWindowResourceError(string game)

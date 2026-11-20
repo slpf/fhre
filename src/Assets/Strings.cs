@@ -177,12 +177,8 @@ public static class Str
     public const string DlgSwitchUnsavedOk = "Switch anyway";
     public const string DlgSwitchUnsavedCancel = "Keep editing";
 
-    public const string DlgBuildProgressTitle = "Build in progress";
-    public const string DlgBuildProgressBody =
-        "A build is still running. Quitting now may leave the bank half-written " +
-        "(a .bak backup exists to restore from).\n\nQuit anyway?";
-    public const string DlgBuildProgressOk = "Quit";
-    public const string DlgBuildProgressCancel = "Keep building";
+    public const string DlgGameRecoveryTitle = "Radio file recovery";
+    public const string StatusGameRecoveryFailedFmt = "Could not recover the radio files. {0}";
     
     public const string GrpCore = "Core";
     public const string GrpDjDrops = "DJ / Drops";

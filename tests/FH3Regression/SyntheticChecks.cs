@@ -19,8 +19,16 @@ internal static class SyntheticChecks
         CheckMinimums(root);
         CheckLegacyMarkerValidation();
         await CheckEditorAndPackAsync(root);
-        await UwpBuildChecks.RunAsync(root);
-        await AzimuthPackChecks.RunAsync(root);
+        var missingTools = Tools.MissingRequired().ToArray();
+        if (missingTools.Length == 0)
+        {
+            await UwpBuildChecks.RunAsync(root);
+            await AzimuthPackChecks.RunAsync(root);
+        }
+        else
+        {
+            Console.WriteLine($"Skipped FH3 audio build checks. Missing tools: {string.Join(", ", missingTools)}.");
+        }
         Console.WriteLine("Verified FH3 names, manifest identity, logical scanner paths, variants, original backups, native XML and cross-game editor/import markers.");
     }
 
@@ -283,7 +291,8 @@ internal static class SyntheticChecks
                 modern.Tracks.Add(orphan);
                 modern.Recount();
                 Check(orphan.IsBankOnly && !orphan.CanToggle && !orphan.CanEdit && !orphan.CanReplace && !orphan.CanEditMarkers
-                    && orphan.CanPlay && modern.PlaylistLow, "A bank-only row bypassed the active-track minimum or exposed metadata editing.");
+                    && modern.PlaylistLow, "A bank-only row bypassed the active-track minimum or exposed metadata editing.");
+                Check(orphan.CanPlay == Tools.HasVgmstream, "Bank-only playback did not reflect decoder availability.");
                 modern.ToggleEnabled(orphan);
                 Check(orphan.Enabled && modern.PlaylistLow, "A direct toggle modified a protected bank-only row.");
                 var orphanRadio = RadioInfo.Load(path);

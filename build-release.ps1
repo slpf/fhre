@@ -12,7 +12,7 @@ $Bin      = 'bin'
 $BuildOut = 'bin\publish'
 $Dist     = 'publish'
 $Tools    = 'tools'
-$Zip      = 'fhre.zip'
+$Zip      = Join-Path $PSScriptRoot 'fhre.zip'
 
 function Fail($msg) {
     Write-Host ''
@@ -48,7 +48,6 @@ if (-not (Test-Path $Tools)) { Fail "tools folder not found: $Tools." }
 # --- clean previous outputs ---
 if (Test-Path $Dist)     { Write-Host "Removing old $Dist ...";     if (-not (Remove-PathWithRetry $Dist))     { Fail "cannot remove old $Dist - locked by another process (antivirus?). Close it and retry." } }
 if (Test-Path $BuildOut) { Write-Host "Removing old $BuildOut ..."; if (-not (Remove-PathWithRetry $BuildOut)) { Fail "cannot remove old $BuildOut - locked by another process (antivirus?). Close it and retry." } }
-if (Test-Path $Zip)      { if (-not (Remove-PathWithRetry $Zip)) { Fail "cannot remove old $Zip - locked by another process." } }
 
 # --- [1/5] publish ---
 Write-Host ''
@@ -76,62 +75,73 @@ Copy-Item -Path (Join-Path $Tools '*') -Destination $Dist -Recurse -Force
 Write-Host ''
 Write-Host "[4/5] Creating $Zip ..."
 
-# Freshly copied executables are often briefly locked by an antivirus scan,
-# which aborts Compress-Archive halfway through (and the half-written zip then
-# gets locked too). Zip entry by entry with per-file retries into a temp file,
-# then rename at the end.
 Add-Type -AssemblyName System.IO.Compression
-Add-Type -AssemblyName System.IO.Compression.FileSystem
 
-$zipTmp = "$Zip.tmp"
-if ((Test-Path $zipTmp) -and (-not (Remove-PathWithRetry $zipTmp))) { Fail "cannot remove stale $zipTmp - locked by another process." }
+$zipTmp = "$Zip.$([Guid]::NewGuid().ToString('N')).tmp"
 
 $filesToZip = @(Get-ChildItem -Path $Dist -Recurse -File | ForEach-Object { $_.FullName })
 $distRoot = (Resolve-Path $Dist).ProviderPath.TrimEnd('\')
 
-$zipStream = [System.IO.File]::Open($zipTmp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-$archive = New-Object System.IO.Compression.ZipArchive($zipStream, [System.IO.Compression.ZipArchiveMode]::Create)
+function Open-ZipSource([string]$Path) {
+    for ($attempt = 1; $attempt -le 15; $attempt++) {
+        try {
+            return [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+        } catch {
+            if ($attempt -eq 15) { throw }
+            if ($attempt -eq 1) { Write-Host "  Waiting for $Path" }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+
+function Write-ReleaseZip {
+    $stream = [System.IO.File]::Open($zipTmp, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            foreach ($src in $filesToZip) {
+                $rel = $src.Substring($distRoot.Length + 1).Replace('\', '/')
+                $in = Open-ZipSource $src
+                try {
+                    $entry = $archive.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
+                    $out = $entry.Open()
+                    try { $in.CopyTo($out) } finally { $out.Dispose() }
+                } finally { $in.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+        $stream.Flush($true)
+    } finally { $stream.Dispose() }
+}
 
 try {
-    foreach ($src in $filesToZip) {
-        $rel = $src.Substring($distRoot.Length + 1).Replace('\', '/')
-        $entry = $archive.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
-        $copied = $false
-
-        for ($i = 1; ($i -le 15) -and (-not $copied); $i++) {
-            try {
-                $in = [System.IO.File]::Open($src, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-                try {
-                    $es = $entry.Open()
-                    try { $in.CopyTo($es) } finally { $es.Dispose() }
-                    $copied = $true
-                } finally { $in.Close() }
-            } catch {
-                if ($i -eq 1) { Write-Host "  $rel is locked (antivirus?), retrying ..." }
-                if ($i -lt 15) { Start-Sleep -Milliseconds 500 }
-            }
+    for ($i = 1; $i -le 3; $i++) {
+        try {
+            Write-ReleaseZip
+            break
+        } catch {
+            if ($i -eq 3) { throw }
+            Write-Host "  Rebuilding archive after an error: $($_.Exception.Message)"
+            Start-Sleep -Milliseconds 500
         }
-
-        if (-not $copied) { Fail "cannot read $rel - locked by another process (antivirus?). Add a project-folder exclusion and retry." }
     }
-} finally {
-    $archive.Dispose()
-    $zipStream.Dispose()
-}
 
-$moved = $false
-for ($i = 1; ($i -le 10) -and (-not $moved); $i++) {
-    try {
-        if (Test-Path $Zip) { Remove-Item -Force $Zip -ErrorAction Stop }
-        Move-Item -Path $zipTmp -Destination $Zip -ErrorAction Stop
-        $moved = $true
-    } catch {
-        if ($i -lt 10) { Start-Sleep -Milliseconds 500 }
+    for ($i = 1; $i -le 10; $i++) {
+        try {
+            if ([System.IO.File]::Exists($Zip)) {
+                [System.IO.File]::Replace($zipTmp, $Zip, [NullString]::Value)
+            } else {
+                [System.IO.File]::Move($zipTmp, $Zip)
+            }
+            break
+        } catch {
+            if ($i -eq 10) { throw }
+            Start-Sleep -Milliseconds 500
+        }
     }
+} catch {
+    try { [System.IO.File]::Delete($zipTmp) } catch { Write-Warning "Could not remove $zipTmp" }
+    Fail "could not package $Zip - $($_.Exception.Message)"
 }
-
-if (-not $moved)           { Fail "cannot finalize $Zip - locked by another process (antivirus?)." }
-if (-not (Test-Path $Zip)) { Fail "zip not created: $Zip." }
 
 # --- [5/5] cleanup ---
 Write-Host ''

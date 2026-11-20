@@ -35,6 +35,15 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        using var instance = new Mutex(false, @"Global\ForzaHorizonRadioExtender.SingleInstance");
+        try
+        {
+            if (!instance.WaitOne(0)) return;
+        }
+        catch (AbandonedMutexException)
+        {
+        }
+
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogCrash(e.ExceptionObject as Exception, "AppDomain");
         TaskScheduler.UnobservedTaskException += (_, e) =>
         {
@@ -50,6 +59,10 @@ internal static class Program
         {
             LogCrash(ex, "Startup");
             throw;
+        }
+        finally
+        {
+            instance.ReleaseMutex();
         }
     }
 

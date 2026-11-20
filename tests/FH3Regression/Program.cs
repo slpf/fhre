@@ -1,3 +1,5 @@
+using FH6RB.Services;
+
 var scratch = Path.Combine(AppContext.BaseDirectory, "scratch", Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(scratch);
 var previousTemp = Environment.GetEnvironmentVariable("TEMP");
@@ -10,6 +12,7 @@ try
     if (measure >= 0)
     {
         if (measure + 2 >= args.Length) throw new ArgumentException("--measure requires a source directory and a report directory.");
+        RequireTools(Tools.MissingRequired().Where(tool => tool is "ffmpeg" or "vgmstream"));
         await LoudnessChecks.RunAsync(Path.GetFullPath(args[measure + 1]), Path.GetFullPath(args[measure + 2]), scratch);
         return 0;
     }
@@ -25,6 +28,7 @@ try
     if (installation >= 0)
     {
         if (installation + 1 >= args.Length) throw new ArgumentException("--installation requires a source directory.");
+        RequireTools(Tools.MissingRequired());
         await InstallationChecks.RunAsync(Path.GetFullPath(args[installation + 1]), scratch,
             args.Contains("--workflow-only", StringComparer.Ordinal));
     }
@@ -42,4 +46,11 @@ finally
     Environment.SetEnvironmentVariable("TEMP", previousTemp);
     Environment.SetEnvironmentVariable("TMP", previousTmp);
     if (!args.Contains("--keep", StringComparer.Ordinal)) TestSupport.DeleteDirectory(scratch, Path.Combine(AppContext.BaseDirectory, "scratch"));
+}
+
+static void RequireTools(IEnumerable<string> missing)
+{
+    var tools = missing.ToArray();
+    if (tools.Length > 0)
+        throw new InvalidOperationException($"Missing tools: {string.Join(", ", tools)}.");
 }

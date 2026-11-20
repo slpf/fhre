@@ -950,14 +950,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (Vm.IsBuilding)
+        if (Vm.IsBuilding || Vm.IsBackingUp)
         {
             e.Cancel = true;
-            if (!_confirmingQuit)
-            {
-                _ = ConfirmQuitAsync();
-            }
-
             return;
         }
 
@@ -997,33 +992,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task ConfirmQuitAsync()
-    {
-        _confirmingQuit = true;
-        
-        try
-        {
-            await ConfirmQuitCoreAsync();
-        }
-        finally
-        {
-            _confirmingQuit = false;
-        }
-    }
-
-    private async Task ConfirmQuitCoreAsync()
-    {
-        var quit = await MessageDialog.ShowAsync(this, Str.DlgBuildProgressTitle,
-            Str.DlgBuildProgressBody,
-            okText: Str.DlgBuildProgressOk, cancelText: Str.DlgBuildProgressCancel);
-
-        if (quit)
-        {
-            _forceClose = true;
-            Close();
-        }
-    }
-    
     private static (string Title, string? Artist) ParseName(string fileName)
     {
         var i = fileName.IndexOf(" - ", StringComparison.Ordinal);

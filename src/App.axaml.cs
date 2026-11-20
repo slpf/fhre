@@ -41,7 +41,11 @@ public partial class App : Application
             window.Opened += async (_, _) =>
             {
                 await CheckRequiredToolsAsync(window);
-                if (!vm.HasValidGamePath)
+                if (vm.GameRecoveryError is { } recoveryError)
+                {
+                    await MessageDialog.ShowAsync(window, Str.DlgGameRecoveryTitle, recoveryError);
+                }
+                else if (!vm.HasValidGamePath)
                 {
                     await window.ShowSettingsAsync(firstRun: true);
                 }

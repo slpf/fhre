@@ -1,24 +1,47 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using FH6RB.Core;
 
 namespace FH6RB.Services;
 
 internal sealed class GameFileTransaction : IDisposable
 {
-    private sealed record Change(string Target, string Staged, string Rollback, bool Existed);
+    private sealed record Change(string Target, bool Existed);
+    private sealed record Journal(Guid Id, bool Settled, Change[] Changes);
 
-    private readonly string _id = Guid.NewGuid().ToString("N");
+    private const string JournalName = ".fhre-transaction.json";
+    private static readonly JsonSerializerOptions JournalOptions = new() { RespectRequiredConstructorParameters = true };
+    private readonly Guid _id = Guid.NewGuid();
+    private readonly string _root;
+    private readonly string _journalPath;
     private readonly List<Change> _changes = [];
     private readonly List<FileStream> _locks = [];
+    private bool _journalOwnsStaging;
 
     public GameFileTransaction(string gamePath)
     {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gamePath));
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(root.ToUpperInvariant())));
+        _root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(gamePath));
+        _journalPath = Path.Combine(_root, JournalName);
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_root.ToUpperInvariant())));
         var locks = Path.Combine(AppPaths.TempBase, "game-locks");
         Directory.CreateDirectory(locks);
         _locks.Add(OpenLock(Path.Combine(locks, digest + ".lock")));
+        try
+        {
+            Recover();
+        }
+        catch
+        {
+            Dispose();
+            throw;
+        }
+    }
+
+    public static void RecoverPending(string gamePath)
+    {
+        if (string.IsNullOrWhiteSpace(gamePath) || !File.Exists(Path.Combine(gamePath, JournalName))) return;
+        using var transaction = new GameFileTransaction(gamePath);
     }
 
     private static FileStream OpenLock(string path) => new(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
@@ -26,14 +49,13 @@ internal sealed class GameFileTransaction : IDisposable
 
     public string Stage(string path)
     {
-        var target = Path.GetFullPath(path);
+        var target = TargetPath(path);
         if (_changes.Any(change => string.Equals(change.Target, target, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException($"File already staged: {target}");
 
         _locks.Add(OpenLock(target + ".fhre-lock"));
-        var change = new Change(target, $"{target}.{_id}.stage", $"{target}.{_id}.rollback", File.Exists(target));
-        _changes.Add(change);
-        return change.Staged;
+        _changes.Add(new Change(target, File.Exists(target)));
+        return StagePath(target, _id);
     }
 
     public void StageOriginal(string path, bool refresh)
@@ -46,46 +68,108 @@ internal sealed class GameFileTransaction : IDisposable
 
     public void Commit()
     {
-        FileGuard.EnsureWritable(_changes.Select(change => change.Target));
-        var applied = new List<Change>();
+        if (_changes.Count == 0) return;
+        var changes = _changes.OrderByDescending(change => change.Target.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)).ToArray();
+        FileGuard.EnsureWritable(changes.Select(change => change.Target));
+        foreach (var change in changes)
+        {
+            var staged = StagePath(change.Target, _id);
+            if (!File.Exists(staged)) throw new FileNotFoundException("Staged game file is missing.", staged);
+        }
+
+        var journal = new Journal(_id, false, changes);
+        WriteJournal(journal);
+        _journalOwnsStaging = true;
         try
         {
-            foreach (var change in _changes.OrderByDescending(change => change.Target.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)))
+            foreach (var change in changes)
             {
-                applied.Add(change);
-                if (change.Existed) File.Replace(change.Staged, change.Target, change.Rollback);
-                else File.Move(change.Staged, change.Target);
+                var staged = StagePath(change.Target, _id);
+                if (change.Existed) File.Replace(staged, change.Target, RollbackPath(change.Target, _id));
+                else File.Move(staged, change.Target);
             }
+            WriteJournal(journal with { Settled = true });
         }
         catch (Exception error)
         {
-            var rollbackErrors = new List<Exception>();
-            foreach (var change in Enumerable.Reverse(applied))
+            try { Recover(journal); }
+            catch (Exception recoveryError)
             {
-                try
-                {
-                    if (File.Exists(change.Rollback)) File.Move(change.Rollback, change.Target, overwrite: true);
-                    else if (!change.Existed && !File.Exists(change.Staged)) File.Delete(change.Target);
-                    else if (change.Existed && !File.Exists(change.Target))
-                        throw new IOException($"Original file is missing: {change.Target}");
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    rollbackErrors.Add(new IOException($"Could not restore {change.Target}. Recovery file: {change.Rollback}", ex));
-                }
-            }
-
-            if (rollbackErrors.Count > 0)
-            {
-                rollbackErrors.Insert(0, error);
-                throw new IOException("Could not roll back all game files. See the log for recovery paths.",
-                    new AggregateException(rollbackErrors));
+                throw new IOException($"Could not roll back the game files. Recovery journal: {_journalPath}",
+                    new AggregateException(error, recoveryError));
             }
             throw;
         }
-
-        foreach (var change in applied) DeleteTemporary(change.Rollback);
+        Cleanup(journal);
     }
+
+    private void Recover()
+    {
+        if (!File.Exists(_journalPath)) return;
+        Journal? journal;
+        using (var stream = File.OpenRead(_journalPath)) journal = JsonSerializer.Deserialize<Journal>(stream, JournalOptions);
+        if (journal is null || journal.Id == Guid.Empty || journal.Changes is not { Length: > 0 })
+            throw new InvalidDataException($"Invalid game file recovery journal: {_journalPath}");
+
+        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var change in journal.Changes)
+        {
+            if (change is null || string.IsNullOrEmpty(change.Target)
+                || !string.Equals(change.Target, TargetPath(change.Target), StringComparison.OrdinalIgnoreCase)
+                || !targets.Add(change.Target))
+                throw new InvalidDataException($"Invalid target in game file recovery journal: {_journalPath}");
+        }
+        if (!journal.Settled && GameScanner.IsGameProcessRunning(_root))
+            throw new IOException("Close the game before recovering its radio files.");
+
+        Recover(journal);
+        if (File.Exists(_journalPath)) throw new IOException($"Could not remove the recovery journal: {_journalPath}");
+    }
+
+    private void Recover(Journal journal)
+    {
+        if (!journal.Settled)
+        {
+            foreach (var change in journal.Changes.Reverse())
+            {
+                var rollback = RollbackPath(change.Target, journal.Id);
+                if (File.Exists(rollback)) File.Move(rollback, change.Target, overwrite: true);
+                else if (!change.Existed && !File.Exists(StagePath(change.Target, journal.Id))) File.Delete(change.Target);
+                else if (change.Existed && !File.Exists(change.Target))
+                    throw new IOException($"Original file is missing: {change.Target}");
+            }
+            WriteJournal(journal with { Settled = true });
+            Log.Line($"Recovered interrupted game file transaction: {_root}");
+        }
+        Cleanup(journal);
+    }
+
+    private void WriteJournal(Journal journal) =>
+        Atomic.Write(_journalPath, stream => JsonSerializer.Serialize(stream, journal, JournalOptions));
+
+    private void Cleanup(Journal journal)
+    {
+        var clean = true;
+        foreach (var change in journal.Changes)
+        {
+            clean &= DeleteTemporary(StagePath(change.Target, journal.Id));
+            clean &= DeleteTemporary(RollbackPath(change.Target, journal.Id));
+        }
+        if (clean) DeleteTemporary(_journalPath);
+    }
+
+    private string TargetPath(string path)
+    {
+        var target = Path.GetFullPath(path);
+        var prefix = Path.EndsInDirectorySeparator(_root) ? _root : _root + Path.DirectorySeparatorChar;
+        if (!target.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !GameScanner.IsRadioFile(target))
+            throw new IOException($"Invalid game radio file target: {target}");
+        return target;
+    }
+
+    private static string StagePath(string target, Guid id) => $"{target}.{id:N}.stage";
+
+    private static string RollbackPath(string target, Guid id) => $"{target}.{id:N}.rollback";
 
     public void StageRadio(RadioInfo radio, string path)
     {
@@ -96,16 +180,24 @@ internal sealed class GameFileTransaction : IDisposable
 
     public void Dispose()
     {
-        foreach (var change in _changes) DeleteTemporary(change.Staged);
+        if (!_journalOwnsStaging)
+        {
+            foreach (var change in _changes) DeleteTemporary(StagePath(change.Target, _id));
+        }
         foreach (var handle in _locks) handle.Dispose();
     }
 
-    private static void DeleteTemporary(string path)
+    private static bool DeleteTemporary(string path)
     {
-        try { File.Delete(path); }
+        try
+        {
+            File.Delete(path);
+            return true;
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Log.Line($"game files: could not remove temporary file {path}: {ex}");
+            return false;
         }
     }
 }
