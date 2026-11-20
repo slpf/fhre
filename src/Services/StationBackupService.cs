@@ -547,7 +547,7 @@ public static class StationBackupService
                 .ToList();
 
             var staged = transaction.Stage(bankPath);
-            var added = await BankBuildService.BuildToFileAsync(bankPath, staged, buildItems, settings, log, null,
+            var added = await BankBuildService.BuildToStageAsync(bankPath, staged, buildItems, settings, log, null,
                     Log.IsVerbose, useBackupSources: true)
                 .ConfigureAwait(false);
 

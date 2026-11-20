@@ -116,7 +116,13 @@ public sealed class FevBank
 
     public static int ReadStblCountFromFile(string path) => ReadStblInfoFromFile(path).Declared;
 
-    internal static (HashSet<ulong> Ids, int Declared) ReadStblInfoFromFile(string path)
+    internal static HashSet<ulong>? ReadCompleteStblIdsFromFile(string path)
+    {
+        var (ids, declared) = ReadStblInfoFromFile(path, requireComplete: true);
+        return declared >= 0 && ids.Count == declared ? ids : null;
+    }
+
+    internal static (HashSet<ulong> Ids, int Declared) ReadStblInfoFromFile(string path, bool requireComplete = false)
     {
         var ids = new HashSet<ulong>();
 
@@ -136,9 +142,28 @@ public sealed class FevBank
                 return (ids, -1);
             }
 
+            var riffEnd = fs.Length;
+            if (requireComplete)
+            {
+                riffEnd = U32(head, 4) + 8L;
+                if (riffEnd < 12 || riffEnd > fs.Length) return (ids, -1);
+                if (riffEnd != fs.Length)
+                {
+                    if (fs.Length - riffEnd != ModMarker.Length) return (ids, -1);
+                    fs.Position = riffEnd;
+                    var marker = new byte[ModMarker.Length];
+                    fs.ReadExactly(marker);
+                    if (!marker.AsSpan().SequenceEqual(ModMarker)) return (ids, -1);
+                    fs.Position = head.Length;
+                }
+            }
+            var hasFormat = false;
+            var hasSound = false;
+            var declared = -1;
+            var emptyTemplate = false;
             var hdr = new byte[8];
             
-            while (fs.Position + 8 <= fs.Length)
+            while (fs.Position + 8 <= riffEnd)
             {
                 if (fs.Read(hdr, 0, 8) < 8)
                 {
@@ -147,33 +172,38 @@ public sealed class FevBank
 
                 var id = Cc(hdr, 0);
                 var size = (int) U32(hdr, 4);
-                if (size < 0 || size > fs.Length - fs.Position) return (ids, -1);
+                if (size < 0 || size > riffEnd - fs.Position) return (ids, -1);
 
                 if (id == "LIST")
                 {
-                    if (size < 0 || size > fs.Length - fs.Position)
-                    {
-                        return (ids, -1);
-                    }
-
                     var list = new byte[size];
                     
-                    if (fs.Read(list, 0, size) == size)
+                    fs.ReadExactly(list);
+                    if (!requireComplete) return (ids, ParseStblIds(list, ids));
+                    if (list.Length >= 4 && Cc(list, 0) == "PROJ")
                     {
-                        return (ids, ParseStblIds(list, ids));
+                        if (declared >= 0) return (ids, -1);
+                        declared = ParseStblIds(list, ids, requireComplete: true);
+                        if (declared < 0) return (ids, -1);
+                        emptyTemplate = FindChunkInList(list, "STBL").PayloadSize == 0;
+                        if (emptyTemplate && FindChunkInList(list, "SNDH").TagOff < 0) return (ids, -1);
                     }
-
-                    return (ids, -1);
                 }
-
-                if (id == "SND ")
+                else
                 {
-                    break;
+                    if (id == "FMT ") hasFormat |= size > 0;
+                    if (id == "SND ")
+                    {
+                        if (!requireComplete) break;
+                        hasSound = true;
+                    }
+                    fs.Seek(size, SeekOrigin.Current);
                 }
-
-                fs.Seek(size, SeekOrigin.Current);
-                if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
+                if ((size & 1) != 0 && (!requireComplete || id != "SND " || fs.Position != riffEnd))
+                    fs.Seek(1, SeekOrigin.Current);
             }
+            if (requireComplete && hasFormat && hasSound != emptyTemplate && fs.Position == riffEnd)
+                return (ids, declared);
         }
         catch
         {
@@ -182,9 +212,10 @@ public sealed class FevBank
         return (ids, -1);
     }
     
-    private static int ParseStblIds(byte[] list, HashSet<ulong> ids)
+    private static int ParseStblIds(byte[] list, HashSet<ulong> ids, bool requireComplete = false)
     {
         var p = 4;
+        var declared = -1;
         
         while (p + 8 <= list.Length)
         {
@@ -196,17 +227,20 @@ public sealed class FevBank
 
             if (id == "STBL")
             {
-                if (size < 10 || pay + 10 > list.Length) return -1;
-                
-                int count = U16(list, pay + 8);
-                var idp = pay + 10;
-                
-                for (var i = 0; i < count && idp + 8 <= pay + size; i++, idp += 8)
+                if (declared >= 0) return -1;
+                if (requireComplete && size == 0)
                 {
-                    ids.Add(BinaryPrimitives.ReadUInt64LittleEndian(list.AsSpan(idp)));
+                    declared = 0;
                 }
-
-                return count;
+                else
+                {
+                    if (size < 10) return -1;
+                    declared = U16(list, pay + 8);
+                    var idp = pay + 10;
+                    for (var i = 0; i < declared && idp + 8 <= pay + size; i++, idp += 8)
+                        ids.Add(BinaryPrimitives.ReadUInt64LittleEndian(list.AsSpan(idp)));
+                }
+                if (!requireComplete) return declared;
             }
 
             p = pay + size;
@@ -217,7 +251,7 @@ public sealed class FevBank
             }
         }
 
-        return -1;
+        return p == list.Length ? declared : -1;
     }
     
     public sealed record BankTrack(ulong Id, int Index, long Frames, int SampleRate);

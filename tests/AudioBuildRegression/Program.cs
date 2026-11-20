@@ -42,6 +42,7 @@ try
     await GainEnvelopeChecks.RunAsync(temp);
     await NormalizationOverrideChecks.RunAsync(temp, path => WriteEmptyBank(path));
     var inputs = GenerateInputs(temp);
+    await TestGameWritesAsync(temp, inputs[1]);
     await TestPreviewMarkersAsync(inputs[0]);
     await TestBuildAsync(temp, inputs, false);
     await TestBuildAsync(temp, inputs, true);
@@ -244,6 +245,75 @@ static void TestImportedMarkers(string temp)
     apply.Invoke(null, [radio, station, "R1_Tracks_Main", added, items]);
     Check(radio.StationByNumber(1)!.GetMarkers("R_TEST", 48000)!["TrackStart"] == 48000, "Marker timing was not rescaled after FSB conversion changed the sample rate.");
     Console.WriteLine("Verified imported and committed marker timing across 44.1 kHz and 48 kHz audio.");
+}
+
+static async Task TestGameWritesAsync(string temp, string input)
+{
+    const string bankName = "R1_Tracks";
+    const string shared = "SHARED_TRACK";
+    const string sibling = "SIBLING_TRACK";
+    var game = Path.Combine(temp, "game-writes");
+    Directory.CreateDirectory(game);
+    var bank = Path.Combine(game, bankName + ".assets.bank");
+    var otherBank = Path.Combine(game, bankName + "_CU1.assets.bank");
+    var en = Path.Combine(game, "RadioInfo_EN.xml");
+    var de = Path.Combine(game, "RadioInfo_DE.xml");
+    var template = Path.Combine(temp, "write-template.bank");
+    WriteEmptyBank(template);
+    var settings = new AppSettings { LoudnessNormalize = false };
+    await BankBuildService.BuildToFileAsync(template, bank, [new BuildItem(shared, true, input, null, null, null, true)], settings);
+    await BankBuildService.BuildToFileAsync(template, otherBank, [new BuildItem(sibling, true, input, null, null, null, true)], settings);
+    var otherBankBytes = File.ReadAllBytes(otherBank);
+    File.WriteAllBytes(otherBank, otherBankBytes[..100]);
+
+    static string RadioXml(string title) => $"""
+        <Radio><RadioStations>
+          <RadioStation Number="1" Name="Test"><Banks><Bank Name="{bankName}"/><Bank Name="{bankName}_CU1"/></Banks>
+            <SampleList Type="Track"><Sample SoundName="{shared}" SampleLength="144000" SampleRate="48000" End="143999" DisplayName="{title}"/><Sample SoundName="{sibling}" SampleLength="144000" SampleRate="48000"/></SampleList>
+            <PlayList Type="FreeRoam"><Entry Name="{shared}"/><Entry Name="{sibling}"/></PlayList>
+          </RadioStation>
+          <RadioStation Number="2" Name="Shared"><Banks><Bank Name="{bankName}"/></Banks>
+            <SampleList Type="Track"><Sample SoundName="{shared}" SampleLength="144000" SampleRate="48000" End="143999" DisplayName="Shared station"/></SampleList>
+            <PlayList Type="FreeRoam"><Entry Name="{shared}"/></PlayList>
+          </RadioStation>
+        </RadioStations></Radio>
+        """;
+    File.WriteAllText(en, RadioXml("English"));
+    File.WriteAllText(de, RadioXml("German"));
+    var replacement = Path.Combine(temp, "short-replacement.wav");
+    WriteWav(replacement, 48000, 2, 48000, 1);
+    var station = RadioCatalog.Build(game, RadioInfo.Load(en)).Single(st => st.Number == 1);
+    var vm = (MainWindowViewModel)RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));
+    var resources = typeof(GameScanner).GetMethod("ReadRadioResources", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [game]);
+    var build = typeof(MainWindowViewModel).GetMethod("BuildGameFilesAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)> BuildAsync(List<BuildItem> plan, string[] languages) =>
+        (Task<(IReadOnlyList<AddedSample>, long, int, int)>)build.Invoke(vm,
+            [game, station, bankName, bank, en, languages, resources, plan, settings, (Action<string>)(_ => { })])!;
+
+    var edited = await BuildAsync([new BuildItem(shared, false, replacement, "Edited", null, null, true, IsReplacement: true)], []);
+    Check(edited.SavedXml == 2 && edited.Dead == 0, "Single-language replacement skipped shared audio or pruned the truncated sibling bank.");
+    foreach (var path in new[] { en, de })
+    {
+        var radio = RadioInfo.Load(path);
+        var ownTracks = radio.StationByNumber(1)!.ReadTracks();
+        var sharedTrack = radio.StationByNumber(2)!.ReadTracks().Single();
+        Check(ownTracks.Any(t => t.SoundName == sibling && t.Enabled), "Build removed a sibling track from XML.");
+        Check(ownTracks.Single(t => t.SoundName == shared).SampleLength == 48000 && sharedTrack.SampleLength == 48000
+            && sharedTrack.Markers!["End"] < 48000, "Shared station or localization has stale audio timing.");
+        Check(ownTracks.Single(t => t.SoundName == shared).DisplayName == (path == en ? "Edited" : "German")
+            && sharedTrack.DisplayName == "Shared station", "Audio synchronization changed another station's or language's title.");
+    }
+
+    File.WriteAllBytes(otherBank, otherBankBytes);
+    var plan = BankReader.ReadTracks(bank, RadioInfo.Load(en), station.Number).Tracks
+        .Select(track => new BuildItem(track.SoundName, false, null, track.DisplayName, track.Artist, null,
+            track.Enabled, track.Markers, MarkerSampleRate: track.SampleRate, BankId: track.BankId)).ToList();
+    var stamps = new[] { bank, en, de }.ToDictionary(path => path, File.GetLastWriteTimeUtc);
+    var repeat = await BuildAsync(plan, []);
+    Check(repeat.Written == 0 && repeat.SavedXml == 0 && stamps.All(pair => File.GetLastWriteTimeUtc(pair.Key) == pair.Value),
+        "A build without changes rewrote the bank or RadioInfo.");
+    Console.WriteLine("Verified bank writes preserve sibling tracks, synchronize shared audio, and skip unchanged files.");
 }
 
 static string[] GenerateInputs(string temp)

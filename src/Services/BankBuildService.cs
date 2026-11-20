@@ -51,9 +51,19 @@ public static class BankBuildService
         AppSettings settings, Action<string>? log = null, Action<string>? progress = null) =>
         BuildToFileAsync(sourcePath, outPath, items, settings, log, progress, verbose: true, useBackupSources: false);
 
-    internal static async Task<IReadOnlyList<AddedSample>> BuildToFileAsync(
+    internal static Task<IReadOnlyList<AddedSample>> BuildToFileAsync(
         string sourcePath, string outPath, IReadOnlyList<BuildItem> items,
-        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources)
+        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources) =>
+        PrepareBankFileAsync(sourcePath, outPath, items, settings, log, progress, verbose, useBackupSources);
+
+    internal static Task<IReadOnlyList<AddedSample>> BuildToStageAsync(
+        string sourcePath, string stagePath, IReadOnlyList<BuildItem> items,
+        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources) =>
+        PrepareBankFileAsync(sourcePath, stagePath, items, settings, log, progress, verbose, useBackupSources, stagePath + ".tmp");
+
+    private static async Task<IReadOnlyList<AddedSample>> PrepareBankFileAsync(
+        string sourcePath, string outPath, IReadOnlyList<BuildItem> items, AppSettings settings, Action<string>? log,
+        Action<string>? progress, bool verbose, bool useBackupSources, string? stagedOutput = null)
     {
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(outPath), comparison))
@@ -75,7 +85,7 @@ public static class BankBuildService
             EncodeParallelism = settings.EncodeParallelism
         };
         var buildId = Guid.NewGuid().ToString("N");
-        var stagedOutput = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outPath))!, $".fhre-{buildId}.bank");
+        stagedOutput ??= Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outPath))!, $".fhre-{buildId}.bank");
         var timer = Stopwatch.StartNew();
         Action<string>? buildLog = log is null ? null : message => log($"[build={buildId}] {message}");
         var workDir = Path.Combine(AppPaths.TempBase, "build", buildId);

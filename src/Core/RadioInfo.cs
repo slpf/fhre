@@ -114,6 +114,17 @@ public sealed class RadioInfo
             .Select(st => new RadioStationEditor(st))
             .FirstOrDefault();
     }
+
+    internal IEnumerable<RadioStationEditor> StationsForBank(string bankName, int? excludedNumber = null)
+    {
+        foreach (var station in _doc.Descendants("RadioStation"))
+        {
+            if (excludedNumber is not null && (int?)station.Attribute("Number") == excludedNumber) continue;
+            var editor = new RadioStationEditor(station);
+            if (editor.TrackBankNames().Contains(bankName, StringComparer.OrdinalIgnoreCase))
+                yield return editor;
+        }
+    }
 }
 
 public sealed class RadioStationEditor(XElement station)
@@ -142,7 +153,9 @@ public sealed class RadioStationEditor(XElement station)
     {
         if (!UsesMilliseconds)
         {
-            foreach (var sample in TrackList.Elements("Sample"))
+            var trackList = station.Elements("SampleList").FirstOrDefault(sl => (string?)sl.Attribute("Type") == "Track");
+            if (trackList is null) yield break;
+            foreach (var sample in trackList.Elements("Sample"))
             {
                 yield return (sample, null);
             }
@@ -822,21 +835,27 @@ public sealed class RadioStationEditor(XElement station)
         return station.Element("Banks")?
                    .Elements("Bank")
                    .Select(b => (string?) b.Attribute("Name"))
-                   .Where(n => n is not null && System.Text.RegularExpressions.Regex.IsMatch(n, @"^R\d+_Tracks(_|$)"))
+                   .Where(n => n is not null && Regex.IsMatch(n, @"^R\d+_Tracks(_|$)", RegexOptions.IgnoreCase))
                    .Select(n => n!) ?? [];
     }
 
-    public int ReconcileTracks(IReadOnlySet<ulong> bankIds, Func<string, ulong> hash, Action<string>? log = null)
+    public int ReconcileTracks(IReadOnlySet<ulong> bankIds, Func<string, ulong> hash, Action<string>? log = null) =>
+        ReconcileTracks(bankIds, hash, log, null);
+
+    internal int ReconcileTracks(IReadOnlySet<ulong> bankIds, Func<string, ulong> hash, Action<string>? log,
+        IReadOnlySet<ulong>? candidates)
     {
         var removed = 0;
 
         foreach (var s in TrackSamples().ToList())
         {
             var sn = (string?) s.Attribute("SoundName");
-            if (sn is null || bankIds.Contains(hash(sn)))
+            if (sn is null)
             {
                 continue;
             }
+            var id = hash(sn);
+            if (bankIds.Contains(id) || candidates is not null && !candidates.Contains(id)) continue;
 
             PurgeSoundName(sn);
             removed++;
@@ -1028,17 +1047,21 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
-    public void SyncCustomsFrom(RadioStationEditor reference)
+    public void SyncCustomsFrom(RadioStationEditor reference) => SyncCustomsFrom(reference, null);
+
+    internal void SyncCustomsFrom(RadioStationEditor reference, IReadOnlySet<ulong>? candidates)
     {
         if (ReferenceEquals(station, reference.Station))
         {
             return;
         }
+        bool Includes(string soundName) => candidates is null || candidates.Contains(Lookup.SoundNameToId(soundName));
         var referenceSamples = reference.TrackSamples()
-            .Where(s => ((string?) s.Attribute("SoundName"))?.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal) == true).ToList();
+            .Where(s => (string?)s.Attribute("SoundName") is { } name &&
+                name.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal) && Includes(name)).ToList();
         var referenceNames = referenceSamples.Select(s => (string) s.Attribute("SoundName")!).ToHashSet(StringComparer.Ordinal);
         var usesTrackBreakDown = UsesTrackBreakDownForCopy(reference);
-        foreach (var soundName in CustomSoundNames().Where(sn => !referenceNames.Contains(sn)).ToList())
+        foreach (var soundName in CustomSoundNames().Where(sn => Includes(sn) && !referenceNames.Contains(sn)).ToList())
         {
             PurgeSoundName(soundName);
         }

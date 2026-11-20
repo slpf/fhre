@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Xml.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia.Threading;
@@ -693,54 +694,29 @@ public sealed partial class MainWindowViewModel : ObservableObject
         SettingsService.Save(Settings);
     }
     
-    private async Task<(HashSet<ulong> Union, bool Suspicious)> ReadStationBankIdsAsync(StationInfo station, RadioInfo radio,
-        GameScanner.RadioResources resources, string bankName, string stagedBank)
+    private static int ReconcileStation(RadioStationEditor editor, GameScanner.RadioResources resources,
+        Dictionary<string, HashSet<ulong>?> idsByBank, IReadOnlySet<ulong>? candidates = null)
     {
-        var editor = radio.StationByNumber(station.Number);
-        if (editor is null)
+        var union = new HashSet<ulong>();
+        foreach (var bank in editor.TrackBankNames())
         {
-            return ([], false);
-        }
-
-        var candidates = editor.TrackBankNames()
-            .Select(n => n.Equals(bankName, StringComparison.OrdinalIgnoreCase) ? stagedBank : resources.BankPath(n))
-            .ToList();
-        if (candidates.Any(path => path is null))
-        {
-            Log.Line("reconcile: skipped because a station bank could not be located");
-            return ([], true);
-        }
-        var paths = candidates.OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (paths.Count == 0)
-        {
-            return ([], false);
-        }
-
-        var result = await Task.Run(() =>
-        {
-            var ids = new HashSet<ulong>();
-            var susp = false;
-            foreach (var p in paths)
+            if (!idsByBank.TryGetValue(bank, out var ids))
             {
-                var (part, declared) = FevBank.ReadStblInfoFromFile(p);
-
-                if (part.Count != declared && new FileInfo(p).Length > 506)
-                {
-                    susp = true;
-                }
-
-                ids.UnionWith(part);
+                var path = resources.BankPath(bank);
+                ids = path is null ? null : FevBank.ReadCompleteStblIdsFromFile(path);
+                idsByBank.Add(bank, ids);
             }
 
-            return (ids, susp);
-        });
-
-        if (result.susp)
-        {
-            Log.Line("reconcile: skipped because a bank did not contain all declared STBL ids");
+            if (ids is null)
+            {
+                Log.Line($"reconcile: skipped because the track IDs for {bank} could not be verified");
+                return 0;
+            }
+            union.UnionWith(ids);
         }
 
-        return result;
+        if (union.Count == 0 && candidates is null) return 0;
+        return editor.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line, candidates);
     }
 
     private static int NextCustomSeq(IEnumerable<TrackItemViewModel> list)
@@ -1678,6 +1654,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var station = SelectedStation;
         var bankName = station.BankName(SelectedVariant);
         var gamePath = Settings.GamePath;
+        if (GameScanner.IsGameProcessRunning(gamePath))
+        {
+            Status = Str.StatusBuildGameRunning;
+            PendingDialogTitle = Str.DlgGameRunningTitle;
+            PendingErrorDialog = Str.StatusBuildGameRunning;
+            return;
+        }
         var resources = GameScanner.ReadRadioResources(gamePath);
         var bankPath = resources.BankPath(bankName);
         if (bankPath is null)
@@ -1752,7 +1735,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             await StopLoudnessAnalysisAsync();
             var (addedSamples, written, savedXml, dead) = await Task.Run(() => BuildGameFilesAsync(
                 gamePath, station, bankName, bankPath, radioPath, otherFiles, resources, items, settings, Progress));
-            Log.Line($"wrote {written:N0} bytes -> {bankPath}");
+            if (written == 0 && savedXml == 0)
+            {
+                HasUnsavedChanges = false;
+                Status = Str.StatusBuildNoChanges;
+                return;
+            }
+            if (written > 0) Log.Line($"wrote {written:N0} bytes -> {bankPath}");
             Log.Line($"radio.write.ok bank={bankName} savedXml={savedXml} removed={dead}");
 
             if (dead > 0)
@@ -1802,114 +1791,131 @@ public sealed partial class MainWindowViewModel : ObservableObject
         GameScanner.RadioResources resources, List<BuildItem> items, AppSettings settings, Action<string> progress)
     {
         using var transaction = new GameFileTransaction(gamePath);
-        var stagedBank = transaction.Stage(bankPath);
-        var addedSamples = await BankBuildService.BuildToFileAsync(bankPath, stagedBank, items, settings, Log.Line, progress,
-                Log.IsVerbose, useBackupSources: false)
-            .ConfigureAwait(false);
-        var written = new FileInfo(stagedBank).Length;
-
-        var savedXml = 1;
-        var dead = 0;
+        transaction.EnsureGameClosed();
 
         var refRadio = RadioInfo.Load(refPath);
-        var (changedMeta, changedMarkers) = ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
-
-        var (union, suspicious) = await ReadStationBankIdsAsync(station, refRadio, resources, bankName, stagedBank);
-        if (!suspicious && union.Count > 0)
+        var originalReference = new XDocument(refRadio.Document);
+        var originalIds = FevBank.ReadCompleteStblIdsFromFile(bankPath);
+        var bankChanges = originalIds is null || items.Count != originalIds.Count
+            || items.Any(item => item.IsNewCustom || item.IsReplacement || item.RestoreFromBak)
+            || !originalIds.SetEquals(items.Select(item => item.BankId ?? Lookup.SoundNameToId(item.SoundName)));
+        IReadOnlyList<AddedSample> addedSamples = [];
+        var outputIds = originalIds;
+        long written = 0;
+        if (bankChanges)
         {
-            dead += refRadio.StationByNumber(station.Number)
-                ?.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line) ?? 0;
+            var stagedBank = transaction.Stage(bankPath);
+            addedSamples = await BankBuildService.BuildToStageAsync(bankPath, stagedBank, items, settings, Log.Line, progress,
+                    Log.IsVerbose, useBackupSources: false)
+                .ConfigureAwait(false);
+            outputIds = FevBank.ReadCompleteStblIdsFromFile(stagedBank)
+                ?? throw new InvalidDataException($"Could not verify the rebuilt bank: {bankName}");
+            written = new FileInfo(stagedBank).Length;
         }
 
-        transaction.StageRadio(refRadio, refPath);
+        var currentIds = outputIds ?? throw new InvalidDataException($"Could not read the track IDs for {bankName}");
+        var idsByBank = new Dictionary<string, HashSet<ulong>?>(StringComparer.OrdinalIgnoreCase) { [bankName] = currentIds };
+        var removed = originalIds?.Where(id => !currentIds.Contains(id)).ToHashSet() ?? [];
+        var bankIds = new HashSet<ulong>(currentIds);
+        bankIds.UnionWith(removed);
+        var (changedMeta, changedMarkers) = ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
+        var refStation = refRadio.StationByNumber(station.Number)!;
+        var dead = ReconcileStation(refStation, resources, idsByBank, refStation.TrackBankNames().Any() ? null : removed);
 
-        var refStation = refRadio.StationByNumber(station.Number);
         var enabled = items.Where(i => i.BankId is null || i.BankId == Lookup.SoundNameToId(i.SoundName))
             .ToDictionary(i => i.SoundName, i => i.Enabled);
         var markerRates = items.ToDictionary(i => i.SoundName, i => i.MarkerSampleRate);
-        var restored = items.Where(i => i.RestoreFromBak).Select(i => i.SoundName).ToList();
-
-        foreach (var lf in otherFiles)
+        var restored = items.Where(i => i.RestoreFromBak).Select(i => i.SoundName).ToHashSet(StringComparer.Ordinal);
+        var sharedChanges = addedSamples.Count > 0 || changedMarkers.Count > 0 || removed.Count > 0;
+        if (sharedChanges)
         {
-            if (refStation is null)
+            foreach (var editor in refRadio.StationsForBank(bankName, station.Number))
             {
-                break;
+                ApplySharedAudio(editor, addedSamples, changedMarkers, markerRates, restored);
+                if (removed.Count > 0) dead += ReconcileStation(editor, resources, idsByBank, removed);
             }
-
-            var xmlPath = resources.LanguagePath(lf) ?? throw new FileNotFoundException($"RadioInfo not found: {lf}");
-            var (saved, d) = StageLocalizedXml(transaction, xmlPath, station, bankName, items.Count > 0, addedSamples,
-                refStation, union, suspicious, changedMeta, changedMarkers, markerRates, enabled, restored);
-            savedXml += saved;
-            dead += d;
         }
 
-        transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath));
+        var savedXml = 0;
+        if (!XNode.DeepEquals(originalReference, refRadio.Document))
+        {
+            transaction.StageRadio(refRadio, refPath);
+            savedXml++;
+        }
+
+        var requested = otherFiles.Select(file => resources.LanguagePath(file)
+            ?? throw new FileNotFoundException($"RadioInfo not found: {file}")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> sharedPaths = sharedChanges
+            ? resources.Languages.Select(file => resources.LanguagePath(file)!)
+            : [];
+        foreach (var path in requested.Union(sharedPaths, StringComparer.OrdinalIgnoreCase)
+                     .Where(path => !string.Equals(path, refPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            var radio = RadioInfo.Load(path);
+            var original = new XDocument(radio.Document);
+            var editor = requested.Contains(path) ? radio.StationByNumber(station.Number) : null;
+            if (editor is not null)
+            {
+                ApplyLocalizedRadio(editor, refStation, bankName, items.Count > 0, bankIds, addedSamples,
+                    changedMeta, changedMarkers, markerRates, enabled, restored);
+                dead += ReconcileStation(editor, resources, idsByBank, editor.TrackBankNames().Any() ? null : removed);
+            }
+            if (sharedChanges)
+            {
+                foreach (var consumer in radio.StationsForBank(bankName, editor is null ? null : station.Number))
+                {
+                    ApplySharedAudio(consumer, addedSamples, changedMarkers, markerRates, restored);
+                    if (removed.Count > 0) dead += ReconcileStation(consumer, resources, idsByBank, removed);
+                }
+            }
+            if (XNode.DeepEquals(original, radio.Document)) continue;
+            transaction.StageRadio(radio, path);
+            savedXml++;
+        }
+
+        if (bankChanges) transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath));
         transaction.Commit();
         return (addedSamples, written, savedXml, dead);
     }
 
-    private static (int Saved, int Dead) StageLocalizedXml(
-        GameFileTransaction transaction, string xmlPath, StationInfo station, string bankName, bool bankHasContent, IReadOnlyList<AddedSample> addedSamples,
-        RadioStationEditor refStation, HashSet<ulong> union, bool suspicious,
+    private static void ApplyLocalizedRadio(
+        RadioStationEditor editor, RadioStationEditor reference, string bankName, bool bankHasContent,
+        IReadOnlySet<ulong> bankIds, IReadOnlyList<AddedSample> addedSamples,
         IReadOnlyDictionary<string, (string? DisplayName, string? Artist)> changedMeta,
         IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers,
-        IReadOnlyDictionary<string, int> markerRates,
-        IReadOnlyDictionary<string, bool> enabled,
-        IReadOnlyCollection<string> restoredNames)
+        IReadOnlyDictionary<string, int> markerRates, IReadOnlyDictionary<string, bool> enabled,
+        IReadOnlySet<string> restoredNames)
     {
-        var localized = RadioInfo.Load(xmlPath);
+        if (bankHasContent) editor.RegisterBank(bankName);
+        else editor.UnregisterBank(bankName);
+        editor.SyncCustomsFrom(reference, bankIds);
 
-        var ed = localized.StationByNumber(station.Number);
-        if (ed is null)
-        {
-            Log.Line($"station #{station.Number} not in {xmlPath}");
-            return (0, 0);
-        }
+        foreach (var (soundName, isEnabled) in enabled) editor.SetEnabled(soundName, isEnabled);
 
-        if (bankHasContent)
+        foreach (var sample in addedSamples.Where(sample => sample.IsReplacement))
         {
-            ed.RegisterBank(bankName);
+            editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate);
+            editor.SetSampleMeta(sample.SoundName, sample.DisplayName, sample.Artist, clearMissingArtist: true);
         }
-        else
-        {
-            ed.UnregisterBank(bankName);
-        }
-        ed.SyncCustomsFrom(refStation);
+        foreach (var soundName in restoredNames) editor.ClearReplacement(soundName);
 
-        foreach (var (sn, isEnabled) in enabled)
-        {
-            ed.SetEnabled(sn, isEnabled);
-        }
+        foreach (var (soundName, meta) in changedMeta) editor.SetSampleMeta(soundName, meta.DisplayName, meta.Artist);
+        foreach (var (soundName, markers) in changedMarkers) editor.SetMarkers(soundName, markers, markerRates.GetValueOrDefault(soundName));
+    }
 
-        foreach (var a in addedSamples.Where(a => a.IsReplacement))
+    private static void ApplySharedAudio(
+        RadioStationEditor editor, IReadOnlyList<AddedSample> addedSamples,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, long>> changedMarkers,
+        IReadOnlyDictionary<string, int> markerRates, IReadOnlySet<string> restoredNames)
+    {
+        foreach (var sample in addedSamples)
         {
-            ed.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
-            ed.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist, clearMissingArtist: true);
+            if (editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate)
+                && (!sample.IsReplacement || restoredNames.Contains(sample.SoundName)))
+                editor.ClearReplacement(sample.SoundName);
         }
-
-        foreach (var sn in restoredNames)
-        {
-            ed.ClearReplacement(sn);
-        }
-
-        foreach (var (sn, meta) in changedMeta)
-        {
-            ed.SetSampleMeta(sn, meta.DisplayName, meta.Artist);
-        }
-
-        foreach (var (sn, mk) in changedMarkers)
-        {
-            ed.SetMarkers(sn, mk, markerRates.GetValueOrDefault(sn));
-        }
-
-        var dead = 0;
-        if (!suspicious && union.Count > 0)
-        {
-            dead = ed.ReconcileTracks(union, Lookup.SoundNameToId, Log.Line);
-        }
-
-        transaction.StageRadio(localized, xmlPath);
-        return (1, dead);
+        foreach (var (soundName, markers) in changedMarkers)
+            editor.SetMarkers(soundName, markers, markerRates.GetValueOrDefault(soundName));
     }
 
     private static Dictionary<string, (string? DisplayName, string? Artist)> ApplySampleMeta(

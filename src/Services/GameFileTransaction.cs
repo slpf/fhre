@@ -8,7 +8,7 @@ namespace FH6RB.Services;
 internal sealed class GameFileTransaction : IDisposable
 {
     private sealed record Change(string Target, bool Existed);
-    private sealed record Journal(Guid Id, bool Settled, Change[] Changes);
+    private sealed record Journal(Guid Id, bool Settled, Change[] Changes, bool Preparing = false);
 
     private const string JournalName = ".fhre-transaction.json";
     private static readonly JsonSerializerOptions JournalOptions = new() { RespectRequiredConstructorParameters = true };
@@ -55,6 +55,7 @@ internal sealed class GameFileTransaction : IDisposable
 
         _locks.Add(OpenLock(target + ".fhre-lock"));
         _changes.Add(new Change(target, File.Exists(target)));
+        WriteJournal(new Journal(_id, false, _changes.ToArray(), Preparing: true));
         return StagePath(target, _id);
     }
 
@@ -65,6 +66,12 @@ internal sealed class GameFileTransaction : IDisposable
     }
 
     public void StageCopy(string source, string target) => Atomic.Copy(source, Stage(target));
+
+    public void EnsureGameClosed()
+    {
+        if (GameScanner.IsGameProcessRunning(_root))
+            throw new IOException("Close the game before writing its radio files.");
+    }
 
     public void Commit()
     {
@@ -79,6 +86,7 @@ internal sealed class GameFileTransaction : IDisposable
 
         var journal = new Journal(_id, false, changes);
         WriteJournal(journal);
+        EnsureGameClosed();
         _journalOwnsStaging = true;
         try
         {
@@ -119,7 +127,7 @@ internal sealed class GameFileTransaction : IDisposable
                 || !targets.Add(change.Target))
                 throw new InvalidDataException($"Invalid target in game file recovery journal: {_journalPath}");
         }
-        if (!journal.Settled && GameScanner.IsGameProcessRunning(_root))
+        if (!journal.Preparing && !journal.Settled && GameScanner.IsGameProcessRunning(_root))
             throw new IOException("Close the game before recovering its radio files.");
 
         Recover(journal);
@@ -128,7 +136,7 @@ internal sealed class GameFileTransaction : IDisposable
 
     private void Recover(Journal journal)
     {
-        if (!journal.Settled)
+        if (!journal.Preparing && !journal.Settled)
         {
             foreach (var change in journal.Changes.Reverse())
             {
@@ -152,7 +160,9 @@ internal sealed class GameFileTransaction : IDisposable
         var clean = true;
         foreach (var change in journal.Changes)
         {
-            clean &= DeleteTemporary(StagePath(change.Target, journal.Id));
+            var staged = StagePath(change.Target, journal.Id);
+            clean &= DeleteTemporary(staged);
+            clean &= DeleteTemporary(staged + ".tmp");
             clean &= DeleteTemporary(RollbackPath(change.Target, journal.Id));
         }
         if (clean) DeleteTemporary(_journalPath);
@@ -180,9 +190,9 @@ internal sealed class GameFileTransaction : IDisposable
 
     public void Dispose()
     {
-        if (!_journalOwnsStaging)
+        if (!_journalOwnsStaging && _changes.Count > 0)
         {
-            foreach (var change in _changes) DeleteTemporary(StagePath(change.Target, _id));
+            Cleanup(new Journal(_id, false, _changes.ToArray(), Preparing: true));
         }
         foreach (var handle in _locks) handle.Dispose();
     }

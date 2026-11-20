@@ -126,6 +126,8 @@ public static class Str
     public const string StatusBuildMissingFmt = "Build: missing {0} (put them in app folder)";
     public const string StatusBuildBankNotFoundFmt = "Build: bank file not found ({0})";
     public const string StatusBuildNoRadioInfo = "Build: RadioInfo not available";
+    public const string StatusBuildNoChanges = "Build: no changes to save";
+    public const string StatusBuildGameRunning = "Close the game before building.";
     public const string StatusProcessingFmt = "Processing {0}…";
     public const string StatusBuiltFmt = "Built {0}: {1} tracks";
     public const string StatusBuiltCustomFmt = ", +{0} custom";

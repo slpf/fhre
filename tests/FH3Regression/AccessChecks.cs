@@ -189,6 +189,16 @@ internal static class AccessChecks
         Check(File.ReadAllText(bank) == "committed bank" && File.ReadAllText(xml) == "committed XML" && File.Exists(backup),
             "Recovery rolled back a completed transaction.");
         Check(!File.Exists(pending) && !File.Exists(rollback), "Recovery left temporary files from the completed transaction.");
+
+        File.WriteAllText(stagedXml, "prepared XML");
+        File.WriteAllText($"{bank}.{id:N}.stage.tmp", "incomplete bank");
+        File.WriteAllText(pending, JsonSerializer.Serialize(new { Id = id, Settled = false, Changes = changes, Preparing = true }));
+        recover.Invoke(null, [folder]);
+
+        Check(File.ReadAllText(bank) == "committed bank" && File.ReadAllText(xml) == "committed XML" && File.Exists(backup),
+            "Preparation recovery changed live game files.");
+        Check(!File.Exists(stagedXml) && !File.Exists($"{bank}.{id:N}.stage.tmp") && !File.Exists(pending),
+            "Recovery did not remove the interrupted preparation files.");
     }
 
     private static void CheckMainWindowResourceError(string game)
