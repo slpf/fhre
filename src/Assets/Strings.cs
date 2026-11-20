@@ -136,6 +136,7 @@ public static class Str
     public const string StatusBuiltCleanedFmt = ", cleaned {0} dead";
     public const string StatusBuildTooLarge = "Build stopped: bank exceeds the 2 GB limit";
     public const string StatusBuildErrorFmt = "Build error: {0}";
+    public const string StatusBuildBankChanged = "The bank has changed since it was opened. Reload the station before building.";
     public const string DlgBankTooLargeWarnTitle = "Bank may be too large";
     public const string DlgBankTooLargeWarnBody = "The projected bank size is over 2 GB. The game may fail to load it, and the build itself can fail. Continue anyway?";
     public const string DlgBankTooLargeWarnOk = "Build anyway";

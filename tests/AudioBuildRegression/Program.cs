@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using FH6RB.Collections;
 using FH6RB.Core;
 using FH6RB.Services;
 using FH6RB.ViewModels;
@@ -323,6 +324,42 @@ static async Task TestGameWritesAsync(string temp, string input)
     Check(repeat.Written == 0 && repeat.SavedXml == 0 && stamps.All(pair => File.GetLastWriteTimeUtc(pair.Key) == pair.Value),
         "A build without changes rewrote the bank or RadioInfo.");
 
+    var backup = bank + ".bak";
+    var savedBackup = backup + ".saved";
+    var fileState = new[] { bank, en, de }.ToDictionary(path => path, File.ReadAllBytes);
+    File.Move(backup, savedBackup);
+    try
+    {
+        var restorePlan = plan.Select(item => item with { RestoreFromBak = true }).ToList();
+        try
+        {
+            await BuildAsync(restorePlan, []);
+            throw new InvalidOperationException("Restoring with a missing backup succeeded.");
+        }
+        catch (FileNotFoundException ex) when (ex.FileName == backup)
+        {
+            Check(!File.Exists(backup) && fileState.All(pair => File.ReadAllBytes(pair.Key).SequenceEqual(pair.Value)),
+                "A failed restore wrote the bank, backup or XML.");
+        }
+
+        File.Copy(otherBank, backup);
+        try
+        {
+            await BuildAsync(restorePlan, []);
+            throw new InvalidOperationException("Restoring a track absent from the backup succeeded.");
+        }
+        catch (InvalidDataException ex) when (ex.Message.Contains("original audio is missing", StringComparison.Ordinal))
+        {
+            Check(File.ReadAllBytes(backup).SequenceEqual(otherBankBytes)
+                && fileState.All(pair => File.ReadAllBytes(pair.Key).SequenceEqual(pair.Value)),
+                "A restore with the wrong backup wrote the bank, backup or XML.");
+        }
+    }
+    finally
+    {
+        File.Move(savedBackup, backup, overwrite: true);
+    }
+
     foreach (var path in new[] { en, de })
     {
         var radio = RadioInfo.Load(path);
@@ -338,7 +375,42 @@ static async Task TestGameWritesAsync(string temp, string input)
         Check(track.SampleLength == 144000 && track.Markers!["End"] == 143999 && track.DisplayName == "Independent station edit",
             "Original station restore left stale audio timing or removed another station's edit.");
     }
-    Console.WriteLine("Verified bank writes preserve sibling tracks, synchronize shared audio, and skip unchanged files.");
+    var beforeChange = BankReader.ReadTracks(bank, RadioInfo.Load(en), station.Number);
+    var snapshot = typeof(BankReadResult).GetProperty("Snapshot", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(beforeChange);
+    typeof(MainWindowViewModel).GetField("_loadedBankSnapshot", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(vm, snapshot);
+    var updatedBank = Path.Combine(temp, "external-edit.bank");
+    var custom = new BuildItem(Naming.MakeSoundName(77), true, input, "External track", null, null, true);
+    await BankBuildService.BuildToFileAsync(bank, updatedBank, [..plan, custom], settings);
+    File.Move(updatedBank, bank, overwrite: true);
+    var updatedBytes = File.ReadAllBytes(bank);
+    var updatedXml = File.ReadAllBytes(en);
+    try
+    {
+        await BuildAsync(plan.Select(item => item with { DisplayName = "Stale title" }).ToList(), []);
+        throw new InvalidOperationException("A stale track list was published.");
+    }
+    catch (IOException ex) when (ex.Message.Contains("Reload the station", StringComparison.Ordinal))
+    {
+        Check(File.ReadAllBytes(bank).SequenceEqual(updatedBytes) && File.ReadAllBytes(en).SequenceEqual(updatedXml),
+            "A rejected stale build changed the bank or XML.");
+    }
+
+    var loaded = BankReader.ReadTracks(bank, RadioInfo.Load(en), station.Number).Tracks;
+    var tracks = new RangeObservableCollection<TrackItemViewModel>();
+    tracks.Reset(loaded.Select(track => new TrackItemViewModel(track)));
+    var toDelete = tracks.Single(track => track.SoundName == custom.SoundName);
+    void SetField(string name, object value) =>
+        typeof(MainWindowViewModel).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(vm, value);
+    SetField("<Tracks>k__BackingField", tracks);
+    SetField("_baseBankMode", 15);
+    SetField("_baseBankSize", updatedBytes.LongLength);
+    SetField("_baseBankAudioBytes", loaded.Sum(track => track.BankBytes));
+    vm.DeleteCommand.Execute(toDelete);
+    var projected = (long) typeof(MainWindowViewModel).GetField("_projectedTotalBytes", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(vm)!;
+    Check(projected == updatedBytes.LongLength - toDelete.BankBytes && vm.StatusSizeText.StartsWith('~'),
+        "Removing a previously saved custom track did not reduce the projected size.");
+
+    Console.WriteLine("Verified bank writes preserve sibling tracks, skip unchanged files, and reject failed restores and stale edits.");
 }
 
 static string[] GenerateInputs(string temp)
@@ -435,7 +507,86 @@ static async Task TestBuildAsync(string temp, string[] inputs, bool normalize)
     await BankBuildService.BuildToFileAsync(output, empty, [], settings, log.Enqueue);
     Check(FevBank.ReadStblCountFromFile(empty) == 0 && Fsb5.ReadLayout(FevBank.ReadSkeleton(empty).Fsb5HeaderRegion).Samples.Count == 0, "Removing all tracks failed.");
     TestRiffPadding(output, temp);
+    if (!normalize) await TestBankStructureAsync(temp, output, fsb, singleFsb, kept, settings);
     Console.WriteLine($"Verified WAV stereo/mono, FLAC and MP3 with normalization={normalize}, gain, STBL, repeat build, passthrough and empty plan.");
+}
+
+static async Task TestBankStructureAsync(string temp, string bank, byte[] fsb, string singleFsb,
+    BuildItem[] items, AppSettings settings)
+{
+    var bankBytes = File.ReadAllBytes(bank);
+    var parsed = new FevBank(bankBytes);
+    var stbl = FevBank.BuildStbl(parsed.ReadStbl());
+    var names = new byte[items.Length * 8];
+    for (var i = 0; i < items.Length; i++)
+    {
+        var offset = (items.Length + i) * 4;
+        BinaryPrimitives.WriteInt32LittleEndian(names.AsSpan(i * 4), offset);
+        Encoding.ASCII.GetBytes($"t{i}").CopyTo(names, offset);
+    }
+    var nameStart = 60 + BinaryPrimitives.ReadInt32LittleEndian(fsb.AsSpan(12));
+    byte[] namedFsb = [..fsb[..nameStart], ..names, ..fsb[nameStart..]];
+    BinaryPrimitives.WriteInt32LittleEndian(namedFsb.AsSpan(16), names.Length);
+    var namedBank = Path.Combine(temp, "named.bank");
+    var namedBytes = parsed.WithStblAndFsb(stbl, namedFsb);
+    File.WriteAllBytes(namedBank, namedBytes);
+    var replacement = items[0] with { IsNewCustom = true, SourcePath = singleFsb };
+    var rebuilt = Path.Combine(temp, "named-rebuilt.bank");
+    await BankBuildService.BuildToFileAsync(namedBank, rebuilt, [items[2], replacement, items[1]], settings);
+
+    static string[] ReadNames(byte[] bank)
+    {
+        var block = new FevBank(bank).ExtractFsb5();
+        var table = block.AsSpan(60 + BinaryPrimitives.ReadInt32LittleEndian(block.AsSpan(12)),
+            BinaryPrimitives.ReadInt32LittleEndian(block.AsSpan(16)));
+        var count = BinaryPrimitives.ReadInt32LittleEndian(block.AsSpan(8));
+        var result = new string[count];
+        for (var i = 0; i < count; i++)
+        {
+            var offset = BinaryPrimitives.ReadInt32LittleEndian(table[(i * 4)..]);
+            result[i] = Encoding.ASCII.GetString(table.Slice(offset, 2));
+        }
+        return result;
+    }
+
+    Check(ReadNames(File.ReadAllBytes(rebuilt)).SequenceEqual(["t2", "t0", "t1"]),
+        "Replacing, reordering and removing samples lost their names.");
+    var editor = new BankEditor(namedBytes);
+    var edited = editor.Build([PlanItem.Keep(3), PlanItem.Add(editor.HashForIndex(0), editor.SourceSamples[1])]);
+    Check(ReadNames(edited).SequenceEqual(["t3", "t0"]), "The in-memory editor lost names after a replacement.");
+
+    var malformed = Path.Combine(temp, "bad-stbl-index.bank");
+    var indexOffset = FindTag(namedBytes, "STBL"u8) + 8 + 10 + items.Length * 8 + 2;
+    namedBytes[indexOffset] = (byte) items.Length;
+    File.WriteAllBytes(malformed, namedBytes);
+    Check(BankReader.ReadTracks(malformed, null, 1).Error?.Contains("outside the FSB5 sample table", StringComparison.Ordinal) == true,
+        "The track reader accepted an out-of-range STBL index.");
+
+    foreach (var emptyTemplate in new[] { false, true })
+    {
+        var template = emptyTemplate ? Path.Combine(temp, "size-limit-empty.bank") : bank;
+        if (emptyTemplate) WriteEmptyBank(template, sndhSize: 0);
+        var layout = FevBank.ReadSkeleton(template);
+        var output = Path.Combine(temp, $"size-limit-{emptyTemplate}.bank");
+        var trackTable = FevBank.BuildStbl([(Lookup.SoundNameToId(items[0].SoundName), 0)]);
+        void Assemble(long dataLength) =>
+            FevBank.AssembleToFile(output, layout.FmtChunk, layout.ListPayload, layout.StblRelOff, layout.StblOldSize,
+                trackTable, fsb[..60], [new byte[32]], [new FevBank.DataRef(bank, 0, dataLength)], emptyTemplate: emptyTemplate);
+
+        Assemble(0);
+        var baseLength = new FileInfo(output).Length;
+        File.Delete(output);
+        var dataLength = (long) int.MaxValue - 3 + FevBank.ModMarker.Length - baseLength;
+        try
+        {
+            Assemble(dataLength);
+            throw new InvalidOperationException("The bank writer accepted a file over its size limit.");
+        }
+        catch (BankTooLargeException)
+        {
+            Check(!File.Exists(output), "The size limit was checked after opening the output.");
+        }
+    }
 }
 
 static async Task TestFadpcmAsync(string temp, string input)

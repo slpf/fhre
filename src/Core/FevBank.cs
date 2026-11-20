@@ -91,16 +91,7 @@ public sealed class FevBank
         }
     }
 
-    private byte[] FmtChunk() => _src[_fmtOff..(_fmtPay + _fmtSize)];
-    private byte[] ListPayloadBeforeStbl() => _src[_listPay.._stblOff];
-
-    private byte[] ListPayloadAfterStbl()
-    {
-        var e = _stblPay + _stblSize;
-        if ((e & 1) != 0) e++;
-        return _src[e..(_listPay + _listSize)];
-    }
-
+    private byte[] FmtChunk() => _src[_fmtOff..(_fmtPay + _fmtSize + (_fmtSize & 1))];
     public int Fsb5Mode => _fsbOff > 0 && _fsbOff + 0x1C <= _src.Length ? (int) U32(_src, _fsbOff + 0x18) : 0;
     public byte[] ExtractFsb5()
     {
@@ -120,6 +111,14 @@ public sealed class FevBank
     {
         var (ids, declared) = ReadStblInfoFromFile(path, requireComplete: true);
         return declared >= 0 && ids.Count == declared ? ids : null;
+    }
+
+    internal static HashSet<ulong> ReadCompleteStblIds(Stream stream)
+    {
+        var (ids, declared) = ReadStblInfo(stream, requireComplete: true, out _);
+        if (declared < 0 || ids.Count != declared)
+            throw new InvalidDataException("Invalid or incomplete RIFF/FEV track bank.");
+        return ids;
     }
 
     internal static (HashSet<ulong> Ids, int Declared) ReadStblInfoFromFile(string path, bool requireComplete = false)
@@ -277,52 +276,51 @@ public sealed class FevBank
         return p == list.Length ? declared : -1;
     }
     
-    public sealed record BankTrack(ulong Id, int Index, long Frames, int SampleRate);
-    
+    public sealed record BankTrack(ulong Id, int Index, long Frames, int SampleRate)
+    {
+        internal long Bytes { get; init; }
+    }
+
     public static List<BankTrack> ReadTrackInfoFromFile(string path)
     {
-        var result = new List<BankTrack>();
-        using var fs = File.OpenRead(path);
-        var (list, stbl) = ReadTrackProject(fs);
-        if (stbl.Count == 0) return result;
-        var (fsbOff, _) = ParseSndh(list);
-        
-        (long Frames, int Rate)[] samp = [];
-        
-        if (fsbOff > 0 && fsbOff + 60 <= fs.Length)
+        using var stream = File.OpenRead(path);
+        return ReadTrackInfo(stream, out _, out _);
+    }
+
+    internal static List<BankTrack> ReadTrackInfo(Stream stream, out int mode, out long audioBytes)
+    {
+        var (list, stbl) = ReadTrackProject(stream);
+        var (fsbOffset, fsbSize) = ParseSndh(list);
+        mode = 0;
+        audioBytes = 0;
+        if (fsbOffset == 0 && fsbSize == 0)
+            return stbl.Select(track => new BankTrack(track.Id, track.Index, 0, 0)).ToList();
+
+        var (region, _) = ReadFsbRegion(stream, fsbOffset, fsbSize);
+        var samples = Fsb5.ReadLayout(region).Samples;
+        ValidateTrackIndices(stbl, samples.Count);
+        mode = (int) U32(region, 24);
+        audioBytes = samples.Sum(sample => sample.Header.Length + AlignDataLength(sample.DataLen));
+        return stbl.Select(track =>
         {
-            fs.Seek(fsbOff, SeekOrigin.Begin);
-            
-            var fh = new byte[60];
-            
-            if (fs.Read(fh, 0, 60) == 60 && Cc(fh, 0) == "FSB5")
+            var sample = samples[track.Index];
+            return new BankTrack(track.Id, track.Index, sample.Frames, sample.SampleRate)
             {
-                var shSize = (int) U32(fh, 12);
-                var nameSize = (int) U32(fh, 16);
-                var need = 60L + shSize + nameSize;
-                
-                if (need > 60 && fsbOff + need <= fs.Length && need < 64 * 1024 * 1024)
-                {
-                    var buf = new byte[need];
-                    
-                    fs.Seek(fsbOff, SeekOrigin.Begin);
-                    
-                    if (fs.Read(buf, 0, (int) need) == need)
-                    {
-                        samp = Fsb5.ReadSampleInfo(buf);
-                    }
-                }
-            }
-        }
+                Bytes = sample.Header.Length + AlignDataLength(sample.DataLen)
+            };
+        }).ToList();
+    }
 
-        foreach (var (sid, idx) in stbl)
+    internal static void ValidateTrackIndices(List<(ulong Id, int Index)> tracks, int sampleCount)
+    {
+        var indices = new HashSet<int>();
+        foreach (var (_, index) in tracks)
         {
-            var has = idx >= 0 && idx < samp.Length;
-            
-            result.Add(new BankTrack(sid, idx, has ? samp[idx].Frames : 0, has ? samp[idx].Rate : 0));
+            if (index < 0 || index >= sampleCount)
+                throw new InvalidDataException($"STBL sample index {index} is outside the FSB5 sample table.");
+            if (!indices.Add(index))
+                throw new InvalidDataException($"Duplicate STBL sample index {index}.");
         }
-
-        return result;
     }
 
     private static List<(ulong Id, int Index)> ParseStblEntries(byte[] list)
@@ -387,7 +385,7 @@ public sealed class FevBank
             var size = (int) U32(list, p + 4);
             var pay = p + 8;
 
-            if (id == "SNDH" && pay + 12 <= list.Length)
+            if (id == "SNDH" && size >= 12 && pay + 12 <= list.Length)
             {
                 return ((int) U32(list, pay + 4), (int) U32(list, pay + 8));
             }
@@ -439,150 +437,82 @@ public sealed class FevBank
 
     public bool IsEmptySkeleton => _sndOff == 0 || _stblSize == 0;
 
-    public byte[] FillEmpty(byte[] stblPayload, byte[] newFsb5)
+    public byte[] FillEmpty(byte[] stblPayload, byte[] newFsb5) =>
+        BuildBank(stblPayload, newFsb5, emptyTemplate: true);
+
+    public byte[] WithStblAndFsb(byte[] stblPayload, byte[] newFsb5) =>
+        BuildBank(stblPayload, newFsb5, emptyTemplate: false);
+
+    private byte[] BuildBank(byte[] stblPayload, byte[] fsb, bool emptyTemplate)
     {
-        var proj = new MemoryStream();
-        
-        proj.Write(_src, _listPay, 4);
+        var header = BuildBankHeader(FmtChunk(), _src[_listPay..(_listPay + _listSize)], stblPayload, fsb.Length,
+            emptyTemplate, markerLength: 0);
+        var bank = new byte[header.Length + fsb.Length];
+        header.CopyTo(bank, 0);
+        fsb.CopyTo(bank, header.Length);
+        return bank;
+    }
 
-        var p = _listPay + 4;
-        var end = _listPay + _listSize;
+    private static void WriteChunk(Stream stream, string id, byte[] payload)
+    {
+        WriteTag(stream, id);
+        WriteU32(stream, (uint) payload.Length);
+        stream.Write(payload);
+        if ((payload.Length & 1) != 0) stream.WriteByte(0);
+    }
 
-        while (p + 8 <= end)
+    private static byte[] BuildBankHeader(byte[] fmtChunk, byte[] list, byte[] stbl, long fsbSize,
+        bool emptyTemplate, int markerLength, (int Offset, int Size)? stblChunk = null)
+    {
+        var (stblOffset, stblSize) = stblChunk ?? FindChunkInList(list, "STBL");
+        var (sndhOffset, sndhSize) = FindChunkInList(list, "SNDH");
+        if (stblOffset < 0 || sndhOffset < 0 || !emptyTemplate && sndhSize < 12 || fmtChunk.Length < 8)
+            throw new InvalidDataException("Bank template is missing a valid FMT, STBL or SNDH chunk.");
+
+        var sndhEnd = sndhOffset + 8 + sndhSize + (sndhSize & 1);
+        if (emptyTemplate)
         {
-            var id = Cc(_src, p);
-            var size = (int) U32(_src, p + 4);
-            var pay = p + 8;
-
-            switch (id)
-            {
-                case "STBL":
-                    WriteChunk(proj, "STBL", stblPayload);
-                    break;
-                case "SNDH":
-                {
-                    var sndh = new byte[12];
-                    BinaryPrimitives.WriteUInt16LittleEndian(sndh.AsSpan(0), 3);
-                    BinaryPrimitives.WriteUInt16LittleEndian(sndh.AsSpan(2), 8);
-                    BinaryPrimitives.WriteUInt32LittleEndian(sndh.AsSpan(8), (uint) newFsb5.Length);
-                    WriteChunk(proj, "SNDH", sndh);
-                    break;
-                }
-                default:
-                {
-                    var chunkLen = pay + size - p;
-                    proj.Write(_src, p, chunkLen);
-                    if ((chunkLen & 1) != 0) proj.WriteByte(0);
-                    break;
-                }
-            }
-
-            p = pay + size;
-            
-            if ((p & 1) != 0)
-            {
-                p++;
-            }
+            using var normalized = new MemoryStream();
+            normalized.Write(list.AsSpan(0, sndhOffset));
+            WriteChunk(normalized, "SNDH", [3, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            normalized.Write(list.AsSpan(sndhEnd));
+            list = normalized.ToArray();
+            (stblOffset, stblSize) = FindChunkInList(list, "STBL");
         }
 
-        var projBytes = proj.ToArray();
-        var sndPayloadStart = 12 + FmtChunk().Length + 8 + projBytes.Length + 8;
-        var sndPrefix = AlignPrefix(sndPayloadStart);
-        var sndPayload = new byte[sndPrefix + newFsb5.Length];
-        
-        Buffer.BlockCopy(newFsb5, 0, sndPayload, sndPrefix, newFsb5.Length);
-
-        var body = new MemoryStream();
-        var bw = new BinaryWriter(body);
-        
-        bw.Write(FmtChunk());
-        bw.Write(System.Text.Encoding.ASCII.GetBytes("LIST"));
-        bw.Write((uint) projBytes.Length);
-        bw.Write(projBytes);
-        bw.Write(System.Text.Encoding.ASCII.GetBytes("SND "));
-        bw.Write((uint) sndPayload.Length);
-        bw.Write(sndPayload);
-
-        var outMs = new MemoryStream();
-        var ow = new BinaryWriter(outMs);
-        
-        ow.Write(System.Text.Encoding.ASCII.GetBytes("RIFF"));
-        ow.Write((uint) (body.Length + 4));
-        ow.Write(System.Text.Encoding.ASCII.GetBytes("FEV "));
-        ow.Write(body.ToArray());
-
-        var outBytes = outMs.ToArray();
-        var fixedBank = new FevBank(outBytes);
-        var fsbAbs = fixedBank._sndPay + sndPrefix;
-        
-        BinaryPrimitives.WriteUInt32LittleEndian(outBytes.AsSpan(fixedBank._sndhPay + 4), (uint) fsbAbs);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBytes.AsSpan(fixedBank._sndhPay + 8), (uint) newFsb5.Length);
-
-        return outBytes;
-    }
-
-    private static void WriteChunk(Stream s, string id, byte[] payload)
-    {
-        s.Write(System.Text.Encoding.ASCII.GetBytes(id));
-        Span<byte> len = stackalloc byte[4];
-        BinaryPrimitives.WriteUInt32LittleEndian(len, (uint) payload.Length);
-        s.Write(len);
-        s.Write(payload);
-        
-        if ((payload.Length & 1) != 0)
+        using var project = new MemoryStream();
+        project.Write(list.AsSpan(0, stblOffset));
+        WriteChunk(project, "STBL", stbl);
+        project.Write(list.AsSpan(stblOffset + 8 + stblSize + (stblSize & 1)));
+        var projectBytes = project.ToArray();
+        var soundStart = 12L + fmtChunk.Length + 8 + projectBytes.Length + 8;
+        var prefix = AlignDataLength(soundStart) - soundStart;
+        var fsbStart = soundStart + prefix;
+        var riffSize = checked(fsbStart + fsbSize);
+        var fileSize = checked(riffSize + markerLength);
+        if (fileSize > int.MaxValue)
         {
-            s.WriteByte(0);
+            throw new BankTooLargeException(
+                $"Resulting bank is {fileSize / 1073741824.0:0.00} GB, over the 2 GB limit the game can load. " +
+                "Use fewer tracks or place them in a different bank.");
         }
+
+        (sndhOffset, _) = FindChunkInList(projectBytes, "SNDH");
+        BinaryPrimitives.WriteUInt32LittleEndian(projectBytes.AsSpan(sndhOffset + 12), (uint) fsbStart);
+        BinaryPrimitives.WriteUInt32LittleEndian(projectBytes.AsSpan(sndhOffset + 16), (uint) fsbSize);
+
+        using var header = new MemoryStream();
+        WriteTag(header, "RIFF");
+        WriteU32(header, (uint) (riffSize - 8));
+        WriteTag(header, "FEV ");
+        header.Write(fmtChunk);
+        WriteChunk(header, "LIST", projectBytes);
+        WriteTag(header, "SND ");
+        WriteU32(header, (uint) (prefix + fsbSize));
+        WriteZeros(header, prefix);
+        return header.ToArray();
     }
 
-    private static int AlignPrefix(int sndPayloadStart) => (0x20 - sndPayloadStart % 0x20) % 0x20;
-
-    public byte[] WithStblAndFsb(byte[] stblPayload, byte[] newFsb5)
-    {
-        var stblPad = stblPayload.Length & 1;
-        var stblChunkLen = 8 + stblPayload.Length + stblPad;
-        var before = ListPayloadBeforeStbl();
-        var after = ListPayloadAfterStbl();
-        var listLen = before.Length + stblChunkLen + after.Length;
-        var fmt = FmtChunk();
-        var sndPayloadStart = 12 + fmt.Length + 8 + listLen + 8;
-        var prefix = AlignPrefix(sndPayloadStart);
-        var sndPayloadLen = prefix + newFsb5.Length;
-        var bodyLen = fmt.Length + 8 + listLen + 8 + sndPayloadLen;
-        var outBytes = new byte[12 + bodyLen];
-        var pos = 0;
-        
-        void Tag(string s) { foreach (var ch in s) outBytes[pos++] = (byte) ch; }
-        void U32w(long v) { BinaryPrimitives.WriteUInt32LittleEndian(outBytes.AsSpan(pos), (uint) v); pos += 4; }
-        void Bytes(byte[] src) { src.CopyTo(outBytes.AsSpan(pos)); pos += src.Length; }
-
-        Tag("RIFF"); 
-        U32w(bodyLen + 4); 
-        Tag("FEV ");
-        Bytes(fmt);
-        Tag("LIST"); 
-        U32w(listLen);
-        Bytes(before);
-        Tag("STBL"); 
-        U32w(stblPayload.Length); 
-        Bytes(stblPayload); pos += stblPad;
-        Bytes(after);
-        Tag("SND "); 
-        U32w(sndPayloadLen);
-        
-        pos += prefix;
-        newFsb5.CopyTo(outBytes.AsSpan(pos));
-        pos += newFsb5.Length;
-
-        var fixedBank = new FevBank(outBytes);
-        var newFsbOff = fixedBank._sndPay + prefix;
-
-        BinaryPrimitives.WriteUInt32LittleEndian(outBytes.AsSpan(fixedBank._sndhPay + 4), (uint) newFsbOff);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBytes.AsSpan(fixedBank._sndhPay + 8), (uint) newFsb5.Length);
-
-        return outBytes;
-    }
-    
     public List<(ulong Id, int Index)> ReadStbl()
     {
         if (_stblOff == 0 || _stblPay <= 0 || _stblPay + 10 > _src.Length)
@@ -673,18 +603,17 @@ public sealed class FevBank
             
             if (id == "FMT ")
             {
-                var pay = ReadExact(fs, size);
-                fmtChunk = new byte[8 + size];
-                Array.Copy(hdr, 0, fmtChunk, 0, 8);
-                Array.Copy(pay, 0, fmtChunk, 8, size);
+                fmtChunk = new byte[8 + size + (size & 1)];
+                hdr.CopyTo(fmtChunk, 0);
+                fs.ReadExactly(fmtChunk.AsSpan(8));
             }
             else if (id == "LIST") { listPay = ReadExact(fs, size); }
             else if (id == "SND ") { sawSnd = true; break; }
             else { fs.Seek(size, SeekOrigin.Current); }
-            if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
+            if (id != "FMT " && (size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
         }
 
-        if (!sawSnd || listPay is null || fmtChunk is null)
+        if (listPay is null || fmtChunk is null)
         {
             return new BankSkeleton(fmtChunk ?? [], listPay ?? [], 0, 0, [], [], 0, 0, Empty: true);
         }
@@ -692,27 +621,37 @@ public sealed class FevBank
         var (stblRelOff, stblSize) = FindChunkInList(listPay, "STBL");
         var (sndhRelOff, _) = FindChunkInList(listPay, "SNDH");
         
-        if (stblRelOff < 0 || sndhRelOff < 0)
+        if (!sawSnd || stblRelOff < 0 || sndhRelOff < 0)
         {
-            return new BankSkeleton(fmtChunk, listPay, 0, 0, [], [], 0, 0, Empty: true);
+            return new BankSkeleton(fmtChunk, listPay, stblRelOff, stblSize, [], [], 0, 0, Empty: true);
         }
 
-        long fsbOff = BinaryPrimitives.ReadUInt32LittleEndian(listPay.AsSpan(sndhRelOff + 8 + 4));
+        var (fsbOffset, fsbSize) = ParseSndh(listPay);
         var stbl = ParseStblPayload(listPay, stblRelOff + 8);
+        var (region, dataStart) = ReadFsbRegion(fs, fsbOffset, fsbSize);
+        var mode = (int) U32(region, 24);
+        return new BankSkeleton(fmtChunk, listPay, stblRelOff, stblSize, stbl, region, dataStart, mode, Empty: false);
+    }
 
-        fs.Seek(fsbOff, SeekOrigin.Begin);
-        
-        var h60 = ReadExact(fs, Fsb5HeaderSize);
-        var shs = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(12));
-        var ns = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(16));
-        var mode = (int) BinaryPrimitives.ReadUInt32LittleEndian(h60.AsSpan(0x18));
+    private static (byte[] HeaderRegion, long DataStart) ReadFsbRegion(Stream stream, long offset, long size)
+    {
+        if (offset <= 0 || size < Fsb5HeaderSize || offset + size > stream.Length)
+            throw new InvalidDataException("SNDH points outside the bank.");
 
-        fs.Seek(fsbOff, SeekOrigin.Begin);
-        
-        var region = ReadExact(fs, Fsb5HeaderSize + shs);
-        var dataStartAbs = fsbOff + Fsb5HeaderSize + shs + ns;
+        stream.Position = offset;
+        var header = ReadExact(stream, Fsb5HeaderSize);
+        if (!header.AsSpan(0, 4).SequenceEqual("FSB5"u8))
+            throw new InvalidDataException("SNDH does not point to an FSB5 block.");
 
-        return new BankSkeleton(fmtChunk, listPay, stblRelOff, stblSize, stbl, region, dataStartAbs, mode, Empty: false);
+        var headerSize = Fsb5HeaderSize + (long) U32(header, 12);
+        var dataOffset = headerSize + U32(header, 16);
+        if (dataOffset > 64 * 1024 * 1024 || dataOffset + U32(header, 20) > size)
+            throw new InvalidDataException("FSB5 header or data region lies outside the bank.");
+
+        var region = new byte[checked((int) headerSize)];
+        header.CopyTo(region, 0);
+        stream.ReadExactly(region.AsSpan(Fsb5HeaderSize));
+        return (region, offset + dataOffset);
     }
 
     private static List<(ulong Id, int Index)> ParseStblPayload(byte[] list, int sp)
@@ -743,7 +682,7 @@ public sealed class FevBank
 
     public static void AssembleToFile(string outPath, byte[] fmtChunk, byte[] srcListPayload,
         int stblRelOff, int stblOldSize, byte[] newStblPayload, byte[] fsb5Header60,
-        IReadOnlyList<byte[]> sampleHeaders, IReadOnlyList<DataRef> sampleData)
+        IReadOnlyList<byte[]> sampleHeaders, IReadOnlyList<DataRef> sampleData, byte[]? nameTable = null, bool emptyTemplate = false)
     {
         if (sampleHeaders.Count != sampleData.Count)
         {
@@ -752,82 +691,35 @@ public sealed class FevBank
 
         var headersLen = sampleHeaders.Aggregate(0L, (current, h) => current + h.Length);
 
-        var offs = new long[sampleData.Count];
+        var offsets = new long[sampleData.Count];
         long dataLen = 0;
-        
         for (var i = 0; i < sampleData.Count; i++)
         {
-            offs[i] = dataLen;
-            var l = sampleData[i].Length;
-            dataLen += l + (0x20 - (l % 0x20)) % 0x20;
+            offsets[i] = dataLen;
+            dataLen = checked(dataLen + AlignDataLength(sampleData[i].Length));
         }
 
-        var fsbSize = Fsb5HeaderSize + headersLen + dataLen;
-        var h60 = (byte[]) fsb5Header60.Clone();
-        
-        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(8),  (uint) sampleHeaders.Count);
-        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(12), (uint) headersLen);
-        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(16), 0u);
-        BinaryPrimitives.WriteUInt32LittleEndian(h60.AsSpan(20), (uint) dataLen);
-
-        var before = srcListPayload[0..stblRelOff];
-        var e = stblRelOff + 8 + stblOldSize;
-        
-        if ((e & 1) != 0) e++;
-        
-        var after = srcListPayload[e..];
-        var stblPad = newStblPayload.Length & 1;
-
-        using var lm = new MemoryStream();
-        lm.Write(before, 0, before.Length);
-        WriteTag(lm, "STBL"); 
-        WriteU32(lm, (uint) newStblPayload.Length);
-        lm.Write(newStblPayload, 0, newStblPayload.Length);
-        if (stblPad != 0) lm.WriteByte(0);
-        lm.Write(after, 0, after.Length);
-        
-        var newList = lm.ToArray();
-        var listLen = newList.Length;
-
-        var sndStart = 12 + fmtChunk.Length + 8 + listLen + 8;
-        var prefix = (0x20 - (sndStart % 0x20)) % 0x20;
-        var fsbAbs = (long) sndStart + prefix;
-        var (sndhRel, _) = FindChunkInList(newList, "SNDH");
-        
-        BinaryPrimitives.WriteUInt32LittleEndian(newList.AsSpan(sndhRel + 8 + 4), (uint) fsbAbs);
-        BinaryPrimitives.WriteUInt32LittleEndian(newList.AsSpan(sndhRel + 8 + 8), (uint) fsbSize);
-
-        var sndPayloadLen = prefix + fsbSize;
-        var bodyLen = fmtChunk.Length + 8 + listLen + 8 + sndPayloadLen;
-        
-        var totalSize = 12 + bodyLen;
-        
-        if (totalSize > int.MaxValue)
-        {
-            throw new BankTooLargeException(
-                $"Resulting bank is {totalSize / 1073741824.0:0.00} GB, over the 2 GB limit the game can load. " +
-                "Use fewer tracks or place them in a different bank.");
-        }
+        var names = nameTable ?? [];
+        var fsbSize = checked(Fsb5HeaderSize + headersLen + names.Length + dataLen);
+        var bankHeader = BuildBankHeader(fmtChunk, srcListPayload, newStblPayload, fsbSize, emptyTemplate,
+            ModMarker.Length, (stblRelOff, stblOldSize));
+        var fsbHeader = (byte[]) fsb5Header60.Clone();
+        BinaryPrimitives.WriteUInt32LittleEndian(fsbHeader.AsSpan(8), (uint) sampleHeaders.Count);
+        BinaryPrimitives.WriteUInt32LittleEndian(fsbHeader.AsSpan(12), (uint) headersLen);
+        BinaryPrimitives.WriteUInt32LittleEndian(fsbHeader.AsSpan(16), (uint) names.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(fsbHeader.AsSpan(20), (uint) dataLen);
 
         using var f = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
-        WriteTag(f, "RIFF"); 
-        WriteU32(f, (uint)(bodyLen + 4)); 
-        WriteTag(f, "FEV ");
-        f.Write(fmtChunk, 0, fmtChunk.Length);
-        WriteTag(f, "LIST"); 
-        WriteU32(f, (uint) listLen); 
-        f.Write(newList, 0, newList.Length);
-        WriteTag(f, "SND "); 
-        WriteU32(f, (uint) sndPayloadLen); 
-        WriteZeros(f, prefix);
-        f.Write(h60, 0, h60.Length);
-        
+        f.Write(bankHeader);
+        f.Write(fsbHeader);
+
         for (var i = 0; i < sampleHeaders.Count; i++)
         {
-            var rb = Fsb5.RebaseHeader(sampleHeaders[i], offs[i]);
+            var rb = Fsb5.RebaseHeader(sampleHeaders[i], offsets[i]);
             f.Write(rb, 0, rb.Length);
         }
 
+        f.Write(names);
         var cache = new Dictionary<string, FileStream>();
 
         try
@@ -843,7 +735,7 @@ public sealed class FevBank
 
                 src.Seek(dr.Offset, SeekOrigin.Begin);
                 CopyExact(src, f, dr.Length, buf);
-                WriteZeros(f, (0x20 - (dr.Length % 0x20)) % 0x20);
+                WriteZeros(f, AlignDataLength(dr.Length) - dr.Length);
             }
         }
         finally
@@ -858,6 +750,8 @@ public sealed class FevBank
         f.Flush(flushToDisk: true);
     }
     
+    private static long AlignDataLength(long length) => checked(length + (0x20 - length % 0x20) % 0x20);
+
     public static readonly byte[] ModMarker = "FH6RBANK"u8.ToArray();
     
     public static bool HasModMarker(string path)

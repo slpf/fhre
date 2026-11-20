@@ -2,7 +2,20 @@ using FH6RB.Core;
 
 namespace FH6RB.Services;
 
-public sealed record BankReadResult(List<RadioTrack> Tracks, string? Error);
+public sealed record BankReadResult(List<RadioTrack> Tracks, string? Error)
+{
+    internal BankFileSnapshot? Snapshot { get; init; }
+    internal int Mode { get; init; }
+    internal long Overhead { get; init; }
+}
+
+internal readonly record struct BankFileStamp(long Length, DateTime LastWriteTime, DateTime CreationTime)
+{
+    public static BankFileStamp Read(FileStream file) =>
+        new(file.Length, File.GetLastWriteTimeUtc(file.SafeFileHandle), File.GetCreationTimeUtc(file.SafeFileHandle));
+}
+
+internal sealed record BankFileSnapshot(BankFileStamp Stamp, IReadOnlySet<ulong> Ids);
 
 public static class BankReader
 {
@@ -10,7 +23,16 @@ public static class BankReader
     {
         try
         {
-            return new BankReadResult(ReadCore(bankPath, radio, stationNumber), null);
+            using var file = File.OpenRead(bankPath);
+            var stamp = BankFileStamp.Read(file);
+            var tracks = FevBank.ReadTrackInfo(file, out var mode, out var audioBytes);
+            var ids = tracks.Select(track => track.Id).ToHashSet();
+            return new BankReadResult(ReadCore(bankPath, radio, stationNumber, tracks, ids), null)
+            {
+                Snapshot = new BankFileSnapshot(stamp, ids),
+                Mode = mode,
+                Overhead = Math.Max(0, stamp.Length - audioBytes)
+            };
         }
         catch (Exception ex)
         {
@@ -20,11 +42,11 @@ public static class BankReader
         }
     }
 
-    private static List<RadioTrack> ReadCore(string bankPath, RadioInfo? radio, int stationNumber)
+    private static List<RadioTrack> ReadCore(string bankPath, RadioInfo? radio, int stationNumber,
+        List<FevBank.BankTrack> tracks, HashSet<ulong> ids)
     {
         Log.Line($"BankReader: {Path.GetFileName(bankPath)} (station #{stationNumber})");
 
-        var tracks = FevBank.ReadTrackInfoFromFile(bankPath);
         Log.Line($"  STBL count = {tracks.Count}");
         
         if (tracks.Count == 0)
@@ -36,11 +58,6 @@ public static class BankReader
         var withAudio = tracks.Count(t => t.SampleRate > 0);
         
         Log.Line($"  FSB5 samples = {withAudio}" + (withAudio == 0 ? " (streamed/empty — durations unavailable)" : ""));
-
-        var ids = tracks.Select(t => t.Id).ToHashSet();
-        var customs = Naming.ScanCustomTracks(ids).ToDictionary(c => c.Hash, c => c.SoundName);
-        
-        Log.Line($"  custom name-probe (for id->name) = {customs.Count}");
 
         var meta = new Dictionary<ulong, (string Sn, string? Dn, string? Ar)>();
         var markersById = new Dictionary<ulong, Dictionary<string, long>>();
@@ -71,7 +88,11 @@ public static class BankReader
             Log.Line($"  XML: no metadata for station #{stationNumber}");
         }
 
-        var inMeta = ids.Count(id => meta.ContainsKey(id));
+        var unresolved = ids.Where(id => !meta.ContainsKey(id)).ToHashSet();
+        var customs = Naming.ResolveCustomNames(unresolved);
+        Log.Line($"  custom name-probe (for id->name) = {customs.Count}");
+
+        var inMeta = ids.Count - unresolved.Count;
         Log.Line($"  STBL ids matched in XML meta = {inMeta}/{ids.Count}");
 
         foreach (var t in tracks.Take(3))
@@ -107,6 +128,7 @@ public static class BankReader
                 SampleLength = t.Frames,
                 SampleRate = t.SampleRate,
                 SubIndex = hasAudio ? t.Index : -1,
+                BankBytes = t.Bytes,
                 Replaced = replaced.Contains(t.Id),
                 UsesMilliseconds = usesMilliseconds,
                 UsesTrackBreakDown = usesTrackBreakDown,

@@ -168,6 +168,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private double _previewResumeSeconds;
     private bool _previewResumePaused;
     private string? _loadedBankPath;
+    private BankFileSnapshot? _loadedBankSnapshot;
     public string? LoadedBankPath => _loadedBankPath;
     private int _restoreAvailabilityGeneration;
     public bool CanRestoreAll { get; private set; }
@@ -195,6 +196,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     private long _baseBankSize;
+    private long _baseBankAudioBytes;
     private long _baseBankOverhead;
     private int _baseBankMode = 15;
     private long _projectedTotalBytes;
@@ -462,6 +464,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Tracks.Clear();
         FilteredTracks.Clear();
         _loadedBankPath = null;
+        _loadedBankSnapshot = null;
         _otherBanksActive = 0;
         _projectedTotalBytes = 0;
         Recount();
@@ -643,49 +646,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _radio = radio;
         _radioForFile = ViewLanguageFile();
         var path = _radioResources is null ? GameScanner.BankPath(Settings.GamePath, bank) : _radioResources.BankPath(bank);
-        _loadedBankPath = path;
 
-        BankReadResult result;
-        long baseSize = 0;
-        long baseOverhead = 0;
-        var baseMode = 15;
-
-        if (path is null)
-        {
-            result = new BankReadResult([], "bank file not found");
-        }
-        else
-        {
-            var (r, sz, md, overhead) = await Task.Run(() =>
-            {
-                var res = BankReader.ReadTracks(path, radio, station.Number);
-                long size = 0;
-                var mode = 15;
-                long bankOverhead = 0;
-                try { size = new FileInfo(path).Length; } catch { }
-                try
-                {
-                    var sk = FevBank.ReadSkeleton(path);
-                    if (sk.Mode != 0) mode = sk.Mode;
-                    var layout = Fsb5.ReadLayout(sk.Fsb5HeaderRegion).Samples;
-                    bankOverhead = Math.Max(0, size - layout.Sum(s =>
-                        s.Header.Length + s.DataLen + ((0x20 - (s.DataLen % 0x20)) % 0x20)));
-                    foreach (var t in res.Tracks)
-                    {
-                        if (t.SubIndex < 0 || t.SubIndex >= layout.Count) continue;
-                        var dl = layout[t.SubIndex].DataLen;
-                        t.BankBytes = layout[t.SubIndex].Header.Length + dl + ((0x20 - (dl % 0x20)) % 0x20);
-                    }
-                }
-                catch { }
-                return (res, size, mode, bankOverhead);
-            });
-            result = r;
-            baseSize = sz;
-            baseMode = md;
-            baseOverhead = overhead;
-        }
-
+        var result = path is null
+            ? new BankReadResult([], "bank file not found")
+            : await Task.Run(() => BankReader.ReadTracks(path, radio, station.Number));
+        var baseSize = result.Snapshot?.Stamp.Length ?? 0;
+        var baseMode = result.Mode == 0 ? 15 : result.Mode;
         if (baseMode == 10) await XmaEncoderService.CheckAsync(Log.Line);
 
         if (gen != _loadGen)
@@ -697,12 +663,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Dispatcher.UIThread.Invoke(() =>
         {
             _loadedSelection = selection;
+            _loadedBankPath = path;
+            _loadedBankSnapshot = result.Snapshot;
             Tracks.Reset(result.Tracks.Select(track => new TrackItemViewModel(track)));
 
             _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
             IsLoading = false;
             _baseBankSize = baseSize;
-            _baseBankOverhead = baseOverhead;
+            _baseBankAudioBytes = result.Tracks.Sum(track => track.BankBytes);
+            _baseBankOverhead = result.Overhead;
             _baseBankMode = baseMode;
             _projectedTotalBytes = baseSize;
             _sizeIsApprox = false;
@@ -820,7 +789,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         long added = 0;
-        long removed = 0;
+        var deletedBytes = Math.Max(0, _baseBankAudioBytes - Tracks.Sum(track => track.BankBytes));
+        var removed = deletedBytes;
         var n = 0;
 
         foreach (var t in Tracks)
@@ -853,7 +823,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         _projectedTotalBytes = _baseBankSize + added - removed;
-        _sizeIsApprox = n > 0;
+        _sizeIsApprox = n > 0 || deletedBytes > 0;
         Log.Line($"projected bank size: {BankSize.Mb(_projectedTotalBytes)} total = base {BankSize.Mb(_baseBankSize)} + {BankSize.Mb(added)} - {BankSize.Mb(removed)} over {n} staged track(s)");
         Recount();
     }
@@ -1361,7 +1331,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Tracks.Remove(track);
         Status = string.Format(Str.StatusDeletedFmt, track.SoundName);
         HasUnsavedChanges = true;
-        Recount();
         RecalcProjectedSize();
     }
 
@@ -1411,7 +1380,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             try
             {
                 var bakPath = bankPath + ".bak";
-                var sk = FevBank.ReadSkeleton(bakPath);
+                using var backup = File.OpenRead(bakPath);
+                var sk = FevBank.ReadSkeleton(backup);
                 var hash = track.BankId ?? Lookup.SoundNameToId(track.SoundName);
                 var bidx = -1;
 
@@ -1429,17 +1399,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 var bsl = bakLayout[bidx];
 
                 var data = new byte[bsl.DataLen];
-                using (var bfs = File.OpenRead(bakPath))
-                {
-                    bfs.Position = sk.DataStartAbs + bsl.DataOff;
-                    var read = 0;
-                    while (read < data.Length)
-                    {
-                        var n = bfs.Read(data, read, data.Length - read);
-                        if (n <= 0) break;
-                        read += n;
-                    }
-                }
+                backup.Position = sk.DataStartAbs + bsl.DataOff;
+                backup.ReadExactly(data);
 
                 track.RestoreBakIndex = bidx;
                 track.RestoreFsbPath = WriteRestoreFsb(bakHeader60, bsl.Header, data);
@@ -1486,7 +1447,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Status = string.Format(Str.StatusRestoreTrackFmt, track.SoundName);
         HasUnsavedChanges = true;
         RefreshNowPlaying();
-        Recount();
         RecalcProjectedSize();
         RefreshFilter();
         return RestoreResult.Ok;
@@ -1700,6 +1660,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (_loadedBankSnapshot is null || !string.Equals(bankPath, _loadedBankPath, StringComparison.OrdinalIgnoreCase))
+        {
+            Status = Str.StatusBuildBankChanged;
+            return;
+        }
+
         var refFile = ViewLanguageFile();
         var radioPath = refFile is null ? null : resources.LanguagePath(refFile);
         if (refFile is null || radioPath is null)
@@ -1824,10 +1790,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         using var transaction = new GameFileTransaction(gamePath);
         transaction.EnsureGameClosed();
 
+        using var bank = File.OpenRead(bankPath);
+        var snapshot = _loadedBankSnapshot;
+        if (snapshot is not null && snapshot.Stamp != BankFileStamp.Read(bank))
+            throw new IOException(Str.StatusBuildBankChanged);
+
+        var originalIds = FevBank.ReadCompleteStblIds(bank);
+        if (snapshot is not null && !snapshot.Ids.SetEquals(originalIds))
+            throw new IOException(Str.StatusBuildBankChanged);
+
         var refRadio = RadioInfo.Load(refPath);
         var originalReference = new XDocument(refRadio.Document);
-        var originalIds = FevBank.ReadCompleteStblIdsFromFile(bankPath);
-        var bankChanges = originalIds is null || items.Count != originalIds.Count
+        var bankChanges = items.Count != originalIds.Count
             || items.Any(item => item.IsNewCustom || item.IsReplacement || item.RestoreFromBak)
             || !originalIds.SetEquals(items.Select(item => item.BankId ?? Lookup.SoundNameToId(item.SoundName)));
         IReadOnlyList<AddedSample> addedSamples = [];
@@ -1844,9 +1818,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             written = new FileInfo(stagedBank).Length;
         }
 
-        var currentIds = outputIds ?? throw new InvalidDataException($"Could not read the track IDs for {bankName}");
+        var currentIds = outputIds;
         var idsByBank = new Dictionary<string, HashSet<ulong>?>(StringComparer.OrdinalIgnoreCase) { [bankName] = currentIds };
-        var removed = originalIds?.Where(id => !currentIds.Contains(id)).ToHashSet() ?? [];
+        var removed = originalIds.Where(id => !currentIds.Contains(id)).ToHashSet();
         var bankIds = new HashSet<ulong>(currentIds);
         bankIds.UnionWith(removed);
         var (changedMeta, changedMarkers) = ApplyRadioInfo(refRadio, station, bankName, addedSamples, items);
@@ -1905,6 +1879,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         if (bankChanges) transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath));
+        bank.Dispose();
         transaction.Commit();
         return (addedSamples, written, savedXml, dead);
     }

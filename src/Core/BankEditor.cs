@@ -10,12 +10,9 @@ public sealed class BankEditor
     {
         _bank = new FevBank(sourceAssetsBank);
         _fsb = Fsb5.Parse(_bank.ExtractFsb5());
-        _indexToHash = new Dictionary<int, ulong>();
-        
-        foreach (var (id, index) in _bank.ReadStbl())
-        {
-            _indexToHash[index] = id;
-        }
+        var tracks = _bank.ReadStbl();
+        FevBank.ValidateTrackIndices(tracks, _fsb.Samples.Count);
+        _indexToHash = tracks.ToDictionary(track => track.Index, track => track.Id);
 
         if (_indexToHash.Count != _fsb.Samples.Count)
         {
@@ -34,6 +31,8 @@ public sealed class BankEditor
         var outSamples = new List<Fsb5Sample>(plan.Count);
         var stbl = new List<(ulong Id, int Index)>(plan.Count);
         var seen = new HashSet<ulong>();
+        var originalNames = _indexToHash.ToDictionary(entry => entry.Value, entry => _fsb.Samples[entry.Key].Name);
+        var names = new byte[]?[plan.Count];
 
         for (var newIndex = 0; newIndex < plan.Count; newIndex++)
         {
@@ -57,11 +56,12 @@ public sealed class BankEditor
                 throw new InvalidOperationException($"duplicate STBL id 0x{hash:x16} in plan (index {newIndex})");
             }
 
+            names[newIndex] = originalNames.GetValueOrDefault(hash) ?? sample.Name;
             outSamples.Add(sample);
             stbl.Add((hash, newIndex));
         }
 
-        var newFsb5 = _fsb.Build(outSamples);
+        var newFsb5 = _fsb.Build(outSamples, Fsb5.BuildNameTable(names));
         var stblPayload = FevBank.BuildStbl(stbl);
         
         return _bank.WithStblAndFsb(stblPayload, newFsb5);

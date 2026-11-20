@@ -92,7 +92,8 @@ public static class BankBuildService
         Directory.CreateDirectory(workDir);
         try
         {
-            var skel = FevBank.ReadSkeleton(sourcePath);
+            using var sourceStream = File.OpenRead(sourcePath);
+            var skel = FevBank.ReadSkeleton(sourceStream);
             var xmaEncoder = skel.Mode == 10
                 ? await XmaEncoderService.CheckAsync(buildLog).ConfigureAwait(false)
                 : new XmaEncoderStatus(false, "XMA encoding is not required by the source bank.");
@@ -107,7 +108,7 @@ public static class BankBuildService
                 Diagnostic(buildLog, "build.tool", new { path = tool, info.FileVersion, info.ProductVersion,
                     bytes = new FileInfo(tool).Length, sha256 = HashRange(tool, 0, new FileInfo(tool).Length) });
             }
-            var result = await BuildCoreAsync(sourcePath, stagedOutput, items, settings, skel, xmaEncoder.Available,
+            var result = await BuildCoreAsync(sourcePath, sourceStream, stagedOutput, items, settings, skel, xmaEncoder.Available,
                 workDir, buildLog, progress, verbose, useBackupSources)
                 .ConfigureAwait(false);
             if (verbose) Diagnostic(buildLog, "build.publish.start", new { source = stagedOutput, destination = outPath });
@@ -129,27 +130,20 @@ public static class BankBuildService
     }
 
     private static async Task<IReadOnlyList<AddedSample>> BuildCoreAsync(
-        string sourcePath, string outPath, IReadOnlyList<BuildItem> items, AppSettings settings,
+        string sourcePath, Stream sourceStream, string outPath, IReadOnlyList<BuildItem> items, AppSettings settings,
         FevBank.BankSkeleton skel, bool xmaEncoderAvailable, string workDir, Action<string>? log,
         Action<string>? progress, bool verbose, bool useBackupSources)
     {
         var targetMode = TargetMode(skel.Mode, skel.Empty, xmaEncoderAvailable);
         var fmtArgs = FormatArgs(targetMode, settings.VorbisQuality);
         var source = skel.Empty ? null : ReadSource(sourcePath, skel);
+        var bakPath = sourcePath + ".bak";
+        using var backupStream = items.Any(item => item.RestoreFromBak) ? File.OpenRead(bakPath) : null;
         BankSource? backup = null;
-        if (!skel.Empty && items.Any(i => i.RestoreFromBak))
+        if (backupStream is not null)
         {
-            var bakPath = sourcePath + ".bak";
-            if (File.Exists(bakPath))
-            {
-                var bakSkel = FevBank.ReadSkeleton(bakPath);
-                if (!bakSkel.Empty) backup = ReadSource(bakPath, bakSkel);
-                else log?.Invoke("  WARN: .bak skeleton empty, restore falls back to current bank");
-            }
-            else
-            {
-                log?.Invoke($"  WARN: .bak not found for restore: {Path.GetFileName(bakPath)}");
-            }
+            var backupSkeleton = FevBank.ReadSkeleton(backupStream);
+            if (!backupSkeleton.Empty) backup = ReadSource(bakPath, backupSkeleton);
         }
 
         var plan = new List<PlannedSample>(items.Count);
@@ -158,7 +152,15 @@ public static class BankBuildService
         {
             var hash = BankIdFor(item);
             PlannedSample entry;
-            if (item.IsNewCustom || item.IsReplacement && !skel.Empty)
+            if (item.RestoreFromBak)
+            {
+                if (source is null || !source.Indices.ContainsKey(hash)
+                    || backup is null || !backup.Indices.TryGetValue(hash, out var backupIndex))
+                    throw new InvalidDataException($"Cannot restore {item.SoundName}: original audio is missing from the backup or the track is missing from the current bank.");
+
+                entry = new PlannedSample(item, backup, backupIndex);
+            }
+            else if (item.IsNewCustom || item.IsReplacement && !skel.Empty)
             {
                 if (item.SourcePath is null || !File.Exists(item.SourcePath))
                 {
@@ -168,20 +170,7 @@ public static class BankBuildService
             }
             else if (source is not null && source.Indices.TryGetValue(hash, out var index))
             {
-                var selected = source;
-                if (item.RestoreFromBak)
-                {
-                    if (backup is not null && backup.Indices.TryGetValue(hash, out var backupIndex))
-                    {
-                        selected = backup;
-                        index = backupIndex;
-                    }
-                    else
-                    {
-                        log?.Invoke($"  WARN: {item.SoundName} not found in .bak, kept from current bank");
-                    }
-                }
-                entry = new PlannedSample(item, selected, index);
+                entry = new PlannedSample(item, source, index);
             }
             else
             {
@@ -197,6 +186,7 @@ public static class BankBuildService
             throw new InvalidOperationException("nothing to build (no matching samples)");
         }
 
+        var nameTable = ReadPlannedNameTable(sourceStream, source, plan);
         var conversionCount = plan.Count(p => p.Source is not null && p.Source.Skeleton.Mode != targetMode);
         var encodeCount = plan.Count(p => p.Source is null);
         var workCount = conversionCount + encodeCount;
@@ -255,7 +245,7 @@ public static class BankBuildService
                     new FevBank.DataRef(original.Path, original.Skeleton.DataStartAbs + sample.DataOff, sample.DataLen),
                     sample.Frames, sample.SampleRate, sample.Channels);
                 Diagnostic(trackLog, "track.retained", new { sample.Frames, sample.SampleRate, sample.Channels, sample.DataOff, sample.DataLen });
-                if (item.RestoreFromBak && ReferenceEquals(original, backup))
+                if (item.RestoreFromBak)
                 {
                     added[i] = new AddedSample(item.SoundName, sample.Frames, sample.SampleRate,
                         item.DisplayName, item.Artist, item.Enabled, IsReplacement: true);
@@ -376,7 +366,7 @@ public static class BankBuildService
                     }
                 }
 
-                if (entry.Source is null || item.RestoreFromBak && ReferenceEquals(entry.Source, backup))
+                if (entry.Source is null || item.RestoreFromBak)
                 {
                     var sample = prepared[i];
                     added[i] = new AddedSample(item.SoundName, sample.Frames, sample.SampleRate,
@@ -425,25 +415,9 @@ public static class BankBuildService
             Diagnostic(log, "bank.assemble.start", new { samples = prepared.Length,
                 audioBytes = prepared.Sum(p => p.Header.Length + p.Data.Length + (0x20 - p.Data.Length % 0x20) % 0x20), targetMode });
         progress?.Invoke("Assembling bank…");
-        if (skel.Empty)
-        {
-            var samples = prepared.Select(p => new Fsb5Sample
-            {
-                Header = p.Header, Data = ReadSampleData(p.Data), Frames = p.Frames, SampleRate = p.SampleRate, Channels = p.Channels,
-            }).ToArray();
-            var template = Fsb5.Parse(Fsb5.BuildSingleSample(targetHeader, samples[0]));
-            var combined = template.Build(samples);
-            var bank = new FevBank(File.ReadAllBytes(sourcePath)).FillEmpty(stblPayload, combined);
-            using var output = new FileStream(outPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
-            output.Write(bank);
-            output.Write(FevBank.ModMarker);
-            output.Flush(flushToDisk: true);
-        }
-        else
-        {
-            FevBank.AssembleToFile(outPath, skel.FmtChunk, skel.ListPayload, skel.StblRelOff, skel.StblOldSize,
-                stblPayload, targetHeader, prepared.Select(p => p.Header).ToArray(), prepared.Select(p => p.Data).ToArray());
-        }
+        FevBank.AssembleToFile(outPath, skel.FmtChunk, skel.ListPayload, skel.StblRelOff, skel.StblOldSize,
+            stblPayload, targetHeader, prepared.Select(p => p.Header).ToArray(), prepared.Select(p => p.Data).ToArray(),
+            nameTable, emptyTemplate: skel.Empty);
         if (verbose) log?.Invoke($"assembled bank: {prepared.Length} samples, FSB5 mode {targetMode}");
         ValidateBank(outPath, plan, prepared, targetMode, log, verbose);
         log?.Invoke($"bank audio: {copied} copied from FSB, {workCount - copied} encoded, {plan.Count - workCount} retained (mode {skel.Mode} -> {targetMode})");
@@ -710,25 +684,22 @@ public static class BankBuildService
         {
             throw new InvalidDataException($"STBL entries ({skeleton.Stbl.Count}) != FSB5 samples ({samples.Count})");
         }
-        var indices = new Dictionary<ulong, int>();
-        foreach (var (id, index) in skeleton.Stbl)
-        {
-            if (index < 0 || index >= samples.Count)
-            {
-                throw new InvalidDataException($"STBL sample index {index} is outside the FSB5 sample table.");
-            }
-            indices[id] = index;
-        }
+        FevBank.ValidateTrackIndices(skeleton.Stbl, samples.Count);
+        var indices = skeleton.Stbl.ToDictionary(track => track.Id, track => track.Index);
         return new BankSource(path, skeleton, header, samples, indices);
     }
 
-    private static byte[] ReadSampleData(FevBank.DataRef sample)
+    private static byte[] ReadPlannedNameTable(Stream stream, BankSource? source, List<PlannedSample> plan)
     {
-        var data = new byte[checked((int) sample.Length)];
-        using var stream = File.OpenRead(sample.Path);
-        stream.Position = sample.Offset;
-        stream.ReadExactly(data);
-        return data;
+        if (source is null || plan.Count == 0) return [];
+        var size = BinaryPrimitives.ReadUInt32LittleEndian(source.Header.AsSpan(16));
+        if (size == 0) return [];
+        var table = new byte[checked((int) size)];
+        stream.Position = source.Skeleton.DataStartAbs - size;
+        stream.ReadExactly(table);
+        var names = Fsb5.ReadSampleNames(table, source.Samples.Count);
+        return Fsb5.BuildNameTable(plan.Select(entry =>
+            source.Indices.TryGetValue(BankIdFor(entry.Item), out var index) ? names[index] : null).ToArray());
     }
 
     private static byte[] ReadFsb5HeaderRegion(string fsbPath)

@@ -6,6 +6,7 @@ public sealed class Fsb5Sample
 {
     public required byte[] Header;
     public required byte[] Data;
+    internal byte[]? Name { get; init; }
     public long Frames;
     public int  SampleRate;
     public int  Channels;
@@ -42,15 +43,18 @@ public sealed class Fsb5
         {
             throw new InvalidDataException("FSB5 data region is truncated");
         }
+        var namesStart = HeaderSize + (int) U32(b, 12);
+        var names = ReadSampleNames(b.AsSpan(namesStart, (int) U32(b, 16)), layout.Count);
         var samples = new List<Fsb5Sample>(layout.Count);
-        foreach (var sample in layout)
+        for (var i = 0; i < layout.Count; i++)
         {
+            var sample = layout[i];
             var start = checked((int) (dataStart + sample.DataOff));
             var end = checked((int) (dataStart + sample.DataOff + sample.DataLen));
             samples.Add(new Fsb5Sample
             {
                 Header = sample.Header, Data = b[start..end], Frames = sample.Frames,
-                SampleRate = sample.SampleRate, Channels = sample.Channels,
+                SampleRate = sample.SampleRate, Channels = sample.Channels, Name = names[i],
             });
         }
         
@@ -178,7 +182,51 @@ public sealed class Fsb5
         return h;
     }
 
-    public byte[] Build(IReadOnlyList<Fsb5Sample> samples)
+    internal static byte[]?[] ReadSampleNames(ReadOnlySpan<byte> table, int count)
+    {
+        var names = new byte[]?[count];
+        if (table.IsEmpty) return names;
+        var offsetsLength = checked(count * sizeof(uint));
+        if (table.Length < offsetsLength) throw new InvalidDataException("FSB5 name offsets are truncated.");
+
+        for (var i = 0; i < count; i++)
+        {
+            var offset = BinaryPrimitives.ReadUInt32LittleEndian(table[(i * sizeof(uint))..]);
+            if (offset < offsetsLength || offset >= table.Length)
+                throw new InvalidDataException($"FSB5 name offset {i} lies outside the name table.");
+
+            var name = table[(int) offset..];
+            var length = name.IndexOf((byte) 0);
+            if (length < 0) throw new InvalidDataException($"FSB5 name {i} is not terminated.");
+            names[i] = name[..length].ToArray();
+        }
+        return names;
+    }
+
+    internal static byte[] BuildNameTable(IReadOnlyList<byte[]?> names)
+    {
+        if (!names.Any(name => name is not null)) return [];
+        var offsetsLength = checked(names.Count * sizeof(uint));
+        var length = checked(offsetsLength + names.Sum(name => (name?.Length ?? 0) + 1));
+        var table = new byte[checked((length + 3) & ~3)];
+        var offset = offsetsLength;
+        for (var i = 0; i < names.Count; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(table.AsSpan(i * sizeof(uint)), (uint) offset);
+            if (names[i] is { } name)
+            {
+                name.CopyTo(table, offset);
+                offset += name.Length;
+            }
+            offset++;
+        }
+        return table;
+    }
+
+    public byte[] Build(IReadOnlyList<Fsb5Sample> samples) =>
+        Build(samples, BuildNameTable(samples.Select(sample => sample.Name).ToArray()));
+
+    internal byte[] Build(IReadOnlyList<Fsb5Sample> samples, byte[] nameTable)
     {
         long headersLen = 0;
         long dataLen = 0;
@@ -190,17 +238,19 @@ public sealed class Fsb5
             dataLen += s.Data.Length + pad;
         }
 
-        var total = checked((int)(HeaderSize + headersLen + dataLen));
+        var total = checked((int)(HeaderSize + headersLen + nameTable.Length + dataLen));
         var outBuf = new byte[total];
         
         Header60.AsSpan(0, HeaderSize).CopyTo(outBuf);
         BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(8),  (uint)samples.Count);
         BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(12), (uint)headersLen);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(16), 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(16), (uint) nameTable.Length);
         BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(20), (uint)dataLen);
 
         var hPos = HeaderSize;
-        var dPos = HeaderSize + (int)headersLen;
+        var namesStart = HeaderSize + (int) headersLen;
+        nameTable.CopyTo(outBuf, namesStart);
+        var dPos = namesStart + nameTable.Length;
         long off = 0;
 
         foreach (var s in samples)
