@@ -46,12 +46,12 @@ public static class BankReader
         var markersById = new Dictionary<ulong, Dictionary<string, long>>();
         var replaced = new HashSet<ulong>();
         var enabled = new HashSet<ulong>();
-        var usesMilliseconds = radio?.StationByNumber(stationNumber)?.UsesMilliseconds == true;
-        var usesTrackBreakDown = radio?.StationByNumber(stationNumber)?.UsesTrackBreakDown == true;
+        var station = radio?.StationByNumber(stationNumber);
+        var usesMilliseconds = station?.UsesMilliseconds == true;
+        var usesTrackBreakDown = station?.UsesTrackBreakDown == true;
 
-        if (usesMilliseconds)
+        if (station is not null)
         {
-            var station = radio!.StationByNumber(stationNumber)!;
             foreach (var track in station.ReadTracks())
             {
                 var id = Lookup.SoundNameToId(track.SoundName);
@@ -66,44 +66,9 @@ public static class BankReader
 
             Log.Line($"  XML: meta entries = {meta.Count}, FreeroamTracks@#{stationNumber} = {enabled.Count}");
         }
-        else if (radio is not null)
-        {
-            foreach (var s in radio.Document.Descendants("Sample"))
-            {
-                if ((string?) s.Attribute("SoundName") is not { } sn) continue;
-                
-                var id = Lookup.SoundNameToId(sn);
-                meta.TryAdd(id, (sn, (string?) s.Attribute("DisplayName"), (string?) s.Attribute("Artist")));
-
-                if ((string?) s.Attribute("Replaced") == "true") replaced.Add(id);
-
-                if (markersById.ContainsKey(id)) continue;
-                
-                var mk = RadioStationEditor.ReadMarkers(s);
-                if (mk.Count > 0) markersById[id] = mk;
-            }
-
-            var freeRoam = radio.Document.Descendants("RadioStation")
-                .FirstOrDefault(st => (int?) st.Attribute("Number") == stationNumber)
-                ?.Elements("PlayList")
-                .FirstOrDefault(pl => (string?) pl.Attribute("Type") == "FreeRoam");
-
-            if (freeRoam is not null)
-            {
-                foreach (var name in freeRoam.Elements("Entry").Select(e => (string?) e.Attribute("Name")))
-                {
-                    if (name is not null)
-                    {
-                        enabled.Add(Lookup.SoundNameToId(name));
-                    }
-                }
-            }
-
-            Log.Line($"  XML: meta entries = {meta.Count}, FreeRoam@#{stationNumber} = {enabled.Count}" + (freeRoam is null ? " (FreeRoam NOT FOUND)" : ""));
-        }
         else
         {
-            Log.Line("  XML: radio is null (no metadata overlay)");
+            Log.Line($"  XML: no metadata for station #{stationNumber}");
         }
 
         var inMeta = ids.Count(id => meta.ContainsKey(id));

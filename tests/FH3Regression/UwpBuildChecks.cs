@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 using FH6RB.Core;
 using FH6RB.Services;
 using static TestSupport;
@@ -51,6 +52,18 @@ internal static class UwpBuildChecks
                 && GameScanner.BankPath(game, "R1_Tracks") == bank, "The public UWP scanner lost a native physical bank path.");
             var read = BankReader.ReadTracks(bank, radio, 1);
             Check(read.Error is null && read.Tracks.Count == 2, "Could not read native UWP bank metadata.");
+            var stationNode = radio.Document.Descendants("RadioStation").First();
+            var neighbor = new XElement(stationNode);
+            neighbor.SetAttributeValue("Number", 42);
+            var sharedSample = neighbor.Descendants("Sample").Single(s => (string?) s.Attribute("SoundName") == "S&--");
+            sharedSample.SetAttributeValue("DisplayName", "Neighbor");
+            sharedSample.SetAttributeValue("TrackStart", 1000);
+            stationNode.AddBeforeSelf(neighbor);
+            var isolated = BankReader.ReadTracks(bank, radio, 1);
+            var selected = isolated.Tracks.Single(t => t.SoundName == "S&--");
+            Check(isolated.Error is null && selected.DisplayName == "Original" && selected.Markers!["TrackStart"] == 0,
+                "Track metadata leaked between stations with the same SoundName.");
+            neighbor.Remove();
             var settings = new AppSettings { GamePath = game, LoudnessNormalize = true, TargetLufs = -23, VorbisQuality = 95 };
             var before = BankState(bank);
             var items = read.Tracks.Select(Item).ToList();

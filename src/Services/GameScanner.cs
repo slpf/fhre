@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.IO.Enumeration;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using FH6RB.Core;
 
 namespace FH6RB.Services;
 
@@ -23,6 +25,7 @@ public static partial class GameScanner
         EncryptedResources,
         ResourceReadError,
         RadioBanksMissing,
+        InvalidRadioResource,
     }
 
     public sealed record GameScanResult(
@@ -34,6 +37,7 @@ public static partial class GameScanner
         int BankCount)
     {
         public string GameName { get; init; } = "";
+        internal int Version { get; init; }
         internal IReadOnlyList<string> RadioBanks { get; init; } = [];
         internal IReadOnlyList<string> RadioLanguages { get; init; } = [];
         internal RadioResources? Resources { get; init; }
@@ -45,56 +49,81 @@ public static partial class GameScanner
         public int TransientLockDirs;
         public int OtherErrorDirs;
         public readonly List<string> Samples = new();
-        public readonly HashSet<string> ResourcePaths = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    internal sealed class RadioResources(IEnumerable<string> paths)
+    internal sealed class RadioResources
     {
-        private readonly Dictionary<string, string> _paths = paths
-            .OrderBy(path => IsEncodedResource(path))
-            .GroupBy(LogicalFileName, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _paths;
 
-        private static bool IsEncodedResource(string path) => !IsRadioResource(Path.GetFileName(path));
+        public RadioResources(string gamePath, IEnumerable<string> paths)
+        {
+            var hasAudioTree = Directory.Exists(Path.Combine(gamePath, AudioRoot))
+                || Directory.Exists(Path.Combine(gamePath, EncodedAudioRoot));
+            _paths = paths
+                .Select(path => (Path: path, Logical: LogicalFileName(path), Relative: Path.GetRelativePath(gamePath, path)))
+                .Where(file => IsRadioResource(file.Logical))
+                .Select(file => (file.Path, file.Logical, file.Relative, Rank: ResourceDirectoryRank(file.Relative)))
+                .Where(file => !hasAudioTree || file.Rank < 2)
+                .OrderBy(file => file.Rank)
+                .ThenByDescending(file => file.Logical.EndsWith(".assets.bank", StringComparison.OrdinalIgnoreCase))
+                .ThenBy(file => !IsRadioResource(Path.GetFileName(file.Path)))
+                .ThenBy(file => file.Relative.Count(c => c == Path.DirectorySeparatorChar))
+                .ThenBy(file => file.Relative, StringComparer.OrdinalIgnoreCase)
+                .GroupBy(file => BankNameFromFile(file.Logical) ?? file.Logical, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
+            Languages = _paths.Keys.Where(IsLanguageFile).Order(StringComparer.Ordinal).ToArray();
+            Banks = _paths.Keys.Where(name => !IsLanguageFile(name)).Order(StringComparer.Ordinal).ToArray();
+        }
 
         public string? LanguagePath(string name) => IsLanguageFile(name) ? _paths.GetValueOrDefault(name) : null;
 
-        public string? BankPath(string name) => _paths.GetValueOrDefault(name + ".assets.bank")
-            ?? _paths.GetValueOrDefault(name + ".bank");
+        public string? BankPath(string name) => _paths.GetValueOrDefault(name);
 
-        public IEnumerable<string> Languages => _paths.Keys.Where(IsLanguageFile).Order(StringComparer.Ordinal);
+        public IReadOnlyList<string> Languages { get; }
 
-        public IEnumerable<string> Banks => _paths.Keys.Select(BankNameFromFile).OfType<string>()
-            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal);
+        public IReadOnlyList<string> Banks { get; }
+
+        public IEnumerable<string> SelectedPaths => _paths.Values.Order(StringComparer.Ordinal);
     }
 
-    internal static RadioResources ReadRadioResources(string gamePath)
+    private static int ResourceDirectoryRank(string relativePath)
     {
-        return new RadioResources(SafeEnumerate(gamePath, [.. LanguagePatterns, .. BankPatterns])
-            .Where(path => IsRadioResource(LogicalFileName(path))));
+        if (relativePath.StartsWith(AudioRoot, StringComparison.OrdinalIgnoreCase)
+            || relativePath.StartsWith(EncodedAudioRoot, StringComparison.OrdinalIgnoreCase))
+            return 0;
+        return Path.GetDirectoryName(relativePath) is "" ? 1 : 2;
     }
+
+    private static readonly string AudioRoot = Path.Combine("media", "audio") + Path.DirectorySeparatorChar;
+    private static readonly string EncodedAudioRoot = Path.Combine(Fh3FileNameCodec.Encode("media"),
+        Fh3FileNameCodec.Encode("audio")) + Path.DirectorySeparatorChar;
+
+    internal static RadioResources ReadRadioResources(string gamePath) =>
+        CollectResources(gamePath, [.. LanguagePatterns, .. BankPatterns]);
+
+    private static RadioResources CollectResources(string gamePath, IReadOnlyList<string> patterns,
+        ScanStats? stats = null, CancellationToken token = default) =>
+        new(gamePath, SafeEnumerate(gamePath, patterns, stats: stats, token: token));
 
     private const int MaxScanDetailSamples = 3;
 
     public static bool IsValid(string gamePath) => Scan(gamePath).IsValid;
 
-    public static GameScanResult Scan(string gamePath)
-    {
-        var result = Scan(gamePath, ReadResource);
-        if (result.ExePath is null) return result;
-        var name = DetectVersionFromExecutable(result.ExePath) switch
-        {
-            2 => "Forza Horizon 2 (Azimuth)",
-            3 => IsDurangoExecutable(result.ExePath) ? "Forza Horizon 3 (Azimuth)" : "Forza Horizon 3 (UWP)",
-            var version when version is >= 4 and <= 6 => $"Forza Horizon {version}",
-            _ => ""
-        };
-        return result with { GameName = name };
-    }
+    public static GameScanResult Scan(string gamePath) => Scan(gamePath, CancellationToken.None);
+
+    internal static GameScanResult Scan(string gamePath, CancellationToken token) =>
+        Scan(gamePath, ValidateResource, token);
 
     internal static GameScanResult Scan(string gamePath, Action<string> readResource)
     {
         ArgumentNullException.ThrowIfNull(readResource);
+        return Scan(gamePath, (path, _) => readResource(path), CancellationToken.None);
+    }
+
+    private static GameScanResult Scan(string gamePath, Action<string, IReadOnlySet<int>> validateResource,
+        CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(gamePath))
         {
             return new GameScanResult(false, GameScanIssue.EmptyPath, null, null, 0, 0);
@@ -105,49 +134,50 @@ public static partial class GameScanner
             return new GameScanResult(false, GameScanIssue.DirectoryMissing, gamePath, null, 0, 0);
         }
 
-        var exe = FindExe(gamePath);
+        var (exe, version) = FindGame(gamePath, token);
         if (exe is null)
         {
             return new GameScanResult(false, GameScanIssue.ExeMissing, gamePath, null, 0, 0);
         }
 
         var stats = new ScanStats();
-        var langs = CollectLanguageFiles(gamePath, stats);
-
-#if DEBUG
-        if (langs.Count == 0 && stats.TransientLockDirs > 0)
+        var resources = CollectResources(gamePath, [.. LanguagePatterns, .. BankPatterns], stats, token);
+        var langs = resources.Languages;
+        var banks = resources.Banks;
+        var bankStations = new HashSet<int>();
+        foreach (var bank in banks)
+            if (RadioCatalog.TryParseBank(bank, out var number, out _)) bankStations.Add(number);
+        var gameName = version switch
         {
-            Thread.Sleep(150);
-            stats = new ScanStats();
-            langs = CollectLanguageFiles(gamePath, stats);
-            if (langs.Count > 0)
-            {
-                Log.Line($"GameScanner: language scan recovered after retry ({langs.Count} files)");
-            }
-        }
-#endif
+            2 => "Forza Horizon 2 (Azimuth)",
+            3 => IsDurangoExecutable(exe) ? "Forza Horizon 3 (Azimuth)" : "Forza Horizon 3 (UWP)",
+            _ => $"Forza Horizon {version}"
+        };
 
-        var banks = CollectBankNames(gamePath, stats);
+        GameScanResult Result(bool valid, GameScanIssue issue, string? detail) =>
+            new(valid, issue, detail, exe, langs.Count, banks.Count) { GameName = gameName, Version = version };
 
-        if (langs.Count == 0)
+        if (langs.Count == 0 || banks.Count == 0)
         {
             var issue = stats.OtherErrorDirs > 0 ? GameScanIssue.OtherError
                       : stats.AccessDeniedDirs > 0 ? GameScanIssue.AccessDenied
                       : stats.TransientLockDirs > 0 ? GameScanIssue.TransientLock
-                      : GameScanIssue.LanguageFilesMissing;
-            return new GameScanResult(false, issue, BuildDetail(stats), exe, 0, banks.Count);
+                      : langs.Count == 0 ? GameScanIssue.LanguageFilesMissing : GameScanIssue.RadioBanksMissing;
+            return Result(false, issue, BuildDetail(stats));
         }
 
-        foreach (var path in stats.ResourcePaths.Order(StringComparer.Ordinal))
+        foreach (var path in resources.SelectedPaths)
         {
+            token.ThrowIfCancellationRequested();
             try
             {
-                readResource(path);
+                validateResource(path, bankStations);
             }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or XmlException or InvalidDataException)
             {
                 var attributes = ResourceAttributes(path);
-                var issue = ex is UnauthorizedAccessException
+                var issue = ex is XmlException or InvalidDataException or EndOfStreamException
+                    ? GameScanIssue.InvalidRadioResource : ex is UnauthorizedAccessException
                     ? attributes?.HasFlag(FileAttributes.Encrypted) == true
                         ? GameScanIssue.EncryptedResources : GameScanIssue.ResourceReadDenied
                     : (ex.HResult & 0xffff) is 32 or 33
@@ -156,32 +186,33 @@ public static partial class GameScanner
                 Log.Line($"GameScanner: resource.read.failed logical={JsonSerializer.Serialize(logical)} " +
                     $"path={JsonSerializer.Serialize(path)} attributes={attributes} exception={ex.GetType().Name} " +
                     $"hresult=0x{ex.HResult:X8} message={JsonSerializer.Serialize(ex.Message)}");
-                return new GameScanResult(false, issue, $"{logical}: {path}", exe, langs.Count, banks.Count);
+                var detail = issue == GameScanIssue.InvalidRadioResource ? $"{path}: {ex.Message}" : $"{logical}: {path}";
+                return Result(false, issue, detail);
             }
         }
 
         var partial = stats.AccessDeniedDirs > 0 || stats.TransientLockDirs > 0 || stats.OtherErrorDirs > 0;
-        if (banks.Count == 0)
-        {
-            var issue = stats.OtherErrorDirs > 0 ? GameScanIssue.OtherError
-                      : stats.AccessDeniedDirs > 0 ? GameScanIssue.AccessDenied
-                      : stats.TransientLockDirs > 0 ? GameScanIssue.TransientLock
-                      : GameScanIssue.RadioBanksMissing;
-            return new GameScanResult(false, issue, BuildDetail(stats), exe, langs.Count, 0);
-        }
-        return new GameScanResult(true, partial ? GameScanIssue.PartialAccess : GameScanIssue.None,
-            partial ? BuildDetail(stats) : null, exe, langs.Count, banks.Count)
+        token.ThrowIfCancellationRequested();
+        return Result(true, partial ? GameScanIssue.PartialAccess : GameScanIssue.None, BuildDetail(stats)) with
         {
             RadioBanks = banks,
             RadioLanguages = langs,
-            Resources = new RadioResources(stats.ResourcePaths)
+            Resources = resources
         };
     }
 
-    private static void ReadResource(string path)
+    private static void ValidateResource(string path, IReadOnlySet<int> bankStations)
     {
-        using var stream = File.OpenRead(path);
-        _ = stream.ReadByte();
+        if (!IsLanguageFile(LogicalFileName(path)))
+        {
+            FevBank.ValidateTrackBank(path);
+            return;
+        }
+
+        var radio = RadioInfo.Load(path);
+        if (!radio.Document.Descendants("RadioStation").Any(st =>
+                int.TryParse((string?) st.Attribute("Number"), out var number) && bankStations.Contains(number)))
+            throw new InvalidDataException("RadioInfo has no station with an installed track bank.");
     }
 
     private static FileAttributes? ResourceAttributes(string path)
@@ -206,62 +237,54 @@ public static partial class GameScanner
         return $"{summary}{samples}";
     }
 
-    public static string? FindExe(string gamePath)
+    public static string? FindExe(string gamePath) => FindGame(gamePath).Path;
+
+    public static int DetectVersion(string gamePath) => FindGame(gamePath).Version;
+
+    private static (string? Path, int Version) FindGame(string gamePath, CancellationToken token = default)
     {
         if (!Directory.Exists(gamePath))
         {
-            return null;
+            return default;
         }
 
         try
         {
-            return Directory
-                .EnumerateFiles(gamePath, "ForzaHorizon*.exe", FileEnumeration)
-                .FirstOrDefault(path => !Path.GetFileNameWithoutExtension(path)
-                    .Equals("ForzaHorizon3", StringComparison.OrdinalIgnoreCase))
-                ?? Directory.EnumerateFiles(gamePath, "forza_durango_*.exe", FileEnumeration)
-                    .FirstOrDefault(path => DetectDurangoVersion(path) != 0)
-                ?? FindHorizon3Executable(gamePath);
+            var desktop = Directory.GetFiles(gamePath, "ForzaHorizon?.exe", FileEnumeration);
+            for (var version = 6; version >= 4; version--)
+            {
+                var name = $"ForzaHorizon{version}.exe";
+                var path = desktop.FirstOrDefault(path => Path.GetFileName(path).Equals(name, StringComparison.OrdinalIgnoreCase));
+                if (path is not null) return (path, version);
+            }
+
+            foreach (var path in Directory.EnumerateFiles(gamePath, "forza_durango_*.exe", FileEnumeration))
+            {
+                token.ThrowIfCancellationRequested();
+                var version = DetectDurangoVersion(path, token);
+                if (version != 0) return (path, version);
+            }
+
+            var uwp = FindHorizon3Executable(gamePath);
+            return uwp is null ? default : (uwp, 3);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return null;
+            return default;
         }
-    }
-
-    public static int DetectVersion(string gamePath)
-    {
-        var exe = FindExe(gamePath);
-        return exe is null ? 0 : DetectVersionFromExecutable(exe);
-    }
-
-    private static int DetectVersionFromExecutable(string exe)
-    {
-        var name = Path.GetFileNameWithoutExtension(exe);
-        if (IsDurangoExecutable(exe))
-        {
-            return DetectDurangoVersion(exe);
-        }
-
-        if (name.Equals("forza_x64_release_final", StringComparison.OrdinalIgnoreCase))
-        {
-            return 3;
-        }
-
-        var m = Regex.Match(name, @"\d+$");
-        return m.Success && int.TryParse(m.Value, out var v) ? v : 0;
     }
 
     private static bool IsDurangoExecutable(string exe) => Path.GetFileNameWithoutExtension(exe)
         .StartsWith("forza_durango_", StringComparison.OrdinalIgnoreCase);
 
-    private static int DetectDurangoVersion(string exe)
+    private static int DetectDurangoVersion(string exe, CancellationToken token)
     {
         var root = Path.GetDirectoryName(exe)!;
         var manifest = Path.Combine(root, "AppxManifest.xml");
         if (!File.Exists(manifest))
         {
-            return SafeEnumerate(root, "HZ2_MX_Radio_*_Tracks.bank").Any() ? 2 : 0;
+            return SafeEnumerate(root, "HZ2_MX_Radio_*_Tracks.bank", token: token)
+                .Any(path => BankNameFromFile(Path.GetFileName(path)) is not null) ? 2 : 0;
         }
         try
         {
@@ -350,23 +373,7 @@ public static partial class GameScanner
         }
     }
 
-    public static List<string> LanguageFiles(string gamePath)
-    {
-        return CollectLanguageFiles(gamePath, stats: null);
-    }
-
-    private static List<string> CollectLanguageFiles(string gamePath, ScanStats? stats)
-    {
-        var files = SafeEnumerate(gamePath, LanguagePatterns, stats: stats)
-            .Select(path => (Path: path, Name: LogicalFileName(path)))
-            .Where(file => IsLanguageFile(file.Name))
-            .ToList();
-        stats?.ResourcePaths.UnionWith(files.Select(file => file.Path));
-        return files.Select(file => file.Name)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(x => x, StringComparer.Ordinal)
-            .ToList();
-    }
+    public static List<string> LanguageFiles(string gamePath) => CollectResources(gamePath, LanguagePatterns).Languages.ToList();
 
     private static bool IsLanguageFile(string name)
     {
@@ -384,31 +391,10 @@ public static partial class GameScanner
     {
         var logical = LogicalFileName(fileName);
         if (!IsLanguageFile(logical)) return null;
-        return SafeEnumerate(gamePath, logical).FirstOrDefault()
-               ?? SafeEnumerate(gamePath, Fh3FileNameCodec.Encode(logical)).FirstOrDefault();
+        return CollectResources(gamePath, [logical, Fh3FileNameCodec.Encode(logical)]).LanguagePath(logical);
     }
 
-    public static List<string> RadioBankNames(string gamePath)
-    {
-        return CollectBankNames(gamePath, stats: null);
-    }
-
-    private static List<string> CollectBankNames(string gamePath, ScanStats? stats)
-    {
-        var files = SafeEnumerate(gamePath, BankPatterns, stats: stats)
-            .Select(path => (Path: path, Name: BankNameFromFile(LogicalFileName(path))))
-            .Where(file => file.Name is not null)
-            .ToList();
-        stats?.ResourcePaths.UnionWith(files.Select(file => file.Path));
-        var result = files.Select(file => file.Name!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(name => name, StringComparer.Ordinal)
-            .ToList();
-        var summary = $"GameScanner: radio banks = {result.Count}";
-        Log.Line(Log.IsVerbose ? $"{summary} [{string.Join(", ", result)}]" : summary);
-
-        return result;
-    }
+    public static List<string> RadioBankNames(string gamePath) => CollectResources(gamePath, BankPatterns).Banks.ToList();
 
     public static string? BankPath(string gamePath, string bankName)
     {
@@ -417,13 +403,10 @@ public static partial class GameScanner
         string? path = null;
         if (canonical is not null)
         {
-            foreach (var suffix in new[] { ".assets.bank", ".bank" })
-            {
-                var fileName = canonical + suffix;
-                path = SafeEnumerate(gamePath, fileName).FirstOrDefault()
-                       ?? SafeEnumerate(gamePath, Fh3FileNameCodec.Encode(fileName)).FirstOrDefault();
-                if (path is not null) break;
-            }
+            var assets = canonical + ".assets.bank";
+            var bank = canonical + ".bank";
+            path = CollectResources(gamePath, [assets, bank, Fh3FileNameCodec.Encode(assets), Fh3FileNameCodec.Encode(bank)])
+                .BankPath(canonical);
         }
         if (path is null || Log.IsVerbose)
         {
@@ -469,6 +452,7 @@ public static partial class GameScanner
         var match = TrackBankRegex().Match(bank);
         if (match.Success)
         {
+            if (!int.TryParse(match.Groups[1].Value, out var number) || number <= 0) return null;
             var suffix = match.Groups[2].Value;
             if (suffix.Length == 0) return $"R{match.Groups[1].Value}_Tracks";
             if (suffix.Equals("Disk", StringComparison.OrdinalIgnoreCase)) suffix = "Disk";
@@ -477,7 +461,8 @@ public static partial class GameScanner
             return $"R{match.Groups[1].Value}_Tracks_{suffix}";
         }
         match = Horizon2BankRegex().Match(bank);
-        return match.Success ? $"HZ2_MX_Radio_{match.Groups[1].Value}_Tracks" : null;
+        return match.Success && int.TryParse(match.Groups[1].Value, out var station) && station > 0
+            ? $"HZ2_MX_Radio_{match.Groups[1].Value}_Tracks" : null;
     }
 
     private static readonly EnumerationOptions FileEnumeration = new()
@@ -507,10 +492,11 @@ public static partial class GameScanner
     };
 
     private static IEnumerable<string> SafeEnumerate(string root, string pattern,
-        int maxDepth = 8, ScanStats? stats = null) => SafeEnumerate(root, new[] { pattern }, maxDepth, stats);
+        int maxDepth = 8, ScanStats? stats = null, CancellationToken token = default) =>
+        SafeEnumerate(root, new[] { pattern }, maxDepth, stats, token);
 
     private static IEnumerable<string> SafeEnumerate(string root, IReadOnlyList<string> patterns,
-        int maxDepth = 8, ScanStats? stats = null)
+        int maxDepth = 8, ScanStats? stats = null, CancellationToken token = default)
     {
         if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
         {
@@ -522,25 +508,26 @@ public static partial class GameScanner
 
         while (stack.Count > 0)
         {
+            token.ThrowIfCancellationRequested();
             var (dir, depth) = stack.Pop();
 
-            foreach (var pattern in patterns)
+            string[] files;
+            try
             {
-                string[] files;
-                try
-                {
-                    files = Directory.GetFiles(dir, pattern, FileEnumeration);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                    RecordIssue(stats, dir, ex);
-                    files = [];
-                }
+                files = Directory.GetFiles(dir, patterns.Count == 1 ? patterns[0] : "*", FileEnumeration);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                RecordIssue(stats, dir, ex);
+                continue;
+            }
 
-                foreach (var f in files)
-                {
-                    yield return f;
-                }
+            foreach (var file in files)
+            {
+                token.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(file);
+                if (patterns.Count == 1 || patterns.Any(pattern => FileSystemName.MatchesSimpleExpression(pattern, name, ignoreCase: true)))
+                    yield return file;
             }
 
             if (depth >= maxDepth)

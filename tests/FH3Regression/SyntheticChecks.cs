@@ -91,7 +91,7 @@ internal static class SyntheticChecks
         File.WriteAllText(xml, Xml());
         File.WriteAllText(Path.Combine(audio, Physical("RadioInfo_FR.xml")), Xml());
         var expected = new[] { "R1_Tracks", "R1_Tracks_PDLC1", "R6_Tracks", "R6_Tracks_PDLC2" };
-        foreach (var bank in expected) File.WriteAllBytes(Path.Combine(banks, Physical(bank + ".bank")), []);
+        foreach (var bank in expected) UwpBuildChecks.WriteTemplate(Path.Combine(banks, Physical(bank + ".bank")));
         File.WriteAllBytes(Path.Combine(banks, Physical("R1_LFE.bank")), []);
         Check(GameScanner.FindExe(game) == Path.Combine(game, executable) && GameScanner.DetectVersion(game) == 3,
             "FH3 manifest/executable identity was not recognized.");
@@ -108,6 +108,7 @@ internal static class SyntheticChecks
         Check(catalog.Count == 2 && catalog.Single(s => s.Number == 1).Variants.Count == 2
             && catalog.Single(s => s.Number == 6).Variants.Count == 2, "FH3 catalog omitted base/DLC variants.");
         var baseBank = GameScanner.BankPath(game, "R1_Tracks")!;
+        File.WriteAllBytes(baseBank, []);
         UwpBuildChecks.WriteTemplate(baseBank + ".bak");
         var originalBank = File.ReadAllBytes(baseBank + ".bak");
         File.Copy(xml, xml + ".bak");
@@ -147,6 +148,7 @@ internal static class SyntheticChecks
             Check(vm.Languages.Count == 3 && vm.SelectedLanguage?.FileName == "RadioInfo_FR.xml"
                 && vm.Stations.Count == 2 && vm.SelectedStation?.Number == 6 && vm.Variants.Count == 2,
                 "Reloading from the game scan lost languages, stations, or the saved selection.");
+            CheckRejectedLanguageChange(vm, xml);
         }
         finally { ReleaseVm(vm); }
         File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), manifest.Replace(xbox ? "Opus" : "Microsoft.OpusPG", "Microsoft.OtherGame", StringComparison.Ordinal));
@@ -154,6 +156,45 @@ internal static class SyntheticChecks
         File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), xbox ? Manifest : XboxManifest);
         Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid, "A UWP/Xbox manifest and executable mismatch was accepted.");
         File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), manifest);
+    }
+
+    private static void CheckRejectedLanguageChange(MainWindowViewModel vm, string targetXml)
+    {
+        var language = vm.SelectedLanguage!;
+        var station = vm.SelectedStation!;
+        var variant = vm.SelectedVariant!;
+        Set(vm, "_loadedSelection", (language, station.Number, variant));
+        var edit = new TrackItemViewModel(new RadioTrack
+        {
+            SoundName = "Pending", DisplayName = "Unsaved", Origin = TrackOrigin.Original,
+        });
+        vm.Tracks.Add(edit);
+        vm.MarkDirty();
+        var original = File.ReadAllBytes(targetXml);
+        File.WriteAllText(targetXml, "<Radio><RadioStation");
+        try
+        {
+            Set(vm, "_suppressReload", false);
+            var target = vm.Languages.Single(l => l.FileName == "RadioInfo_EN.xml");
+            var prompts = 0;
+            foreach (var confirm in new[] { false, true })
+            {
+                vm.ConfirmDiscardChanges = () =>
+                {
+                    prompts++;
+                    return Task.FromResult(confirm);
+                };
+                vm.SelectedLanguage = target;
+                Check(vm.SelectedLanguage == language && vm.SelectedStation == station && vm.SelectedVariant == variant
+                    && vm.HasUnsavedChanges && vm.Tracks.Single() == edit,
+                    "A rejected or failed language change destroyed the active edits or selection.");
+            }
+            Check(prompts == 2, "Language changes skipped the unsaved changes prompt.");
+        }
+        finally
+        {
+            File.WriteAllBytes(targetXml, original);
+        }
     }
 
     private static void CheckXboxIdentity(string root)
@@ -164,7 +205,7 @@ internal static class SyntheticChecks
         var manifest = Path.Combine(game, "AppxManifest.xml");
         File.WriteAllBytes(executable, []);
         File.WriteAllText(Path.Combine(game, "RadioInfo_EN.xml"), Xml());
-        File.WriteAllBytes(Path.Combine(game, "R1_Tracks.bank"), []);
+        UwpBuildChecks.WriteTemplate(Path.Combine(game, "R1_Tracks.bank"));
         foreach (var (identity, version) in new[] { ("Anthem", 2), ("Opus", 3) })
         {
             File.WriteAllText(manifest, XboxManifest.Replace("Opus", identity, StringComparison.Ordinal));
@@ -187,7 +228,7 @@ internal static class SyntheticChecks
         File.Delete(manifest);
         Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid,
             "An Xbox FH3 directory without a manifest was guessed to be FH2.");
-        File.WriteAllBytes(Path.Combine(game, "HZ2_MX_Radio_01_Tracks.bank"), []);
+        UwpBuildChecks.WriteTemplate(Path.Combine(game, "HZ2_MX_Radio_01_Tracks.bank"));
         Check(GameScanner.DetectVersion(game) == 2 && GameScanner.Scan(game).IsValid,
             "A legacy FH2 directory without a manifest lost its resource-based identity.");
     }

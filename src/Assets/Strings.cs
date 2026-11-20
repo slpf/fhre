@@ -152,6 +152,8 @@ public static class Str
     public const string ErrScanResourceReadDeniedFmt = "Windows denied read access to a required radio file: {0}. FHRE cannot load or edit this installation.";
     public const string ErrScanEncryptedResourcesFmt = "Windows blocked access to an encrypted game resource: {0}. FHRE requires readable and writable game resources. Changing file permissions alone does not unlock an encrypted package.";
     public const string ErrScanResourceReadErrorFmt = "Could not read a required radio file: {0}. FHRE cannot load or edit this installation.";
+    public const string ErrScanInvalidResourceFmt = "A required radio file is damaged or incompatible: {0}.";
+    public const string ErrScanNoMatchingStations = "No installed track banks match this localization.";
     public const string ErrScanTransientLockFmt = "A game file or folder is in use by another process: {0}. Close the application using it and try again.";
     public const string ErrScanOtherErrorFmt = "Could not read game files ({0}).";
     public const string ErrScanPartialAccessFmt = "Found game files, but some subfolders are blocked ({0}).";

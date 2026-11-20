@@ -45,6 +45,8 @@
 
             <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Red}" FontSize="12.5"
                        Margin="12,12,0,12" TextWrapping="Wrap" IsVisible="{Binding ShowError}"/>
+            <TextBlock Text="{Binding Error}" Foreground="#F5A529" FontSize="12.5"
+                       Margin="12,12,0,12" TextWrapping="Wrap" IsVisible="{Binding ShowWarning}"/>
 
             <StackPanel IsVisible="{Binding ShowAdvanced}">
                 <TextBlock Classes="sect" Text="{x:Static assets:Str.SecLoudness}" Margin="12,24,0,8"/>

@@ -23,33 +23,7 @@ public static partial class RadioCatalog
 
         foreach (var bank in banks)
         {
-            int number;
-            string label;
-
-            var m = VariantRegex().Match(bank);
-            
-            if (m.Success)
-            {
-                number = int.Parse(m.Groups[1].Value);
-                label = m.Groups[2].Value;
-            }
-            else
-            {
-                var m4 = PlainRegex().Match(bank);
-
-                if (!m4.Success)
-                {
-                    m4 = Horizon2Regex().Match(bank);
-                }
-                
-                if (!m4.Success)
-                {
-                    continue;
-                }
-
-                number = int.Parse(m4.Groups[1].Value);
-                label = "Tracks";
-            }
+            if (!TryParseBank(bank, out var number, out var label)) continue;
 
             if (!groups.TryGetValue(number, out var map))
             {
@@ -66,14 +40,15 @@ public static partial class RadioCatalog
         {
             foreach (var st in radio.Document.Descendants("RadioStation"))
             {
-                if ((int?) st.Attribute("Number") is { } n)
+                if (int.TryParse((string?) st.Attribute("Number"), out var n))
                 {
-                    names[n] = (string?)st.Attribute("Name") ?? $"Station {n}";
+                    names.TryAdd(n, (string?)st.Attribute("Name") ?? $"Station {n}");
                 }
             }
         }
 
         var stations = groups
+            .Where(g => radio is null || names.ContainsKey(g.Key))
             .OrderBy(g => g.Key)
             .Select(g => new StationInfo(g.Key, names.GetValueOrDefault(g.Key, $"Station {g.Key}"), g.Value.Keys.OrderBy(v => v).ToList(), g.Value))
             .Where(st => !string.Equals(st.Name, StreamerModeName, StringComparison.OrdinalIgnoreCase))
@@ -90,11 +65,16 @@ public static partial class RadioCatalog
 
     private const string StreamerModeName = "Streamer Mode";
 
-    [GeneratedRegex(@"^R(\d+)_Tracks_(.+)$")]
-    private static partial Regex VariantRegex();
+    internal static bool TryParseBank(string bank, out int number, out string label)
+    {
+        var match = TrackBankRegex().Match(bank);
+        if (!match.Success) match = Horizon2Regex().Match(bank);
+        label = match.Groups[2].Success ? match.Groups[2].Value : "Tracks";
+        return int.TryParse(match.Groups[1].Value, out number) && number > 0;
+    }
 
-    [GeneratedRegex(@"^R(\d+)_Tracks$")]
-    private static partial Regex PlainRegex();
+    [GeneratedRegex(@"^R(\d+)_Tracks(?:_(.+))?$")]
+    private static partial Regex TrackBankRegex();
 
     [GeneratedRegex(@"^HZ2_MX_Radio_(\d+)_Tracks$", RegexOptions.IgnoreCase)]
     private static partial Regex Horizon2Regex();

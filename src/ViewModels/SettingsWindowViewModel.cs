@@ -17,15 +17,18 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowError))]
+    [NotifyPropertyChangedFor(nameof(ShowWarning))]
     private bool _isValid;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ShowError))]
+    [NotifyPropertyChangedFor(nameof(ShowWarning))]
     private bool _scanning;
 
     [ObservableProperty] private string _scanningText = "";
 
-    public bool ShowError => !IsValid && !Scanning;
+    public bool ShowError => !IsValid && !Scanning && Error.Length > 0;
+    public bool ShowWarning => IsValid && !Scanning && Error.Length > 0;
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasScanDetails))]
     [NotifyPropertyChangedFor(nameof(HasGameLine))]
@@ -39,7 +42,10 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasScanDetails))]
     private string _bankLine = "";
-    [ObservableProperty] private string _error = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowError))]
+    [NotifyPropertyChangedFor(nameof(ShowWarning))]
+    private string _error = "";
 
     public bool HasGameLine => GameLine.Length > 0;
     public bool HasScanDetails => HasGameLine || ExeLine.Length > 0 || LangLine.Length > 0 || BankLine.Length > 0;
@@ -85,6 +91,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     public bool ShowAdvanced => !IsFirstRun;
 
     public bool Saved { get; private set; }
+    internal GameScanner.GameScanResult? SavedScan { get; private set; }
+    private GameScanner.GameScanResult? _validatedScan;
 
     public SettingsWindowViewModel(AppSettings settings)
     {
@@ -140,14 +148,17 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     private CancellationTokenSource? _validateCts;
 
+    internal void CancelValidation() => _validateCts?.Cancel();
+
     public async Task ValidateAsync()
     {
-        _validateCts?.Cancel();
+        CancelValidation();
         var cts = new CancellationTokenSource();
         _validateCts = cts;
         var token = cts.Token;
 
         var path = GamePath;
+        _validatedScan = null;
         Error = "";
         GameLine = "";
         ExeLine = "";
@@ -158,7 +169,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
         try
         {
-            var result = await Task.Run(() => GameScanner.Scan(path), token);
+            var result = await Task.Run(() => GameScanner.Scan(path, token), token);
 
             if (token.IsCancellationRequested)
             {
@@ -192,12 +203,13 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
     private void ApplyGameScan(GameScanner.GameScanResult result)
     {
         IsValid = result.IsValid;
+        _validatedScan = result.IsValid ? result : null;
         var found = result.ExePath is not null || result.LanguageFileCount > 0 || result.BankCount > 0;
         GameLine = result.GameName;
         ExeLine = result.ExePath is null ? "" : string.Format(Str.FoundFmt, Path.GetFileName(result.ExePath));
         LangLine = found ? string.Format(Str.LocalizationsFmt, result.LanguageFileCount) : "";
         BankLine = found ? string.Format(Str.RadioBanksFmt, result.BankCount) : "";
-        Error = IsValid ? "" : FormatScanError(result);
+        Error = IsValid && result.Issue != GameScanner.GameScanIssue.PartialAccess ? "" : FormatScanError(result);
     }
 
     internal static string FormatScanError(GameScanner.GameScanResult r)
@@ -213,6 +225,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             GameScanner.GameScanIssue.ResourceReadDenied => string.Format(Str.ErrScanResourceReadDeniedFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.EncryptedResources => string.Format(Str.ErrScanEncryptedResourcesFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.ResourceReadError => string.Format(Str.ErrScanResourceReadErrorFmt, r.Detail ?? ""),
+            GameScanner.GameScanIssue.InvalidRadioResource => string.Format(Str.ErrScanInvalidResourceFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.TransientLock => string.Format(Str.ErrScanTransientLockFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.PartialAccess => string.Format(Str.ErrScanPartialAccessFmt, r.Detail ?? ""),
             _ => string.Format(Str.ErrScanOtherErrorFmt, r.Detail ?? ""),
@@ -265,8 +278,15 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         Saved = true;
     }
 
-    public void Commit()
+    internal async Task<bool> TryCommitAsync(Func<Task<bool>>? confirmGamePathChange)
     {
+        if (!IsValid || Scanning) return false;
+        var path = GamePath;
+        if (!string.Equals(path, _settings.GamePath, StringComparison.OrdinalIgnoreCase)
+            && confirmGamePathChange is not null && !await confirmGamePathChange())
+            return false;
+        if (!IsValid || Scanning || !string.Equals(path, GamePath, StringComparison.OrdinalIgnoreCase)) return false;
+
         _settings.GamePath = GamePath;
         TargetLufs = AppSettings.ClampTargetLufs(TargetLufs);
         TargetTruePeak = AppSettings.ClampTargetTruePeak(TargetTruePeak);
@@ -278,6 +298,8 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.MeasureTrackLoudness = MeasureTrackLoudness;
         _settings.VorbisQuality = VorbisQuality;
         SettingsService.Save(_settings);
+        SavedScan = _validatedScan;
         Saved = true;
+        return true;
     }
 }

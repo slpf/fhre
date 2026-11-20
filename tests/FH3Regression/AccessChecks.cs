@@ -1,8 +1,8 @@
 using System.Reflection;
-using System.Text.Json;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using FH6RB.Assets;
+using FH6RB.Core;
 using FH6RB.Services;
 using FH6RB.ViewModels;
 using static TestSupport;
@@ -24,17 +24,33 @@ internal static class AccessChecks
             string Physical(string name) => obfuscated ? Fh3FileNameCodec.Encode(name) : name;
             var english = Path.Combine(audio, Physical("RadioInfo_EN.xml"));
             var french = Path.Combine(audio, Physical("RadioInfo_FR.xml"));
-            var emptyXml = Path.Combine(audio, Physical("RadioInfo_DE.xml"));
+            var german = Path.Combine(audio, Physical("RadioInfo_DE.xml"));
             var bank = Path.Combine(banks, Physical("R1_Tracks.bank"));
             var dlc = Path.Combine(banks, Physical("R1_Tracks_PDLC1.bank"));
             File.WriteAllText(english, SyntheticChecks.Xml());
             File.WriteAllText(french, SyntheticChecks.Xml());
-            File.WriteAllBytes(emptyXml, []);
-            File.WriteAllBytes(bank, []);
-            File.WriteAllBytes(dlc, []);
+            File.WriteAllText(german, SyntheticChecks.Xml());
+            UwpBuildChecks.WriteTemplate(bank);
+            UwpBuildChecks.WriteTemplate(dlc);
             File.WriteAllBytes(Path.Combine(banks, Physical("R1_LFE.bank")), []);
-            var resources = new[] { english, french, emptyXml, bank, dlc };
+            var archive = Directory.CreateDirectory(Path.Combine(game, "ZZ-archive")).FullName;
+            var archivedBank = Path.Combine(archive, "R1_Tracks.assets.bank");
+            var archivedXml = Path.Combine(archive, "RadioInfo_EN.xml");
+            File.WriteAllBytes(archivedBank, []);
+            File.WriteAllBytes(archivedXml, []);
+            var resources = new[] { english, french, german, bank, dlc };
             var contents = resources.ToDictionary(p => p, File.ReadAllBytes);
+            using (var lockedArchive = new FileStream(archivedBank, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                CheckReadable(GameScanner.Scan(game));
+                Check(GameScanner.BankPath(game, "R1_Tracks") == bank
+                    && GameScanner.RadioInfoPathByFile(game, "RadioInfo_EN.xml") == english,
+                    "Public path resolution chose an archived bank or XML.");
+            }
+            File.Delete(bank);
+            Check(GameScanner.BankPath(game, "R1_Tracks") is null,
+                "An archived copy replaced a missing bank in the active audio tree.");
+            File.WriteAllBytes(bank, contents[bank]);
             CheckReadable(GameScanner.Scan(game));
             CheckReadable(ScanResources(game));
 
@@ -45,7 +61,7 @@ internal static class AccessChecks
                 ReadOne(path);
             });
             CheckReadable(all);
-            Check(visited.SetEquals(resources.Select(Path.GetFullPath)), "The scanner did not probe every recognized physical XML/bank or probed unrelated resources.");
+            Check(visited.SetEquals(resources.Select(Path.GetFullPath)), "The scanner did not probe exactly the selected resources.");
 
             foreach (var target in new[] { french, dlc })
             {
@@ -93,10 +109,20 @@ internal static class AccessChecks
                 CheckReadable(ScanResources(game));
             }
             Check(resources.All(p => File.ReadAllBytes(p).AsSpan().SequenceEqual(contents[p])), "A resource-read capability scan changed fixture content.");
+            File.WriteAllBytes(bank, contents[bank][..25]);
+            CheckFailure(GameScanner.Scan(game), GameScanner.GameScanIssue.InvalidRadioResource, bank);
+            Check(BankReader.ReadTracks(bank, RadioInfo.Load(english), 1).Error is not null,
+                "A truncated bank was loaded as an empty station.");
+            File.WriteAllBytes(bank, contents[bank]);
+            File.WriteAllBytes(german, []);
+            CheckFailure(GameScanner.Scan(game), GameScanner.GameScanIssue.InvalidRadioResource, german);
+            File.WriteAllText(german, "<Radio><RadioStation");
+            CheckFailure(GameScanner.Scan(game), GameScanner.GameScanIssue.InvalidRadioResource, german);
+            File.WriteAllBytes(german, contents[german]);
             CheckMainWindowResourceError(game);
             CheckSettingsScanDetails(game);
         }
-        Console.WriteLine("Verified resource-read denial, distinct sharing/I/O errors, complete physical probes, zero-byte resources, shared reads and lock recovery without ACL changes.");
+        Console.WriteLine("Verified active resource selection, read diagnostics, bank and XML validation, shared reads and lock recovery.");
     }
 
     private static void CheckGameFileTransaction(string root)
@@ -265,6 +291,24 @@ internal static class AccessChecks
                 "Invalid settings scan discarded discovered executable or language/bank counts.");
         }
         Check(changed.Contains(nameof(vm.HasScanDetails)), "Settings scan details did not notify the UI.");
+        apply.Invoke(vm, [new GameScanner.GameScanResult(true, GameScanner.GameScanIssue.PartialAccess, "blocked", exe, 3, 2)]);
+        Check(vm.IsValid && !vm.ShowError && vm.ShowWarning && vm.Error.Contains("blocked"),
+            "Settings hid a partial access warning.");
+        var currentSettings = new AppSettings { GamePath = game };
+        typeof(SettingsWindowViewModel).GetField("_settings", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(vm, currentSettings);
+        typeof(SettingsWindowViewModel).GetField("_gamePath", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(vm, Path.Combine(game, "another-game"));
+        var commit = typeof(SettingsWindowViewModel).GetMethod("TryCommitAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var prompted = false;
+        Func<Task<bool>> decline = () =>
+        {
+            prompted = true;
+            return Task.FromResult(false);
+        };
+        var committed = (Task<bool>) commit.Invoke(vm, [decline])!;
+        Check(!committed.GetAwaiter().GetResult() && prompted && !vm.Saved && currentSettings.GamePath == game,
+            "Canceling the game path change committed the settings.");
         apply.Invoke(vm, [new GameScanner.GameScanResult(true, GameScanner.GameScanIssue.None, null, exe, 3, 2)]);
         Check(vm.IsValid && !vm.ShowError && vm.Error.Length == 0 && vm.HasScanDetails,
             "A successful rescan retained the previous resource error or hid discovered details.");

@@ -49,7 +49,10 @@ static void TestScanner(string temp)
     Directory.CreateDirectory(banks);
     File.WriteAllBytes(Path.Combine(game, "forza_durango_release_final.exe"), []);
     File.WriteAllText(Path.Combine(audio, "RadioInfo_EN.xml"), Horizon2Xml());
-    File.WriteAllBytes(Path.Combine(banks, "HZ2_MX_Radio_01_Tracks.bank"), []);
+    var bankPath = Path.Combine(banks, "HZ2_MX_Radio_01_Tracks.bank");
+    var originalBank = Convert.FromHexString(
+        "524946463400000046455620464D542004000000500000004C4953541C00000050524F4A424E4B49000000005354424C00000000534E444800000000");
+    File.WriteAllBytes(bankPath, originalBank);
     File.WriteAllBytes(Path.Combine(banks, "HZ2_MX_Radio_01_TracksLFE.bank"), []);
     File.WriteAllBytes(Path.Combine(banks, "HZ2_MX_Radio_01_DJ_EN.bank"), []);
 
@@ -61,9 +64,7 @@ static void TestScanner(string temp)
     Check(station.Number == 1 && station.Name == "Horizon Pulse", "FH2 station catalog failed.");
     Check(station.BankName(station.Variants.Single()) == "HZ2_MX_Radio_01_Tracks", "FH2 bank mapping failed.");
     Check(GameScanner.BankPath(game, station.BankName("Tracks")) == Path.Combine(banks, "HZ2_MX_Radio_01_Tracks.bank"), "FH2 bank lookup failed.");
-    var bankPath = Path.Combine(banks, "HZ2_MX_Radio_01_Tracks.bank");
-    var originalBank = Convert.FromHexString(
-        "524946463400000046455620464D542004000000500000004C4953541C00000050524F4A424E4B49000000005354424C00000000534E444800000000");
+    File.WriteAllBytes(bankPath, []);
     File.WriteAllBytes(bankPath + ".bak", originalBank);
     Check(BackupService.Has(game), "FH2 original bank backup was not found.");
     var restored = BackupService.Restore(game);
@@ -73,9 +74,23 @@ static void TestScanner(string temp)
     Directory.CreateDirectory(modern);
     File.WriteAllBytes(Path.Combine(modern, "ForzaHorizon5.exe"), []);
     File.WriteAllText(Path.Combine(modern, "RadioInfo_EN.xml"), ModernXml());
-    File.WriteAllBytes(Path.Combine(modern, "R1_Tracks_Main.assets.bank"), []);
+    File.WriteAllBytes(Path.Combine(modern, "ForzaHorizon0Launcher.exe"), []);
+    File.WriteAllBytes(Path.Combine(modern, "R1_Tracks_Main.assets.bank"), originalBank);
+    File.WriteAllBytes(Path.Combine(modern, "R42_Tracks.bank"), originalBank);
+    File.WriteAllBytes(Path.Combine(modern, "R2147483648_Tracks.bank"), originalBank);
     Check(GameScanner.Scan(modern).IsValid && GameScanner.DetectVersion(modern) == 5, "Modern game scan regressed.");
     Check(RadioCatalog.Build(modern, RadioInfo.Load(Path.Combine(modern, "RadioInfo_EN.xml"))).Single().BankName("Main") == "R1_Tracks_Main", "Modern bank catalog regressed.");
+    File.Delete(Path.Combine(modern, "ForzaHorizon5.exe"));
+    Check(!GameScanner.Scan(modern).IsValid && GameScanner.DetectVersion(modern) == 0,
+        "A launcher was accepted as a supported game executable.");
+    foreach (var version in new[] { 4, 6 })
+    {
+        var exe = Path.Combine(modern, $"ForzaHorizon{version}.exe");
+        File.WriteAllBytes(exe, []);
+        Check(GameScanner.Scan(modern).IsValid && GameScanner.DetectVersion(modern) == version,
+            $"FH{version} scan failed.");
+        File.Delete(exe);
+    }
 }
 
 static void TestHorizon2Xml(string temp)

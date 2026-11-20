@@ -110,7 +110,7 @@ public sealed class RadioInfo
     public RadioStationEditor? StationByNumber(int number)
     {
         return _doc.Descendants("RadioStation")
-            .Where(st => (int?) st.Attribute("Number") == number)
+            .Where(st => int.TryParse((string?) st.Attribute("Number"), out var value) && value == number)
             .Select(st => new RadioStationEditor(st))
             .FirstOrDefault();
     }

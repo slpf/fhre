@@ -38,10 +38,11 @@ internal sealed class GameFileTransaction : IDisposable
         }
     }
 
-    public static void RecoverPending(string gamePath)
+    public static bool RecoverPending(string gamePath)
     {
-        if (string.IsNullOrWhiteSpace(gamePath) || !File.Exists(Path.Combine(gamePath, JournalName))) return;
+        if (string.IsNullOrWhiteSpace(gamePath) || !File.Exists(Path.Combine(gamePath, JournalName))) return false;
         using var transaction = new GameFileTransaction(gamePath);
+        return true;
     }
 
     private static FileStream OpenLock(string path) => new(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,

@@ -26,8 +26,10 @@ public partial class MainWindow : Window
         SafeAsync.Run(OpenedAsync, "open", this);
     }
 
-    private Task<bool> ConfirmDiscardChangesAsync() =>
-        MessageDialog.ShowAsync(this, Str.DlgSwitchUnsavedTitle, Str.DlgSwitchUnsavedBody,
+    private Task<bool> ConfirmDiscardChangesAsync() => ConfirmDiscardChangesAsync(this);
+
+    private static Task<bool> ConfirmDiscardChangesAsync(Window owner) =>
+        MessageDialog.ShowAsync(owner, Str.DlgSwitchUnsavedTitle, Str.DlgSwitchUnsavedBody,
             Str.DlgSwitchUnsavedOk, Str.DlgSwitchUnsavedCancel);
 
     private async Task OpenedAsync()
@@ -143,16 +145,18 @@ public partial class MainWindow : Window
 
     public async Task ShowSettingsAsync(bool firstRun = false)
     {
+        if (Vm.IsBusy) return;
         var prevPath = Vm.Settings.GamePath;
         var vm = new SettingsWindowViewModel(Vm.Settings) { IsFirstRun = firstRun };
         var dialog = new SettingsWindow { DataContext = vm };
+        dialog.ConfirmGamePathChange = () => Vm.HasUnsavedChanges ? ConfirmDiscardChangesAsync(dialog) : Task.FromResult(true);
 
         await dialog.ShowDialog(this);
 
-        if (vm.Saved && (Vm.HasResourceError
+        if (vm.Saved && ((Vm.HasResourceError && !Vm.HasUnsavedChanges)
             || !string.Equals(prevPath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase)))
         {
-            Vm.ReloadFromGame();
+            Vm.ReloadFromGame(vm.SavedScan);
         }
         else if (vm.Saved)
         {

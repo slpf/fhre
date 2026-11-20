@@ -124,94 +124,117 @@ public sealed class FevBank
 
     internal static (HashSet<ulong> Ids, int Declared) ReadStblInfoFromFile(string path, bool requireComplete = false)
     {
-        var ids = new HashSet<ulong>();
-
         try
         {
-            using var fs = File.OpenRead(path);
-            
-            if (fs.Length < 12)
-            {
-                return (ids, -1);
-            }
-
-            var head = new byte[12];
-            
-            if (fs.Read(head, 0, 12) < 12 || Cc(head, 0) != "RIFF" || Cc(head, 8) != "FEV ")
-            {
-                return (ids, -1);
-            }
-
-            var riffEnd = fs.Length;
-            if (requireComplete)
-            {
-                riffEnd = U32(head, 4) + 8L;
-                if (riffEnd < 12 || riffEnd > fs.Length) return (ids, -1);
-                if (riffEnd != fs.Length)
-                {
-                    if (fs.Length - riffEnd != ModMarker.Length) return (ids, -1);
-                    fs.Position = riffEnd;
-                    var marker = new byte[ModMarker.Length];
-                    fs.ReadExactly(marker);
-                    if (!marker.AsSpan().SequenceEqual(ModMarker)) return (ids, -1);
-                    fs.Position = head.Length;
-                }
-            }
-            var hasFormat = false;
-            var hasSound = false;
-            var declared = -1;
-            var emptyTemplate = false;
-            var hdr = new byte[8];
-            
-            while (fs.Position + 8 <= riffEnd)
-            {
-                if (fs.Read(hdr, 0, 8) < 8)
-                {
-                    break;
-                }
-
-                var id = Cc(hdr, 0);
-                var size = (int) U32(hdr, 4);
-                if (size < 0 || size > riffEnd - fs.Position) return (ids, -1);
-
-                if (id == "LIST")
-                {
-                    var list = new byte[size];
-                    
-                    fs.ReadExactly(list);
-                    if (!requireComplete) return (ids, ParseStblIds(list, ids));
-                    if (list.Length >= 4 && Cc(list, 0) == "PROJ")
-                    {
-                        if (declared >= 0) return (ids, -1);
-                        declared = ParseStblIds(list, ids, requireComplete: true);
-                        if (declared < 0) return (ids, -1);
-                        emptyTemplate = FindChunkInList(list, "STBL").PayloadSize == 0;
-                        if (emptyTemplate && FindChunkInList(list, "SNDH").TagOff < 0) return (ids, -1);
-                    }
-                }
-                else
-                {
-                    if (id == "FMT ") hasFormat |= size > 0;
-                    if (id == "SND ")
-                    {
-                        if (!requireComplete) break;
-                        hasSound = true;
-                    }
-                    fs.Seek(size, SeekOrigin.Current);
-                }
-                if ((size & 1) != 0 && (!requireComplete || id != "SND " || fs.Position != riffEnd))
-                    fs.Seek(1, SeekOrigin.Current);
-            }
-            if (requireComplete && hasFormat && hasSound != emptyTemplate && fs.Position == riffEnd)
-                return (ids, declared);
+            using var stream = File.OpenRead(path);
+            return ReadStblInfo(stream, requireComplete, out _);
         }
         catch
         {
+            return ([], -1);
+        }
+    }
+
+    internal static int ValidateTrackBank(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return ReadTrackProject(stream).Tracks.Count;
+    }
+
+    private static (byte[] List, List<(ulong Id, int Index)> Tracks) ReadTrackProject(Stream stream)
+    {
+        var (ids, declared) = ReadStblInfo(stream, requireComplete: true, out var list);
+        if (list is null || declared < 0 || ids.Count != declared)
+            throw new InvalidDataException("Invalid or incomplete RIFF/FEV track bank.");
+        var tracks = ParseStblEntries(list);
+        if (tracks.Count != declared)
+            throw new InvalidDataException("RIFF/FEV track bank has an invalid track table.");
+        return (list, tracks);
+    }
+
+    private static (HashSet<ulong> Ids, int Declared) ReadStblInfo(Stream fs, bool requireComplete, out byte[]? project)
+    {
+        project = null;
+        var ids = new HashSet<ulong>();
+
+        if (fs.Length < 12)
+        {
+            return (ids, -1);
         }
 
-        return (ids, -1);
+        var head = new byte[12];
+
+        if (fs.Read(head, 0, 12) < 12 || Cc(head, 0) != "RIFF" || Cc(head, 8) != "FEV ")
+        {
+            return (ids, -1);
+        }
+
+        var riffEnd = fs.Length;
+        if (requireComplete)
+        {
+            riffEnd = U32(head, 4) + 8L;
+            if (riffEnd < 12 || riffEnd > fs.Length) return (ids, -1);
+            if (riffEnd != fs.Length)
+            {
+                if (fs.Length - riffEnd != ModMarker.Length) return (ids, -1);
+                fs.Position = riffEnd;
+                var marker = new byte[ModMarker.Length];
+                fs.ReadExactly(marker);
+                if (!marker.AsSpan().SequenceEqual(ModMarker)) return (ids, -1);
+                fs.Position = head.Length;
+            }
+        }
+        var hasFormat = false;
+        var hasSound = false;
+        var declared = -1;
+        var emptyTemplate = false;
+        var hdr = new byte[8];
+
+        while (fs.Position + 8 <= riffEnd)
+        {
+            if (fs.Read(hdr, 0, 8) < 8)
+            {
+                break;
+            }
+
+            var id = Cc(hdr, 0);
+            var size = (int) U32(hdr, 4);
+            if (size < 0 || size > riffEnd - fs.Position) return (ids, -1);
+
+            if (id == "LIST")
+            {
+                var list = new byte[size];
+
+                fs.ReadExactly(list);
+                if (!requireComplete) return (ids, ParseStblIds(list, ids));
+                if (list.Length >= 4 && Cc(list, 0) == "PROJ")
+                {
+                    if (declared >= 0) return (ids, -1);
+                    declared = ParseStblIds(list, ids, requireComplete: true);
+                    if (declared < 0) return (ids, -1);
+                    project = list;
+                    emptyTemplate = FindChunkInList(list, "STBL").PayloadSize == 0;
+                    if (emptyTemplate && FindChunkInList(list, "SNDH").TagOff < 0) return (ids, -1);
+                }
+            }
+            else
+            {
+                if (id == "FMT ") hasFormat |= size > 0;
+                if (id == "SND ")
+                {
+                    if (!requireComplete) break;
+                    hasSound = true;
+                }
+                fs.Seek(size, SeekOrigin.Current);
+            }
+            if ((size & 1) != 0 && (!requireComplete || id != "SND " || fs.Position != riffEnd))
+                fs.Seek(1, SeekOrigin.Current);
+        }
+        return requireComplete && hasFormat && hasSound != emptyTemplate && fs.Position == riffEnd
+            ? (ids, declared)
+            : (ids, -1);
     }
-    
+
     private static int ParseStblIds(byte[] list, HashSet<ulong> ids, bool requireComplete = false)
     {
         var p = 4;
@@ -260,59 +283,8 @@ public sealed class FevBank
     {
         var result = new List<BankTrack>();
         using var fs = File.OpenRead(path);
-        
-        if (fs.Length < 12)
-        {
-            return result;
-        }
-
-        var head = new byte[12];
-        
-        if (fs.Read(head, 0, 12) < 12 || Cc(head, 0) != "RIFF" || Cc(head, 8) != "FEV ")
-        {
-            return result;
-        }
-
-        byte[]? list = null;
-        var hdr = new byte[8];
-        
-        while (fs.Position + 8 <= fs.Length)
-        {
-            if (fs.Read(hdr, 0, 8) < 8)
-            {
-                break;
-            }
-
-            var id = Cc(hdr, 0);
-            var size = (int) U32(hdr, 4);
-            if (size < 0 || size > fs.Length - fs.Position) return result;
-
-            if (id == "LIST")
-            {
-                list = new byte[size];
-                if (fs.Read(list, 0, size) != size)
-                {
-                    return result;
-                }
-
-                break;
-            }
-
-            if (id == "SND ")
-            {
-                break;
-            }
-
-            fs.Seek(size, SeekOrigin.Current);
-            if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
-        }
-
-        if (list is null)
-        {
-            return result;
-        }
-
-        var stbl = ParseStblEntries(list);
+        var (list, stbl) = ReadTrackProject(fs);
+        if (stbl.Count == 0) return result;
         var (fsbOff, _) = ParseSndh(list);
         
         (long Frames, int Rate)[] samp = [];

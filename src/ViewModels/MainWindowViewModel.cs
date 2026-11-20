@@ -149,11 +149,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private RadioInfo? _radio;
     private GameScanner.RadioResources? _radioResources;
+    private int? _gameVersion;
     private string? _radioForFile;
     private int _nextSeq;
     private readonly Dictionary<string, FileStream> _sourceLocks = new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressReload;
-    private bool _reloadingGame;
+    private bool _confirmingSwitch;
     private int _loadGen;
     private (LangOption Lang, int StationNumber, string Variant)? _loadedSelection;
     
@@ -292,12 +293,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void ReloadFromGame() => Dispatcher.UIThread.Invoke(ReloadFromGameCore);
 
-    private void ReloadFromGameCore()
+    internal void ReloadFromGame(GameScanner.GameScanResult? validatedScan) =>
+        Dispatcher.UIThread.Invoke(() => ReloadScannedGame(validatedScan));
+
+    private void ReloadFromGameCore() => ReloadScannedGame(null);
+
+    private void ReloadScannedGame(GameScanner.GameScanResult? validatedScan)
     {
         _loadGen++;
         var wasSuppressed = _suppressReload;
         _suppressReload = true;
-        _reloadingGame = true;
 
         try
         {
@@ -306,19 +311,27 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Variants.Clear();
             _radio = null;
             _radioForFile = null;
-            _minimumActiveTracks = MinActiveTracksPerStation;
+            _loadedSelection = null;
+            HasUnsavedChanges = false;
+            SelectedStation = null;
+            SelectedVariant = null;
 
             GameRecoveryError = null;
-            try { GameFileTransaction.RecoverPending(Settings.GamePath); }
+            try
+            {
+                if (GameFileTransaction.RecoverPending(Settings.GamePath)) validatedScan = null;
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException)
             {
                 Log.Line("game file recovery failed: " + ex);
                 GameRecoveryError = string.Format(Str.StatusGameRecoveryFailedFmt, ex.Message);
             }
 
-            var scan = GameRecoveryError is null ? GameScanner.Scan(Settings.GamePath)
+            var scan = GameRecoveryError is null ? validatedScan ?? GameScanner.Scan(Settings.GamePath)
                 : new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError, GameRecoveryError, null, 0, 0);
             _radioResources = scan.Resources;
+            _gameVersion = scan.Version;
+            UpdatePlaylistMinimum();
             HasValidGamePath = scan.IsValid;
             RestoreAvailability = RefreshCanRestoreAllAsync();
 
@@ -351,14 +364,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ?? Languages.FirstOrDefault(l => l.FileName == AllLanguagesFile)
                 ?? Languages.FirstOrDefault();
 
-            RebuildStations(scan.RadioBanks);
+            if (!RebuildStations(scan.RadioBanks))
+            {
+                ClearLoadedTracks();
+                return;
+            }
 
             SelectedStation = Stations.FirstOrDefault(s => s.Prefix == Settings.LastStationBank)
                 ?? Stations.FirstOrDefault();
         }
         finally
         {
-            _reloadingGame = false;
             _suppressReload = wasSuppressed;
         }
         if (!_suppressReload)
@@ -367,36 +383,36 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    private void EnsureRadio()
+    private RadioInfo? ReadSelectedRadio(out string? error)
     {
+        error = null;
         var file = ViewLanguageFile();
         if (file is null)
         {
-            _radio = null;
-            _radioForFile = null;
-            return;
+            error = Str.ErrScanLanguageMissing;
+            return null;
         }
 
         if (_radioForFile == file && _radio is not null)
         {
-            return;
+            return _radio;
         }
 
-        var path = _radioResources?.LanguagePath(file) ?? GameScanner.RadioInfoPathByFile(Settings.GamePath, file);
+        var path = _radioResources is null
+            ? GameScanner.RadioInfoPathByFile(Settings.GamePath, file)
+            : _radioResources.LanguagePath(file);
         try
         {
-            _radio = path is not null ? RadioInfo.Load(path) : null;
+            if (path is not null) return RadioInfo.Load(path);
+            error = string.Format(Str.ErrScanOtherErrorFmt, file);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException)
         {
             Log.Line($"RadioInfo load failed ({file}): {ex.Message}");
-            _radio = null;
-            var error = string.Format(Str.ErrScanOtherErrorFmt, $"{file}: {ex.Message}");
-            SetResourceError(error);
-            Status = error;
+            error = string.Format(Str.ErrScanOtherErrorFmt, $"{file}: {ex.Message}");
         }
 
-        _radioForFile = file;
+        return null;
     }
 
     private string? ViewLanguageFile()
@@ -409,26 +425,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return (english ?? real.FirstOrDefault())?.FileName;
     }
 
-    private void RebuildStations(IReadOnlyList<string>? radioBanks = null)
+    private bool RebuildStations(IReadOnlyList<string>? radioBanks = null)
     {
-        EnsureRadio();
-        if (_radio is null)
+        var radio = ReadSelectedRadio(out var error);
+        var stations = radio is null ? [] : RadioCatalog.Build(
+            radioBanks ?? _radioResources?.Banks ?? GameScanner.RadioBankNames(Settings.GamePath), radio);
+        if (stations.Count == 0)
         {
-            _loadGen++;
-            Stations.Clear();
-            SelectedStation = null;
-            ClearLoadedTracks();
-            var error = _resourceError ?? Str.ErrScanLanguageMissing;
-            SetResourceError(error);
-            Status = error;
-            return;
+            Status = error ?? Str.ErrScanNoMatchingStations;
+            if (_loadedSelection is null) SetResourceError(Status);
+            return false;
         }
-        var current = SelectedStation?.Number;
-        Stations.Clear();
 
-        var stations = radioBanks is null
-            ? RadioCatalog.Build(Settings.GamePath, _radio)
-            : RadioCatalog.Build(radioBanks, _radio);
+        _radio = radio;
+        _radioForFile = ViewLanguageFile();
+        var current = SelectedStation?.Number;
+        var variant = SelectedVariant;
+        Stations.Clear();
 
         foreach (var st in stations)
         {
@@ -436,7 +449,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         SelectedStation = Stations.FirstOrDefault(s => s.Number == current) ?? Stations.FirstOrDefault();
-        UpdatePlaylistMinimum();
+        if (SelectedStation?.Number == current && variant is not null && Variants.Contains(variant))
+            SelectedVariant = variant;
+        return true;
     }
 
     private void ClearLoadedTracks()
@@ -454,7 +469,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void UpdatePlaylistMinimum()
     {
-        var minimum = GameScanner.DetectVersion(Settings.GamePath) switch
+        var minimum = (_gameVersion ?? GameScanner.DetectVersion(Settings.GamePath)) switch
         {
             2 => MinActiveTracksHorizon2,
             3 => MinActiveTracksHorizon3,
@@ -467,44 +482,41 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     partial void OnSelectedLanguageChanged(LangOption? value)
     {
-        if (_reloadingGame) return;
+        if (!_suppressReload) RequestLoadAsync();
+    }
 
+    partial void OnSelectedStationChanged(StationInfo? oldValue, StationInfo? newValue)
+    {
         var wasSuppressed = _suppressReload;
         _suppressReload = true;
-        RebuildStations();
-        _suppressReload = wasSuppressed;
 
+        var previous = oldValue?.Number == newValue?.Number ? SelectedVariant : null;
+        Variants.Clear();
+
+        if (newValue is not null)
+        {
+            foreach (var v in newValue.Variants)
+            {
+                Variants.Add(v);
+            }
+        }
+
+        SelectedVariant = previous is not null && Variants.Contains(previous) ? previous : PreferredVariant(newValue);
+
+        _suppressReload = wasSuppressed;
         if (!_suppressReload)
         {
             RequestLoadAsync();
         }
     }
 
-    partial void OnSelectedStationChanged(StationInfo? value)
+    private string? PreferredVariant(StationInfo? station)
     {
-        UpdatePlaylistMinimum();
-        var wasSuppressed = _suppressReload;
-        _suppressReload = true;
-
-        var previous = SelectedVariant;
-        Variants.Clear();
-
-        if (value is not null)
-        {
-            foreach (var v in value.Variants)
-            {
-                Variants.Add(v);
-            }
-        }
-
-        SelectedVariant = Variants.Contains(previous ?? "") ? previous
-            : Variants.FirstOrDefault(v => v == "Tracks") ?? Variants.FirstOrDefault();
-
-        _suppressReload = wasSuppressed;
-        if (!_suppressReload)
-        {
-            RequestLoadAsync();
-        }
+        if (station is null) return null;
+        var choices = station.Variants.OrderBy(variant => variant != "Tracks").ToArray();
+        return choices.FirstOrDefault(variant =>
+            _radioResources?.BankPath(station.BankName(variant)) is { } path && FevBank.ReadStblCountFromFile(path) > 0)
+            ?? choices.FirstOrDefault();
     }
 
     partial void OnSelectedVariantChanged(string? value)
@@ -517,37 +529,55 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void RequestLoadAsync()
     {
-        if (!HasUnsavedChanges)
-        {
-            _ = LoadAsync();
-            return;
-        }
-
-        _ = ConfirmSwitchAsync();
+        if (!_confirmingSwitch) _ = SwitchSelectionAsync();
     }
 
-    private async Task ConfirmSwitchAsync()
+    private async Task SwitchSelectionAsync()
     {
-        _loadGen++;
-
-        var proceed = ConfirmDiscardChanges is null || await ConfirmDiscardChanges!.Invoke();
-
-        if (proceed)
+        if (HasUnsavedChanges)
         {
-            await LoadAsync();
-            return;
+            _confirmingSwitch = true;
+            try
+            {
+                if (ConfirmDiscardChanges is not { } confirm || !await confirm())
+                {
+                    RestoreLoadedSelection();
+                    return;
+                }
+            }
+            finally
+            {
+                _confirmingSwitch = false;
+            }
         }
 
+        if (SelectedLanguage != _loadedSelection?.Lang)
+        {
+            _suppressReload = true;
+            try
+            {
+                if (!RebuildStations())
+                {
+                    RestoreLoadedSelection();
+                    return;
+                }
+            }
+            finally
+            {
+                _suppressReload = false;
+            }
+        }
+
+        await LoadAsync();
+    }
+
+    private void RestoreLoadedSelection()
+    {
         var sel = _loadedSelection;
+        if (sel is null) return;
 
-        if (sel is null)
-        {
-            await LoadAsync();
-            return;
-        }
-        
+        var wasSuppressed = _suppressReload;
         _suppressReload = true;
-        IsLoading = false;
 
         try
         {
@@ -570,7 +600,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         finally
         {
-            _suppressReload = false;
+            _suppressReload = wasSuppressed;
         }
     }
 
@@ -591,9 +621,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var gen = ++_loadGen;
         var station = SelectedStation;
         var bank = station.BankName(SelectedVariant);
-        _loadedSelection = (SelectedLanguage, station.Number, SelectedVariant);
+        var selection = (Lang: SelectedLanguage, StationNumber: station.Number, Variant: SelectedVariant);
 
-        Log.Line($"LoadAsync #{gen}: lang={SelectedLanguage.FileName} station=#{station.Number} variant={SelectedVariant} bank={bank}");
+        Log.Line($"LoadAsync #{gen}: lang={selection.Lang.FileName} station=#{station.Number} variant={selection.Variant} bank={bank}");
 
         Dispatcher.UIThread.Invoke(() =>
         {
@@ -602,18 +632,17 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Status = string.Format(Str.StatusLoadingFmt, bank);
         });
 
-        EnsureRadio();
-        var radio = _radio;
+        var radio = ReadSelectedRadio(out var error);
         if (radio is null)
         {
             ClearLoadedTracks();
-            var error = _resourceError ?? Str.ErrScanLanguageMissing;
-            SetResourceError(error);
-            Status = error;
-            IsLoading = false;
+            Status = error ?? Str.ErrScanLanguageMissing;
+            SetResourceError(Status);
             return;
         }
-        var path = _radioResources?.BankPath(bank) ?? GameScanner.BankPath(Settings.GamePath, bank);
+        _radio = radio;
+        _radioForFile = ViewLanguageFile();
+        var path = _radioResources is null ? GameScanner.BankPath(Settings.GamePath, bank) : _radioResources.BankPath(bank);
         _loadedBankPath = path;
 
         BankReadResult result;
@@ -667,6 +696,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         Dispatcher.UIThread.Invoke(() =>
         {
+            _loadedSelection = selection;
             Tracks.Reset(result.Tracks.Select(track => new TrackItemViewModel(track)));
 
             _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
@@ -690,7 +720,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             SetResourceError(result.Error is null ? null : Status);
         });
 
-        Settings.LastLanguage = SelectedLanguage.FileName;
+        Settings.LastLanguage = selection.Lang.FileName;
         Settings.LastStationBank = station.Prefix;
         SettingsService.Save(Settings);
     }
@@ -1662,7 +1692,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             PendingErrorDialog = Str.StatusBuildGameRunning;
             return;
         }
-        var resources = GameScanner.ReadRadioResources(gamePath);
+        var resources = _radioResources ?? GameScanner.ReadRadioResources(gamePath);
         var bankPath = resources.BankPath(bankName);
         if (bankPath is null)
         {
