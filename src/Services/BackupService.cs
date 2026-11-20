@@ -5,7 +5,7 @@ namespace FH6RB.Services;
 
 public static class BackupService
 {
-    private static List<string> Find(string gamePath) => GameScanner.BackupFiles(gamePath);
+    internal static List<string> Find(string gamePath) => GameScanner.BackupFiles(gamePath);
 
     public static bool Has(string gamePath) => Find(gamePath).Count > 0;
 
@@ -44,12 +44,14 @@ public static class BackupService
 
     public static (int Banks, int Langs) RestoreStation(string gamePath, StationInfo station, Action<string>? log = null)
     {
+        using var transaction = new GameFileTransaction(gamePath);
+        var resources = GameScanner.ReadRadioResources(gamePath);
         var bankTargets = new List<(string Dst, string Bak, string Name)>();
 
         foreach (var variant in station.Variants)
         {
             var bankName = station.BankName(variant);
-            var dst = GameScanner.BankPath(gamePath, bankName);
+            var dst = resources.BankPath(bankName);
 
             if (dst is null)
             {
@@ -70,9 +72,9 @@ public static class BackupService
 
         var xmlTargets = new List<(string Path, string Bak)>();
 
-        foreach (var langFile in GameScanner.LanguageFiles(gamePath))
+        foreach (var langFile in resources.Languages)
         {
-            var path = GameScanner.RadioInfoPathByFile(gamePath, langFile);
+            var path = resources.LanguagePath(langFile);
 
             if (path is null)
             {
@@ -91,23 +93,10 @@ public static class BackupService
 
         FileGuard.EnsureWritable(bankTargets.Select(t => t.Dst).Concat(xmlTargets.Select(t => t.Path)));
 
-        var banks = 0;
         var langs = 0;
-        var failed = new List<string>();
-
-        foreach (var (dst, bak, name) in bankTargets)
+        foreach (var (dst, bak, _) in bankTargets)
         {
-            try
-            {
-                Atomic.Copy(bak, dst);
-                banks++;
-                log?.Invoke($"restored bank {name}");
-            }
-            catch (Exception ex)
-            {
-                failed.Add(name);
-                log?.Invoke($"restore bank FAILED {name}: {ex.Message}");
-            }
+            transaction.StageCopy(bak, dst);
         }
 
         foreach (var (path, bak) in xmlTargets)
@@ -135,51 +124,43 @@ public static class BackupService
                 }
 
                 live.ReplaceWith(new XElement(orig));
-                radio.Save(path);
+                radio.Save(transaction.Stage(path));
                 langs++;
-                log?.Invoke("restored xml");
             }
             catch (Exception ex)
             {
-                failed.Add(Path.GetFileName(path));
-                log?.Invoke($"restore xml FAILED: {ex.Message}");
+                throw new IOException($"Could not prepare station XML {path}: {ex.Message}", ex);
             }
         }
 
-        if (failed.Count > 0)
-        {
-            throw new InvalidOperationException("partial restore: " + string.Join(", ", failed));
-        }
-
-        return (banks, langs);
+        transaction.Commit();
+        log?.Invoke($"restored station #{station.Number}: {bankTargets.Count} bank(s), {langs} language file(s)");
+        return (bankTargets.Count, langs);
     }
 
     public static (int Restored, int Failed) Restore(string gamePath, Action<string>? log = null)
     {
-        var baks = Find(gamePath);
+        using var transaction = new GameFileTransaction(gamePath);
+        return Restore(transaction, Find(gamePath), log);
+    }
 
+    internal static (int Restored, int Failed) Restore(string gamePath, IReadOnlyList<string> baks, Action<string>? log)
+    {
+        using var transaction = new GameFileTransaction(gamePath);
+        return Restore(transaction, baks, log);
+    }
+
+    private static (int Restored, int Failed) Restore(GameFileTransaction transaction, IReadOnlyList<string> baks, Action<string>? log)
+    {
         FileGuard.EnsureWritable(baks.Select(b => b[..^4]));
-
-        var restored = 0;
-        var failed = 0;
 
         foreach (var bak in baks)
         {
-            var original = bak[..^4];
-
-            try
-            {
-                Atomic.Copy(bak, original);
-                restored++;
-                log?.Invoke($"restored {Path.GetFileName(original)}");
-            }
-            catch (Exception ex)
-            {
-                failed++;
-                log?.Invoke($"restore FAILED {Path.GetFileName(original)}: {ex.Message}");
-            }
+            transaction.StageCopy(bak, bak[..^4]);
         }
 
-        return (restored, failed);
+        transaction.Commit();
+        log?.Invoke($"restored {baks.Count} original file(s)");
+        return (baks.Count, 0);
     }
 }

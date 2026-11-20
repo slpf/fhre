@@ -272,6 +272,10 @@ public static class Str
     public const string BackupDeleteTitle = "Delete backup";
     public const string BackupDeleteBodyFmt = "Delete backup \"{0}\"?";
     public const string StatusBackupNoStation = "Select a station first.";
+    public const string StatusBackupBankNotReady = "Load a station bank before creating a backup.";
+    public const string ErrScanRadioBanksMissing = "No radio banks were found in the game folder.";
+    public const string BackupFolderFmt = "Backup folder: {0}";
+    public const string BackupSkippedLanguagesFmt = "Backup saved. Could not copy station metadata from {0}. See the log for details.";
 
     public const string BtnResetSettings = "Reset";
     public const string TipResetSettings = "Reset all settings to defaults (keeps the game folder)";

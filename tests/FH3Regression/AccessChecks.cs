@@ -10,6 +10,7 @@ internal static class AccessChecks
 {
     public static void Run(string root)
     {
+        CheckGameFileTransaction(root);
         foreach (var obfuscated in new[] { false, true })
         {
             var game = Path.Combine(root, obfuscated ? "access-obfuscated" : "access-normal");
@@ -95,6 +96,56 @@ internal static class AccessChecks
             CheckSettingsScanDetails(game);
         }
         Console.WriteLine("Verified resource-read denial, distinct sharing/I/O errors, complete physical probes, zero-byte resources, shared reads and lock recovery without ACL changes.");
+    }
+
+    private static void CheckGameFileTransaction(string root)
+    {
+        var folder = Path.Combine(root, "game-transaction");
+        Directory.CreateDirectory(folder);
+        File.WriteAllBytes(Path.Combine(folder, "ForzaHorizon6.exe"), []);
+        var xml = Path.Combine(folder, "RadioInfo_EN.xml");
+        File.WriteAllText(xml, SyntheticChecks.Xml());
+        var noBanks = GameScanner.Scan(folder);
+        Check(!noBanks.IsValid && noBanks.Issue == GameScanner.GameScanIssue.RadioBanksMissing,
+            "A game without station banks was accepted.");
+
+        var bank = Path.Combine(folder, "R1_Tracks.assets.bank");
+        File.WriteAllText(bank, "live bank");
+        File.WriteAllText(bank + ".bak", "original bank");
+        File.Copy(xml, xml + ".bak");
+        File.WriteAllText(xml, "<Radio><RadioStation");
+        var station = new StationInfo(1, "Test", ["Tracks"], new Dictionary<string, string> { ["Tracks"] = "R1_Tracks" });
+        try
+        {
+            BackupService.RestoreStation(folder, station);
+            throw new InvalidOperationException("A malformed live XML was accepted.");
+        }
+        catch (IOException)
+        {
+            Check(File.ReadAllText(bank) == "live bank" && File.ReadAllText(xml) == "<Radio><RadioStation",
+                "Failed station restore changed the live bank or XML.");
+        }
+
+        var type = typeof(BackupService).Assembly.GetType("FH6RB.Services.GameFileTransaction", throwOnError: true)!;
+        using (var transaction = (IDisposable)Activator.CreateInstance(type, folder)!)
+        {
+            var stage = type.GetMethod("Stage")!;
+            var stagedBank = (string)stage.Invoke(transaction, [bank])!;
+            File.WriteAllText(stagedBank, "new bank");
+            stage.Invoke(transaction, [xml]);
+            try
+            {
+                type.GetMethod("Commit")!.Invoke(transaction, null);
+                throw new InvalidOperationException("The transaction committed a missing staged XML.");
+            }
+            catch (TargetInvocationException ex) when (ex.InnerException is IOException)
+            {
+                Check(File.ReadAllText(bank) == "live bank" && File.ReadAllText(xml) == "<Radio><RadioStation",
+                    "Commit failure did not restore the previous game files.");
+            }
+        }
+        Check(!Directory.EnumerateFiles(folder).Any(path => path.EndsWith(".stage") || path.EndsWith(".rollback")
+            || path.EndsWith(".fhre-lock") || path.EndsWith(".fhre-write-lock")), "The failed transaction left staging files behind.");
     }
 
     private static void CheckMainWindowResourceError(string game)

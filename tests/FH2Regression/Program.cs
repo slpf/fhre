@@ -589,7 +589,7 @@ static void TestPlaylistMinimums(string temp)
         }
         Check(GameScanner.DetectVersion(game) == version, "Playlist fixture has an incorrect game version.");
         var vm = CreateXmlWriter(game, ["RadioInfo_EN.xml"]);
-        var tracks = new ObservableCollection<TrackItemViewModel>(Enumerable.Range(0, minimum - 1).Select(i =>
+        var tracks = new FH6RB.Collections.RangeObservableCollection<TrackItemViewModel>(Enumerable.Range(0, minimum - 1).Select(i =>
             new TrackItemViewModel(new RadioTrack { SoundName = $"FH{version}_MIN_{i}", Origin = TrackOrigin.Original, Enabled = true })));
         var tracksField = typeof(MainWindowViewModel).GetField("<Tracks>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new MissingFieldException(nameof(MainWindowViewModel), "Tracks");
@@ -640,14 +640,16 @@ static async Task TestCopiedWorkflowAsync(string originalGame, string temp, stri
     items[0] = items[0] with { SourcePath = wav, IsReplacement = true, Markers = null };
     var customName = Naming.MakeSoundName(600);
     items.Add(new BuildItem(customName, true, wav, "Workflow custom", "Artist", null, true));
-    var writeBank = typeof(MainWindowViewModel).GetMethod("BuildAndWriteBankAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
-    var buildTask = (Task<(IReadOnlyList<AddedSample> Added, long Written)>) writeBank.Invoke(null, [bank, items, settings, (Action<string>) Console.WriteLine])!;
+    var vm = CreateXmlWriter(game, languages);
+    var resources = typeof(GameScanner).GetMethod("ReadRadioResources", BindingFlags.NonPublic | BindingFlags.Static)!
+        .Invoke(null, [game]);
+    var writeFiles = typeof(MainWindowViewModel).GetMethod("BuildGameFilesAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
+    var buildTask = (Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)>)writeFiles.Invoke(vm,
+        [game, station, bankName, bank, Path.Combine(audio, referenceFile), languages.Where(file => file != referenceFile).ToList(),
+            resources, items, settings, (Action<string>)Console.WriteLine])!;
     var build = await buildTask;
     Check(FevBank.ReadSkeleton(bank).Mode == expectedMainMode && FevBank.ReadSkeleton(bank + ".bak").Mode == 10, "FH2 workflow did not preserve the native XMA bank backup.");
-    var vm = CreateXmlWriter(game, languages);
-    var writeXml = typeof(MainWindowViewModel).GetMethod("WriteRadioInfosAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
-    var xmlTask = (Task<(int SavedXml, int Dead)>) writeXml.Invoke(vm, [station, bankName, build.Added, items])!;
-    Check((await xmlTask).SavedXml == languages.Count, "FH2 workflow did not write all language files.");
+    Check(build.SavedXml == languages.Count, "FH2 workflow did not write all language files.");
     foreach (var file in languages)
     {
         var path = Path.Combine(audio, file);
@@ -669,8 +671,10 @@ static async Task TestCopiedWorkflowAsync(string originalGame, string temp, stri
     {
         Markers = new Dictionary<string, long>(changes[customIndex].Markers!) { ["DJDrop"] = -1, ["TrackBreakDown"] = 48000 },
     };
-    xmlTask = (Task<(int SavedXml, int Dead)>) writeXml.Invoke(vm, [station, bankName, Array.Empty<AddedSample>(), changes])!;
-    await xmlTask;
+    var rewrite = (Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)>)writeFiles.Invoke(vm,
+        [game, station, bankName, bank, Path.Combine(audio, referenceFile), languages.Where(file => file != referenceFile).ToList(),
+            resources, changes, settings, (Action<string>)Console.WriteLine])!;
+    await rewrite;
     foreach (var file in languages)
     {
         var markers = RadioInfo.Load(Path.Combine(audio, file)).StationByNumber(station.Number)!.GetMarkers(customName)!;

@@ -48,7 +48,8 @@ public static class TrackLoudnessService
                 if (Cache.Count >= CacheLimit) Cache.Remove(Cache.Keys.First());
                 Cache[key] = result;
             }
-            Log.Line("ui.loudness.ok " + JsonSerializer.Serialize(new { source, subIndex, lufs = result, elapsedMs = timer.ElapsedMilliseconds }));
+            if (Log.IsVerbose)
+                Log.Line("ui.loudness.ok " + JsonSerializer.Serialize(new { source, subIndex, lufs = result, elapsedMs = timer.ElapsedMilliseconds }));
             return result;
         }
         finally { Workers.Release(); }

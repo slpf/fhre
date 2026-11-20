@@ -22,6 +22,7 @@ public static partial class GameScanner
         ResourceReadDenied,
         EncryptedResources,
         ResourceReadError,
+        RadioBanksMissing,
     }
 
     public sealed record GameScanResult(
@@ -33,6 +34,9 @@ public static partial class GameScanner
         int BankCount)
     {
         public string GameName { get; init; } = "";
+        internal IReadOnlyList<string> RadioBanks { get; init; } = [];
+        internal IReadOnlyList<string> RadioLanguages { get; init; } = [];
+        internal RadioResources? Resources { get; init; }
     }
 
     private sealed class ScanStats
@@ -44,6 +48,32 @@ public static partial class GameScanner
         public readonly HashSet<string> ResourcePaths = new(StringComparer.OrdinalIgnoreCase);
     }
 
+    internal sealed class RadioResources(IEnumerable<string> paths)
+    {
+        private readonly Dictionary<string, string> _paths = paths
+            .OrderBy(path => IsEncodedResource(path))
+            .GroupBy(LogicalFileName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        private static bool IsEncodedResource(string path) => !IsRadioResource(Path.GetFileName(path));
+
+        public string? LanguagePath(string name) => IsLanguageFile(name) ? _paths.GetValueOrDefault(name) : null;
+
+        public string? BankPath(string name) => _paths.GetValueOrDefault(name + ".assets.bank")
+            ?? _paths.GetValueOrDefault(name + ".bank");
+
+        public IEnumerable<string> Languages => _paths.Keys.Where(IsLanguageFile).Order(StringComparer.Ordinal);
+
+        public IEnumerable<string> Banks => _paths.Keys.Select(BankNameFromFile).OfType<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal);
+    }
+
+    internal static RadioResources ReadRadioResources(string gamePath)
+    {
+        return new RadioResources(SafeEnumerate(gamePath, [.. LanguagePatterns, .. BankPatterns])
+            .Where(path => IsRadioResource(LogicalFileName(path))));
+    }
+
     private const int MaxScanDetailSamples = 3;
 
     public static bool IsValid(string gamePath) => Scan(gamePath).IsValid;
@@ -52,7 +82,7 @@ public static partial class GameScanner
     {
         var result = Scan(gamePath, ReadResource);
         if (result.ExePath is null) return result;
-        var name = DetectVersion(gamePath) switch
+        var name = DetectVersionFromExecutable(result.ExePath) switch
         {
             2 => "Forza Horizon 2 (Azimuth)",
             3 => IsDurangoExecutable(result.ExePath) ? "Forza Horizon 3 (Azimuth)" : "Forza Horizon 3 (UWP)",
@@ -130,13 +160,22 @@ public static partial class GameScanner
             }
         }
 
-        if (stats.AccessDeniedDirs > 0 || stats.TransientLockDirs > 0 || stats.OtherErrorDirs > 0)
+        var partial = stats.AccessDeniedDirs > 0 || stats.TransientLockDirs > 0 || stats.OtherErrorDirs > 0;
+        if (banks.Count == 0)
         {
-            return new GameScanResult(true, GameScanIssue.PartialAccess, BuildDetail(stats),
-                exe, langs.Count, banks.Count);
+            var issue = stats.OtherErrorDirs > 0 ? GameScanIssue.OtherError
+                      : stats.AccessDeniedDirs > 0 ? GameScanIssue.AccessDenied
+                      : stats.TransientLockDirs > 0 ? GameScanIssue.TransientLock
+                      : GameScanIssue.RadioBanksMissing;
+            return new GameScanResult(false, issue, BuildDetail(stats), exe, langs.Count, 0);
         }
-
-        return new GameScanResult(true, GameScanIssue.None, null, exe, langs.Count, banks.Count);
+        return new GameScanResult(true, partial ? GameScanIssue.PartialAccess : GameScanIssue.None,
+            partial ? BuildDetail(stats) : null, exe, langs.Count, banks.Count)
+        {
+            RadioBanks = banks,
+            RadioLanguages = langs,
+            Resources = new RadioResources(stats.ResourcePaths)
+        };
     }
 
     private static void ReadResource(string path)
@@ -193,19 +232,18 @@ public static partial class GameScanner
     public static int DetectVersion(string gamePath)
     {
         var exe = FindExe(gamePath);
-        if (exe is null)
-        {
-            return 0;
-        }
+        return exe is null ? 0 : DetectVersionFromExecutable(exe);
+    }
 
+    private static int DetectVersionFromExecutable(string exe)
+    {
         var name = Path.GetFileNameWithoutExtension(exe);
         if (IsDurangoExecutable(exe))
         {
             return DetectDurangoVersion(exe);
         }
 
-        if (name.Equals("forza_x64_release_final", StringComparison.OrdinalIgnoreCase)
-            && FindHorizon3Executable(gamePath) is not null)
+        if (name.Equals("forza_x64_release_final", StringComparison.OrdinalIgnoreCase))
         {
             return 3;
         }
@@ -366,7 +404,8 @@ public static partial class GameScanner
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(name => name, StringComparer.Ordinal)
             .ToList();
-        Log.Line($"GameScanner: radio banks = {result.Count} [{string.Join(", ", result)}]");
+        var summary = $"GameScanner: radio banks = {result.Count}";
+        Log.Line(Log.IsVerbose ? $"{summary} [{string.Join(", ", result)}]" : summary);
 
         return result;
     }
@@ -386,7 +425,10 @@ public static partial class GameScanner
                 if (path is not null) break;
             }
         }
-        Log.Line($"GameScanner: BankPath({bankName}) -> {path ?? "NOT FOUND"}");
+        if (path is null || Log.IsVerbose)
+        {
+            Log.Line($"GameScanner: BankPath({bankName}) -> {path ?? "NOT FOUND"}");
+        }
         return path;
     }
 

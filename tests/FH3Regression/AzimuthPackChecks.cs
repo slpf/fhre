@@ -173,6 +173,7 @@ internal static class AzimuthPackChecks
                     "Restoring staged title changes overwrote an unchanged localized artist.");
             }
             finally { StationBackupService.Delete(pending); }
+            CheckBackupCreationFailures(root, game, bank, french, station, sources);
             File.Copy(bank, bank + ".bak", overwrite: true);
             File.Copy(xml, xml + ".bak", overwrite: true);
             File.Copy(french, french + ".bak", overwrite: true);
@@ -194,6 +195,65 @@ internal static class AzimuthPackChecks
             File.WriteAllBytes(bank, originalBank);
             File.WriteAllBytes(xml, originalXml);
             foreach (var extra in new[] { french, french + ".bak", bank + ".bak", xml + ".bak" }) File.Delete(extra);
+        }
+    }
+
+    private static void CheckBackupCreationFailures(string root, string game, string bank, string french,
+        StationInfo station, BackupTrackSource[] sources)
+    {
+        var testRoot = Path.Combine(root, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+        var inaccessible = Path.Combine(testRoot, "blocked");
+        var backups = Path.Combine(testRoot, "backups");
+        File.WriteAllText(inaccessible, "a file occupies the primary backup path");
+        var create = typeof(StationBackupService).GetMethod(nameof(StationBackupService.Create),
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, null,
+            [typeof(string), typeof(string), typeof(StationInfo), typeof(string), typeof(IReadOnlyList<BackupTrackSource>),
+                typeof(string), typeof(Action<string>)], null)!;
+        var log = new List<string>();
+        BackupEntry Create(IReadOnlyList<BackupTrackSource> tracks, string destination) => (BackupEntry)create.Invoke(null,
+            ["Audit", game, station, "Tracks", tracks, destination, (Action<string>)log.Add])!;
+
+        CheckFailure(sources, inaccessible, inaccessible);
+        Check(Directory.GetFileSystemEntries(testRoot).SequenceEqual([inaccessible]),
+            "An inaccessible backup folder left unexpected files.");
+
+        var localized = File.ReadAllBytes(french);
+        try
+        {
+            File.WriteAllText(french, "<Radio><RadioStation");
+            var entry = Create(sources, backups);
+            var second = Create(sources, backups);
+            Check(entry.Folder != second.Folder && Path.GetDirectoryName(entry.Folder) == backups,
+                "Repeated backups with the same name collided or used the wrong folder.");
+            Check(entry.Manifest.Languages.SequenceEqual(["EN"]) && entry.Manifest.TrackCount == sources.Length
+                && log.Any(line => line.Contains(french, StringComparison.OrdinalIgnoreCase)),
+                "A malformed localization prevented saving or was omitted without a diagnostic.");
+            Check(new[] { entry, second }.All(backup => File.Exists(Path.Combine(backup.Folder, "manifest.json"))),
+                "The backup manifests were not published.");
+
+            var bad = sources.ToArray();
+            bad[^1] = bad[^1] with { SubIndex = int.MaxValue };
+            CheckFailure(bad, backups, bank);
+            CheckFailure([], backups, bank);
+            var missing = Path.Combine(testRoot, "missing.wav");
+            bad[^1] = bad[^1] with { IsReplacing = true, ReplacementPath = missing };
+            CheckFailure(bad, backups, missing);
+            Check(Directory.GetDirectories(backups).Length == 2, "A failed backup left files or altered existing backups.");
+        }
+        finally { File.WriteAllBytes(french, localized); }
+
+        void CheckFailure(IReadOnlyList<BackupTrackSource> tracks, string destination, string source)
+        {
+            try
+            {
+                Create(tracks, destination);
+                throw new InvalidOperationException("A failed backup was reported as complete.");
+            }
+            catch (System.Reflection.TargetInvocationException ex) when (ex.InnerException is IOException error)
+            {
+                Check(error.Message.Contains(source, StringComparison.OrdinalIgnoreCase), "A backup failure omitted the file involved.");
+            }
         }
     }
 

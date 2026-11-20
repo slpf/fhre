@@ -111,8 +111,15 @@ internal static class SyntheticChecks
             Check(vm.Stations.Count == 2 && vm.SelectedStation is not null && vm.Variants.Count == 2, "Main-window catalog loading failed for FH3.");
             Check(vm.SelectedVariant == "Tracks", "FH3 selected a DLC bank before the base station bank.");
             vm.SelectedVariant = "PDLC1";
-            Method("RebuildStations").Invoke(vm, null);
+            Method("RebuildStations").Invoke(vm, [null]);
             Check(vm.SelectedVariant == "PDLC1", "Rebuilding the station list discarded a selected DLC variant.");
+
+            vm.Settings.LastLanguage = "RadioInfo_FR.xml";
+            vm.Settings.LastStationBank = "R6_Tracks_";
+            Method("ReloadFromGameCore").Invoke(vm, null);
+            Check(vm.Languages.Count == 3 && vm.SelectedLanguage?.FileName == "RadioInfo_FR.xml"
+                && vm.Stations.Count == 2 && vm.SelectedStation?.Number == 6 && vm.Variants.Count == 2,
+                "Reloading from the game scan lost languages, stations, or the saved selection.");
         }
         finally { ReleaseVm(vm); }
         File.WriteAllText(Path.Combine(game, "AppxManifest.xml"), manifest.Replace(xbox ? "Opus" : "Microsoft.OpusPG", "Microsoft.OtherGame", StringComparison.Ordinal));
@@ -130,6 +137,7 @@ internal static class SyntheticChecks
         var manifest = Path.Combine(game, "AppxManifest.xml");
         File.WriteAllBytes(executable, []);
         File.WriteAllText(Path.Combine(game, "RadioInfo_EN.xml"), Xml());
+        File.WriteAllBytes(Path.Combine(game, "R1_Tracks.bank"), []);
         foreach (var (identity, version) in new[] { ("Anthem", 2), ("Opus", 3) })
         {
             File.WriteAllText(manifest, XboxManifest.Replace("Opus", identity, StringComparison.Ordinal));
@@ -150,7 +158,6 @@ internal static class SyntheticChecks
                 "An unknown, mismatched or invalid Xbox manifest was accepted.");
         }
         File.Delete(manifest);
-        File.WriteAllBytes(Path.Combine(game, "R1_Tracks.bank"), []);
         Check(GameScanner.DetectVersion(game) == 0 && !GameScanner.Scan(game).IsValid,
             "An Xbox FH3 directory without a manifest was guessed to be FH2.");
         File.WriteAllBytes(Path.Combine(game, "HZ2_MX_Radio_01_Tracks.bank"), []);

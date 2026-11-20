@@ -44,12 +44,12 @@ internal static class TestSupport
         Set(vm, "<Languages>k__BackingField", new ObservableCollection<LangOption> { new("EN", language) });
         Set(vm, "<Stations>k__BackingField", new ObservableCollection<StationInfo>());
         Set(vm, "<Variants>k__BackingField", new ObservableCollection<string>());
-        Set(vm, "<Tracks>k__BackingField", new ObservableCollection<TrackItemViewModel>());
+        Set(vm, "<Tracks>k__BackingField", new RangeObservableCollection<TrackItemViewModel>());
         Set(vm, "<FilteredTracks>k__BackingField", new RangeObservableCollection<TrackItemViewModel>());
         Set(vm, "_sourceLocks", new Dictionary<string, FileStream>(StringComparer.OrdinalIgnoreCase));
         Set(vm, "_suppressReload", true);
         Set(vm, "_selectedLanguage", new LangOption("EN", language));
-        Method("RebuildStations").Invoke(vm, null);
+        Method("RebuildStations").Invoke(vm, [null]);
         return vm;
     }
 

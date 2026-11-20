@@ -32,7 +32,7 @@ public partial class MainWindow : Window
 
     private async Task OpenedAsync()
     {
-        if (!GameScanner.IsValid(Vm.Settings.GamePath))
+        if (!Vm.HasValidGamePath)
         {
             return;
         }
@@ -161,7 +161,7 @@ public partial class MainWindow : Window
             Vm.RefreshNowPlaying();
         }
 
-        if (firstRun && !GameScanner.IsValid(Vm.Settings.GamePath))
+        if (firstRun && !Vm.HasValidGamePath)
         {
             Close();
         }
@@ -213,9 +213,17 @@ public partial class MainWindow : Window
 
     private async Task SaveBackupAsync()
     {
+        if (Vm.IsBusy) return;
+
         if (Vm.SelectedStation is not { } station)
         {
             Vm.Status = Str.StatusBackupNoStation;
+            return;
+        }
+
+        if (Vm.IsLoading || Vm.SelectedVariant is not { } variant || Vm.LoadedBankPath is null || Vm.HasResourceError)
+        {
+            await MessageDialog.ShowAsync(this, Str.BackupNameTitle, Str.StatusBackupBankNotReady);
             return;
         }
 
@@ -227,7 +235,6 @@ public partial class MainWindow : Window
         }
 
         var gamePath = Vm.Settings.GamePath;
-        var variant = Vm.SelectedVariant;
         var sources = Vm.Tracks
             .Select(t => new BackupTrackSource(
                 t.SoundName, t.IsCustom, t.IsReplacing, t.Replaced,
@@ -243,23 +250,30 @@ public partial class MainWindow : Window
             Vm.Status = Str.StatusBackupSaving;
         });
 
-        string status;
+        string? message = null;
 
         try
         {
-            var entry = await Task.Run(() => StationBackupService.Create(name, gamePath, station, variant!, sources, Log.Line));
-            status = string.Format(Str.StatusBackupSavedFmt, entry.Manifest.Name);
+            var entry = await Task.Run(() => StationBackupService.Create(name, gamePath, station, variant, sources, Log.Line));
+            Vm.Status = string.Format(Str.StatusBackupSavedFmt, entry.Manifest.Name);
+            if (entry.SkippedLanguages.Count > 0)
+            {
+                message = string.Format(Str.BackupSkippedLanguagesFmt, string.Join(", ", entry.SkippedLanguages));
+            }
         }
         catch (Exception ex)
         {
-            status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
+            Log.Line($"backup failed: station=#{station.Number} variant={variant} game={gamePath}{Environment.NewLine}{ex}");
+            Vm.Status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
+            message = $"{Vm.Status}{Environment.NewLine}{Environment.NewLine}" +
+                string.Format(Str.BackupFolderFmt, StationBackupService.Root);
+        }
+        finally
+        {
+            Vm.IsBackingUp = false;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            Vm.Status = status;
-            Vm.IsBackingUp = false;
-        });
+        if (message is not null) await MessageDialog.ShowAsync(this, Str.BackupNameTitle, message);
     }
 
     private void OnExport(object? sender, RoutedEventArgs e)
@@ -367,6 +381,7 @@ public partial class MainWindow : Window
 
         if (pack.Manifest.Tracks.Count == 0)
         {
+            TrackPack.DiscardImport(pack);
             Vm.Status = Str.StatusImportEmpty;
             return;
         }
@@ -378,6 +393,7 @@ public partial class MainWindow : Window
 
         if (!vm.Saved)
         {
+            TrackPack.DiscardImport(pack);
             return;
         }
 
@@ -498,6 +514,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Log.Line("RESTORE STATION FAILED: " + ex);
             status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
         }
 
@@ -514,9 +531,14 @@ public partial class MainWindow : Window
     private async Task RestoreAllStationsAsync()
     {
         var gamePath = Vm.Settings.GamePath;
+        if (Vm.IsBusy || !Vm.HasValidGamePath) return;
 
-        if (!GameScanner.IsValid(gamePath) || !BackupService.Has(gamePath))
+        var backups = await Task.Run(() => BackupService.Find(gamePath));
+        if (Vm.IsBusy || !string.Equals(gamePath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase)) return;
+        if (backups.Count == 0)
         {
+            Vm.SetCanRestoreAll(false);
+            Vm.Status = Str.StatusRestoreNoOriginal;
             return;
         }
 
@@ -547,7 +569,7 @@ public partial class MainWindow : Window
         try
         {
             await Vm.StopLoudnessAnalysisAsync();
-            var (restored, failed) = await Task.Run(() => BackupService.Restore(gamePath, Log.Line));
+            var (restored, failed) = await Task.Run(() => BackupService.Restore(gamePath, backups, Log.Line));
             await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
             status = failed == 0
                 ? string.Format(Str.EditRestoredFmt, restored)
@@ -555,6 +577,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            Log.Line("RESTORE ALL FAILED: " + ex);
             status = string.Format(Str.StatusBackupFailedFmt, ex.Message);
         }
 
@@ -563,7 +586,6 @@ public partial class MainWindow : Window
             Vm.Status = status;
             Vm.IsBackingUp = false;
         });
-        await Vm.RefreshCanRestoreAllAsync();
     }
 
     private void OnPreviewPressed(object? sender, PointerPressedEventArgs e) => _toggleMods = e.KeyModifiers;

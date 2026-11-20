@@ -47,7 +47,10 @@ public sealed class BackupManifest
     public int EnabledCount { get; set; }
 }
 
-public sealed record BackupEntry(string Folder, BackupManifest Manifest);
+public sealed record BackupEntry(string Folder, BackupManifest Manifest)
+{
+    internal IReadOnlyList<string> SkippedLanguages { get; init; } = [];
+}
 
 public sealed record BackupTrackSource(
     string SoundName,
@@ -76,14 +79,27 @@ public static class StationBackupService
     public static List<BackupEntry> List()
     {
         var result = new List<BackupEntry>();
+        var root = Root;
+        if (!Directory.Exists(root)) return result;
 
-        if (!Directory.Exists(Root))
+        try
         {
-            return result;
+            ReadBackups(root, result);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Line($"backup: could not list {root}: {ex}");
         }
 
-        foreach (var dir in Directory.EnumerateDirectories(Root))
+        return result.OrderByDescending(e => e.Manifest.CreatedUtc).ToList();
+    }
+
+    private static void ReadBackups(string root, List<BackupEntry> result)
+    {
+        foreach (var dir in Directory.EnumerateDirectories(root))
         {
+            if (Path.GetFileName(dir).StartsWith(".pending-", StringComparison.OrdinalIgnoreCase)) continue;
+
             var mf = Path.Combine(dir, "manifest.json");
 
             if (!File.Exists(mf))
@@ -102,11 +118,9 @@ public static class StationBackupService
             }
             catch (Exception ex)
             {
-                Log.Line($"backup manifest parse failed ({Path.GetFileName(mf)}): {ex.Message}");
+                Log.Line($"backup manifest read failed ({mf}): {ex}");
             }
         }
-
-        return result.OrderByDescending(e => e.Manifest.CreatedUtc).ToList();
     }
 
     public static bool Matches(BackupManifest m, string gamePath, StationInfo station) =>
@@ -126,30 +140,93 @@ public static class StationBackupService
     }
 
     public static BackupEntry Create(string name, string gamePath, StationInfo station, string variant,
-        IReadOnlyList<BackupTrackSource> sources, Action<string>? log = null)
+        IReadOnlyList<BackupTrackSource> sources, Action<string>? log = null) =>
+        Create(name, gamePath, station, variant, sources, Root, log ?? Log.Line);
+
+    private static BackupEntry Create(string name, string gamePath, StationInfo station, string variant,
+        IReadOnlyList<BackupTrackSource> sources, string root, Action<string> log)
     {
-        var id = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}_{Sanitize(name)}";
-        var folder = Path.Combine(Root, id);
+        if (!station.Variants.Contains(variant, StringComparer.Ordinal))
+        {
+            throw new ArgumentException("Select a valid station bank variant.", nameof(variant));
+        }
+
+        var token = Guid.NewGuid().ToString("N");
+        var id = $"{DateTime.UtcNow:yyyyMMdd-HHmmss}_{Sanitize(name)}_{token}";
+        var destination = Path.GetFullPath(Path.Combine(root, id));
+        try
+        {
+            Directory.CreateDirectory(destination);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException($"Could not create a backup folder in {root}: {ex.Message}", ex);
+        }
+
+        try
+        {
+            log($"backup: saving station #{station.Number} variant={variant} game={gamePath} destination={destination}");
+            return CreateBackup(name, gamePath, station, variant, sources, destination, log);
+        }
+        finally
+        {
+            try
+            {
+                if (!File.Exists(Path.Combine(destination, "manifest.json"))) Directory.Delete(destination, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                log($"backup: could not remove incomplete backup {destination}: {ex}");
+            }
+        }
+    }
+
+    private static BackupEntry CreateBackup(string name, string gamePath, StationInfo station, string variant,
+        IReadOnlyList<BackupTrackSource> sources, string folder, Action<string> log)
+    {
         var audioDir = Path.Combine(folder, "audio");
         Directory.CreateDirectory(audioDir);
 
-        var radio = LoadReferenceRadio(gamePath, log);
-        var languageFiles = GameScanner.LanguageFiles(gamePath);
-        var languages = languageFiles.Select(LangCode).ToList();
+        RadioInfo? radio = null;
+        var languages = new List<string>();
+        var skippedLanguages = new List<string>();
+        var resources = GameScanner.ReadRadioResources(gamePath);
+        var languageFiles = resources.Languages
+            .OrderByDescending(file => LangCode(file).StartsWith("en", StringComparison.OrdinalIgnoreCase));
         var xmlDir = Path.Combine(folder, "xml");
         Directory.CreateDirectory(xmlDir);
         foreach (var languageFile in languageFiles)
         {
-            var path = GameScanner.RadioInfoPathByFile(gamePath, languageFile)
-                ?? throw new InvalidOperationException($"RadioInfo not found: {languageFile}");
-            var stationNode = RadioInfo.Load(path).Document.Descendants("RadioStation")
-                .FirstOrDefault(s => (int?) s.Attribute("Number") == station.Number);
-            if (stationNode is not null)
+            var path = resources.LanguagePath(languageFile);
+            XElement? stationNode;
+            RadioInfo localized;
+            try
             {
-                Atomic.Write(Path.Combine(xmlDir, LangCode(languageFile) + ".xml"),
-                    stationNode.ToString(SaveOptions.DisableFormatting));
+                localized = RadioInfo.Load(path ?? throw new FileNotFoundException($"RadioInfo not found: {languageFile}"));
+                stationNode = localized.Document.Descendants("RadioStation")
+                    .FirstOrDefault(s => (int?) s.Attribute("Number") == station.Number);
             }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException
+                or FormatException or OverflowException)
+            {
+                skippedLanguages.Add(languageFile);
+                log($"backup: skipped localization {path ?? languageFile}: {ex}");
+                continue;
+            }
+
+            if (stationNode is null) continue;
+
+            var language = LangCode(languageFile);
+            Atomic.Write(Path.Combine(xmlDir, language + ".xml"), stationNode.ToString(SaveOptions.DisableFormatting));
+            languages.Add(language);
+            radio ??= localized;
         }
+
+        if (radio is null)
+        {
+            throw new InvalidDataException("No readable RadioInfo contains the selected station. See the log for details.");
+        }
+
         var tracks = new List<BackupTrack>();
         var variants = new List<BackupVariant>();
         var key = 0;
@@ -157,88 +234,50 @@ public static class StationBackupService
         foreach (var v in station.Variants)
         {
             var bankName = station.BankName(v);
-            var bankPath = GameScanner.BankPath(gamePath, bankName);
-
-            if (bankPath is null)
-            {
-                log?.Invoke($"backup: bank not found, skipped: {bankName}");
-                continue;
-            }
+            var bankPath = resources.BankPath(bankName)
+                ?? throw new FileNotFoundException($"Station bank not found: {bankName}");
 
             var variantSources = v == variant
                 ? sources
-                : ReadDiskSources(bankPath, radio, station.Number, log);
+                : ReadDiskSources(bankPath, radio, station.Number);
+            if (variantSources.Count == 0) ValidateEmptyBank(bankPath);
             var before = tracks.Count;
+            TrackPack.SampleReader? reader = null;
 
-            foreach (var s in variantSources)
+            try
             {
-                var role = s.IsCustom ? "custom" : (s.IsReplacing || s.Replaced) ? "replacement" : "default";
-                byte[]? bytes = null;
-                string? copyFrom = null;
+                foreach (var s in variantSources)
+                {
+                    var role = s.IsCustom ? "custom" : (s.IsReplacing || s.Replaced) ? "replacement" : "default";
+                    var copyFrom = s.IsReplacing ? s.ReplacementPath : s.SubIndex < 0 ? s.SourcePath : null;
+                    var extract = !s.IsReplacing && s.SubIndex >= 0;
+                    var ext = extract ? ".fsb" : Path.GetExtension(copyFrom);
+                    if (string.IsNullOrEmpty(ext)) ext = ".fsb";
+                    var rel = $"audio/{key}{ext}";
+                    var abs = Path.Combine(folder, rel);
 
-                if (s.IsReplacing && !string.IsNullOrEmpty(s.ReplacementPath) && File.Exists(s.ReplacementPath))
-                {
-                    copyFrom = s.ReplacementPath;
-                }
-                else if (s.SubIndex < 0 && !string.IsNullOrEmpty(s.SourcePath) && File.Exists(s.SourcePath))
-                {
-                    copyFrom = s.SourcePath;
-                }
-                else if (s.SubIndex >= 0)
-                {
-                    try
+                    SaveTrackAudio(s, bankPath, abs, extract, copyFrom, ref reader);
+
+                    tracks.Add(new BackupTrack
                     {
-                        progressExtract(log, s.SoundName);
-                        bytes = TrackPack.ExtractSampleFsb(bankPath, s.SubIndex);
-                    }
-                    catch (Exception ex)
-                    {
-                        log?.Invoke($"backup: extract failed {s.SoundName}: {ex.Message}");
-                    }
+                        SoundName = s.SoundName,
+                        Role = role,
+                        Bank = bankName,
+                        BankId = s.BankId,
+                        DisplayName = s.DisplayName,
+                        Artist = s.Artist,
+                        SampleLength = s.SampleLength,
+                        SampleRate = s.SampleRate,
+                        GainDb = s.GainDb,
+                        Normalization = ext.Equals(".fsb", StringComparison.OrdinalIgnoreCase) ? null : s.Normalization,
+                        Enabled = s.Enabled,
+                        Markers = s.Markers is { Count: > 0 } ? new Dictionary<string, long>(s.Markers) : null,
+                        Audio = rel,
+                    });
+                    key++;
                 }
-                else if (!string.IsNullOrEmpty(s.SourcePath) && File.Exists(s.SourcePath))
-                {
-                    copyFrom = s.SourcePath;
-                }
-
-                if (bytes is null && copyFrom is null)
-                {
-                    log?.Invoke($"backup: skip {s.SoundName} (no audio source)");
-                    continue;
-                }
-
-                var ext = bytes is not null ? ".fsb" : Path.GetExtension(copyFrom!);
-                if (string.IsNullOrEmpty(ext)) ext = ".fsb";
-                var rel = $"audio/{key}{ext}";
-                var abs = Path.Combine(folder, rel);
-
-                if (bytes is not null)
-                {
-                    File.WriteAllBytes(abs, bytes);
-                }
-                else
-                {
-                    Atomic.Copy(copyFrom!, abs);
-                }
-
-                tracks.Add(new BackupTrack
-                {
-                    SoundName = s.SoundName,
-                    Role = role,
-                    Bank = bankName,
-                    BankId = s.BankId,
-                    DisplayName = s.DisplayName,
-                    Artist = s.Artist,
-                    SampleLength = s.SampleLength,
-                    SampleRate = s.SampleRate,
-                    GainDb = s.GainDb,
-                    Normalization = ext.Equals(".fsb", StringComparison.OrdinalIgnoreCase) ? null : s.Normalization,
-                    Enabled = s.Enabled,
-                    Markers = s.Markers is { Count: > 0 } ? new Dictionary<string, long>(s.Markers) : null,
-                    Audio = rel,
-                });
-                key++;
             }
+            finally { reader?.Dispose(); }
 
             variants.Add(new BackupVariant
             {
@@ -246,8 +285,10 @@ public static class StationBackupService
                 BankName = bankName,
                 BankFile = GameScanner.LogicalFileName(bankPath),
             });
-            log?.Invoke($"backup: {bankName}: {tracks.Count - before} track(s)");
+            log($"backup: {bankName}: {tracks.Count - before} track(s)");
         }
+
+        if (tracks.Count == 0) throw new InvalidDataException("The station backup contains no audio tracks.");
 
         var manifest = new BackupManifest
         {
@@ -267,65 +308,46 @@ public static class StationBackupService
         };
 
         Atomic.Write(Path.Combine(folder, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOpts));
-        log?.Invoke($"backup created: {id} ({variants.Count} bank(s), {tracks.Count} track(s))");
+        log($"backup created: {folder} ({variants.Count} bank(s), {tracks.Count} track(s))");
 
-        return new BackupEntry(folder, manifest);
+        return new BackupEntry(folder, manifest) { SkippedLanguages = skippedLanguages };
     }
 
-    private static RadioInfo? LoadReferenceRadio(string gamePath, Action<string>? log)
+    private static void SaveTrackAudio(BackupTrackSource track, string bankPath, string output, bool extract, string? copyFrom,
+        ref TrackPack.SampleReader? reader)
     {
-        var files = GameScanner.LanguageFiles(gamePath);
-        var refFile = files.FirstOrDefault(f => LangCode(f).StartsWith("en", StringComparison.OrdinalIgnoreCase))
-                      ?? files.FirstOrDefault();
-
-        if (refFile is null)
-        {
-            return null;
-        }
-
-        var path = GameScanner.RadioInfoPathByFile(gamePath, refFile);
-
-        if (path is null)
-        {
-            return null;
-        }
-
         try
         {
-            return RadioInfo.Load(path);
+            if (extract)
+            {
+                reader ??= new TrackPack.SampleReader(bankPath);
+                using var stream = File.Create(output);
+                reader.CopySample(track.SubIndex, stream);
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(copyFrom)) throw new FileNotFoundException("No audio source is available.");
+                Atomic.Copy(copyFrom, output);
+                if (new FileInfo(output).Length == 0) throw new InvalidDataException("The audio source is empty.");
+            }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
-            log?.Invoke($"backup: RadioInfo load failed ({refFile}): {ex.Message}");
-            return null;
+            var source = extract ? $"{bankPath} (sample {track.SubIndex})" : copyFrom ?? bankPath;
+            throw new IOException($"Could not save track '{track.SoundName}' from {source}: {ex.Message}", ex);
         }
     }
 
-    private static List<BackupTrackSource> ReadDiskSources(string bankPath, RadioInfo? radio, int stationNumber,
-        Action<string>? log)
+    private static List<BackupTrackSource> ReadDiskSources(string bankPath, RadioInfo radio, int stationNumber)
     {
-        if (!File.Exists(bankPath))
-        {
-            log?.Invoke($"backup: bank file missing: {bankPath}");
-            return [];
-        }
-
         var result = BankReader.ReadTracks(bankPath, radio, stationNumber);
 
         if (result.Error is { } err)
         {
-            log?.Invoke($"backup: read failed {Path.GetFileName(bankPath)}: {err}");
-        }
-        
-        var named = result.Tracks.Where(t => t.BankId is not null
-            || !t.SoundName.StartsWith("sound_", StringComparison.Ordinal)).ToList();
-
-        if (named.Count < result.Tracks.Count)
-        {
-            log?.Invoke($"backup: skipped {result.Tracks.Count - named.Count} unnamed track(s) in {Path.GetFileName(bankPath)}");
+            throw new IOException($"Could not read station bank {bankPath}: {err}");
         }
 
-        return named
+        return result.Tracks
             .Select(t => new BackupTrackSource(
                 t.SoundName,
                 IsCustom: t.Origin == TrackOrigin.Custom,
@@ -345,26 +367,40 @@ public static class StationBackupService
             .ToList();
     }
 
-    private static void progressExtract(Action<string>? log, string soundName)
+    private static void ValidateEmptyBank(string bankPath)
     {
-        log?.Invoke($"backup: extracting {soundName}");
+        try
+        {
+            var skeleton = FevBank.ReadSkeleton(bankPath);
+            if (skeleton.Stbl.Count > 0)
+            {
+                throw new InvalidDataException("The bank has tracks, but no audio sources were found.");
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            throw new IOException($"Could not validate station bank {bankPath}: {ex.Message}", ex);
+        }
     }
 
-    public static HashSet<string> CollectOccupiedCustomNames(string gamePath, IReadOnlyCollection<string>? excludeBankNames)
+    public static HashSet<string> CollectOccupiedCustomNames(string gamePath, IReadOnlyCollection<string>? excludeBankNames) =>
+        CollectOccupiedCustomNames(GameScanner.ReadRadioResources(gamePath), excludeBankNames);
+
+    private static HashSet<string> CollectOccupiedCustomNames(GameScanner.RadioResources resources, IReadOnlyCollection<string>? excludeBankNames)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
         var excluded = excludeBankNames is null
             ? null
             : new HashSet<string>(excludeBankNames, StringComparer.OrdinalIgnoreCase);
 
-        foreach (var bankName in GameScanner.RadioBankNames(gamePath))
+        foreach (var bankName in resources.Banks)
         {
             if (excluded is not null && excluded.Contains(bankName))
             {
                 continue;
             }
 
-            var bankPath = GameScanner.BankPath(gamePath, bankName);
+            var bankPath = resources.BankPath(bankName);
             if (bankPath is null || !File.Exists(bankPath))
             {
                 continue;
@@ -395,6 +431,8 @@ public static class StationBackupService
             throw new InvalidOperationException($"Backup restore: missing {string.Join(", ", missingTools)}.");
         }
 
+        using var transaction = new GameFileTransaction(gamePath);
+        var resources = GameScanner.ReadRadioResources(gamePath);
         var m = e.Manifest;
 
         var tracks = m.Tracks;
@@ -419,22 +457,14 @@ public static class StationBackupService
 
         foreach (var g in groups)
         {
-            var bankPath = GameScanner.BankPath(gamePath, g.Bank)
+            var bankPath = resources.BankPath(g.Bank)
                 ?? throw new InvalidOperationException($"bank not found: {g.Bank}");
             bankPaths.Add((g.Bank, bankPath, g.Tracks));
         }
 
-        var xmlTargets = new List<string>();
-        foreach (var langFile in GameScanner.LanguageFiles(gamePath))
-        {
-            var p = GameScanner.RadioInfoPathByFile(gamePath, langFile);
-            if (p is not null)
-            {
-                xmlTargets.Add(p);
-            }
-        }
+        var xmlTargets = resources.Languages.Select(language => resources.LanguagePath(language)!).ToList();
 
-        ResolveCustomConflicts(tracks, gamePath, groups.Select(g => g.Bank).ToList(), log);
+        ResolveCustomConflicts(tracks, resources, groups.Select(g => g.Bank).ToList(), log);
         
         var missing = tracks
             .Where(t => string.IsNullOrEmpty(t.Audio) || !File.Exists(Path.Combine(e.Folder, t.Audio)))
@@ -493,7 +523,7 @@ public static class StationBackupService
 
         FileGuard.EnsureWritable(bankPaths.Select(b => b.Path).Concat(xmlTargets));
         
-        var builds = new List<(string Bank, string Path, string Tmp, List<BackupTrack> Tracks)>();
+        var stagedBanks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var framesByName = new Dictionary<string, long>(StringComparer.Ordinal);
         var sampleRatesByName = new Dictionary<string, int>(StringComparer.Ordinal);
         var backupCustoms = new HashSet<string>(StringComparer.Ordinal);
@@ -516,33 +546,19 @@ public static class StationBackupService
                     BankId: t.BankId))
                 .ToList();
 
-            EnsureOriginal(bankPath);
+            var staged = transaction.Stage(bankPath);
+            var added = await BankBuildService.BuildToFileAsync(bankPath, staged, buildItems, settings, log, null,
+                    Log.IsVerbose, useBackupSources: true)
+                .ConfigureAwait(false);
 
-            var tmp = bankPath + ".tmp";
-
-            try
+            foreach (var a in added)
             {
-                var added = await BankBuildService.BuildToFileAsync(bankPath, tmp, buildItems, settings, log, null)
-                    .ConfigureAwait(false);
-
-                foreach (var a in added)
-                {
-                    framesByName[a.SoundName] = a.Frames;
-                    sampleRatesByName[a.SoundName] = a.SampleRate;
-                }
-
-                builds.Add((bank, bankPath, tmp, bankTracks));
+                framesByName[a.SoundName] = a.Frames;
+                sampleRatesByName[a.SoundName] = a.SampleRate;
             }
-            catch
-            {
-                foreach (var b in builds)
-                {
-                    TryDelete(b.Tmp);
-                }
 
-                TryDelete(tmp);
-                throw;
-            }
+            transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath));
+            stagedBanks.Add(bank, staged);
 
             foreach (var t in bankTracks.Where(t => t.Role == "custom"))
             {
@@ -550,131 +566,88 @@ public static class StationBackupService
             }
         }
         
-        FileGuard.EnsureWritable(bankPaths.Select(b => b.Path).Concat(xmlTargets));
-
-        try
+        var langs = 0;
+        var idsByBank = new Dictionary<string, HashSet<ulong>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in xmlTargets)
         {
-            foreach (var (_, bankPath, tmp, _) in builds)
+            var radio = radioDocuments[path];
+            var editor = radio.StationByNumber(m.StationNumber);
+
+            if (editor is null)
             {
-                File.Move(tmp, bankPath, overwrite: true);
+                log?.Invoke($"restore xml: station not found ({LangCode(Path.GetFileName(path))})");
+                continue;
             }
 
-            var failures = new List<string>();
-            var langs = 0;
-
-            foreach (var path in xmlTargets)
+            foreach (var (bank, _, bankTracks) in bankPaths)
             {
-                try
+                editor.RegisterBank(bank);
+
+                foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                 {
-                    var radio = radioDocuments[path];
-                    var editor = radio.StationByNumber(m.StationNumber);
+                    var frames = framesByName.TryGetValue(t.SoundName, out var f) ? f : t.SampleLength;
+                    var sampleRate = sampleRatesByName.GetValueOrDefault(t.SoundName, t.SampleRate);
 
-                    if (editor is null)
+                    if (t.Role == "custom")
                     {
-                        log?.Invoke($"restore xml: station not found ({LangCode(Path.GetFileName(path))})");
-                        continue;
+                        editor.AddCustom(t.SoundName, frames, sampleRate, t.DisplayName, t.Artist);
                     }
-
-                    foreach (var (bank, _, bankTracks) in bankPaths)
+                    else
                     {
-                        editor.RegisterBank(bank);
-
-                        foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
+                        editor.ApplyReplacement(t.SoundName, frames, sampleRate);
+                        if (t.Role == "default") editor.ClearReplacement(t.SoundName);
+                        if (t.Role == "default" && metadataOverrides.TryGetValue(t.SoundName, out var changed))
                         {
-                            var frames = framesByName.TryGetValue(t.SoundName, out var f) ? f : t.SampleLength;
-                            var sampleRate = sampleRatesByName.GetValueOrDefault(t.SoundName, t.SampleRate);
-
-                            if (t.Role == "custom")
-                            {
-                                editor.AddCustom(t.SoundName, frames, sampleRate, t.DisplayName, t.Artist);
-                            }
-                            else
-                            {
-                                editor.ApplyReplacement(t.SoundName, frames, sampleRate);
-                                if (t.Role == "default") editor.ClearReplacement(t.SoundName);
-                                if (t.Role == "default" && metadataOverrides.TryGetValue(t.SoundName, out var changed))
-                                {
-                                    editor.SetSampleMeta(t.SoundName, changed.Title ? t.DisplayName : null,
-                                        changed.Artist ? t.Artist : null, clearMissingArtist: changed.Artist);
-                                }
-                                else editor.SetSampleMeta(t.SoundName, t.DisplayName, t.Artist, clearMissingArtist: t.Role == "replacement");
-                            }
+                            editor.SetSampleMeta(t.SoundName, changed.Title ? t.DisplayName : null,
+                                changed.Artist ? t.Artist : null, clearMissingArtist: changed.Artist);
                         }
-
-                        foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
-                        {
-                            if (t.Markers is not null)
-                            {
-                                editor.SetMarkers(t.SoundName, t.Markers, t.SampleRate);
-                            }
-                            editor.SetEnabled(t.SoundName, t.Enabled);
-                        }
+                        else editor.SetSampleMeta(t.SoundName, t.DisplayName, t.Artist, clearMissingArtist: t.Role == "replacement");
                     }
-
-                    foreach (var sn in editor.CustomSoundNames().Where(c => !backupCustoms.Contains(c)).ToList())
-                    {
-                        editor.RemoveCustom(sn);
-                        log?.Invoke($"restore xml: removed dangling custom {sn}");
-                    }
-
-                    var bankIds = new HashSet<ulong>();
-                    foreach (var bank in editor.TrackBankNames())
-                    {
-                        var bankPath = GameScanner.BankPath(gamePath, bank)
-                            ?? throw new InvalidOperationException($"bank not found while restoring playlists: {bank}");
-                        var skeleton = FevBank.ReadSkeleton(bankPath);
-                        bankIds.UnionWith(skeleton.Stbl.Select(t => t.Id));
-                    }
-                    editor.ReconcileTracks(bankIds, Lookup.SoundNameToId, log);
-
-                    SaveXmlWithBackup(radio, path);
-                    langs++;
-                    log?.Invoke($"restored xml {LangCode(Path.GetFileName(path))}");
                 }
-                catch (Exception ex)
+
+                foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                 {
-                    log?.Invoke($"restore xml FAILED {path}: {ex.Message}");
-                    failures.Add($"{LangCode(Path.GetFileName(path))}: {ex.Message}");
+                    if (t.Markers is not null)
+                    {
+                        editor.SetMarkers(t.SoundName, t.Markers, t.SampleRate);
+                    }
+                    editor.SetEnabled(t.SoundName, t.Enabled);
                 }
             }
 
-            if (failures.Count > 0)
+            foreach (var sn in editor.CustomSoundNames().Where(c => !backupCustoms.Contains(c)).ToList())
             {
-                throw new InvalidOperationException(
-                    "RadioInfo save failed for: " + string.Join("; ", failures) +
-                    ". Banks are already restored - close whatever holds these files and run the restore again.");
+                editor.RemoveCustom(sn);
+                log?.Invoke($"restore xml: removed dangling custom {sn}");
             }
 
-            return (builds.Count, langs);
-        }
-        catch
-        {
-            foreach (var (_, _, tmp, _) in builds)
+            var bankIds = new HashSet<ulong>();
+            foreach (var bank in editor.TrackBankNames())
             {
-                TryDelete(tmp);
+                if (!idsByBank.TryGetValue(bank, out var ids))
+                {
+                    var bankPath = stagedBanks.GetValueOrDefault(bank) ?? resources.BankPath(bank)
+                        ?? throw new InvalidOperationException($"bank not found while restoring playlists: {bank}");
+                    var skeleton = FevBank.ReadSkeleton(bankPath);
+                    ids = skeleton.Stbl.Select(track => track.Id).ToHashSet();
+                    idsByBank.Add(bank, ids);
+                }
+                bankIds.UnionWith(ids);
             }
+            editor.ReconcileTracks(bankIds, Lookup.SoundNameToId, log);
 
-            throw;
+            transaction.StageRadio(radio, path);
+            langs++;
         }
+
+        transaction.Commit();
+        log?.Invoke($"restored {stagedBanks.Count} bank(s), {langs} language file(s)");
+        return (stagedBanks.Count, langs);
     }
 
     private static bool IsBankOnlyTrack(BackupTrack track) => track.BankId is { } id
         && track.SoundName.StartsWith("sound_", StringComparison.Ordinal)
         && id != Lookup.SoundNameToId(track.SoundName);
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch
-        {
-        }
-    }
 
     private static RadioStationEditor? LoadBackupStation(BackupEntry backup, string xmlPath, int stationNumber)
     {
@@ -731,10 +704,10 @@ public static class StationBackupService
             .ToList();
     }
 
-    private static void ResolveCustomConflicts(List<BackupTrack> tracks, string gamePath,
+    private static void ResolveCustomConflicts(List<BackupTrack> tracks, GameScanner.RadioResources resources,
         IReadOnlyCollection<string> restoredBanks, Action<string>? log)
     {
-        var occupied = CollectOccupiedCustomNames(gamePath, excludeBankNames: restoredBanks);
+        var occupied = CollectOccupiedCustomNames(resources, excludeBankNames: restoredBanks);
         var assigned = new HashSet<string>(StringComparer.Ordinal);
 
         var seq = occupied.Count == 0
@@ -891,71 +864,6 @@ public static class StationBackupService
         }
 
         return result;
-    }
-
-    private static void EnsureOriginal(string path)
-    {
-        var bak = path + ".bak";
-
-        if (!File.Exists(bak))
-        {
-            try
-            {
-                File.Copy(path, bak);
-            }
-            catch (Exception ex)
-            {
-                Log.Line($"backup: could not create original .bak for {Path.GetFileName(path)}: {ex.Message}");
-            }
-            return;
-        }
-
-        try
-        {
-            if (!FevBank.LooksModified(path))
-            {
-                File.Copy(path, bak, overwrite: true);
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    private static void SaveXmlWithBackup(RadioInfo radio, string path)
-    {
-        var bak = path + ".bak";
-
-        try
-        {
-            if (!File.Exists(bak))
-            {
-                File.Copy(path, bak);
-            }
-            else if (!XmlIsMarked(path))
-            {
-                File.Copy(path, bak, overwrite: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Line($"backup: could not preserve xml .bak for {Path.GetFileName(path)}: {ex.Message}");
-        }
-
-        radio.Save(path);
-    }
-
-    private static bool XmlIsMarked(string path)
-    {
-        try
-        {
-            var text = File.ReadAllText(path);
-            return text.Contains(RadioInfo.XmlMarker + " edited");
-        }
-        catch
-        {
-            return true;
-        }
     }
 
     public static void Delete(BackupEntry e)

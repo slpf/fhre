@@ -112,7 +112,11 @@ public sealed class FevBank
         return _src[_fsbOff..(_fsbOff + _fsbSize)];
     }
     
-    public static HashSet<ulong> ReadStblIdsFromFile(string path)
+    public static HashSet<ulong> ReadStblIdsFromFile(string path) => ReadStblInfoFromFile(path).Ids;
+
+    public static int ReadStblCountFromFile(string path) => ReadStblInfoFromFile(path).Declared;
+
+    internal static (HashSet<ulong> Ids, int Declared) ReadStblInfoFromFile(string path)
     {
         var ids = new HashSet<ulong>();
 
@@ -122,14 +126,14 @@ public sealed class FevBank
             
             if (fs.Length < 12)
             {
-                return ids;
+                return (ids, -1);
             }
 
             var head = new byte[12];
             
             if (fs.Read(head, 0, 12) < 12 || Cc(head, 0) != "RIFF" || Cc(head, 8) != "FEV ")
             {
-                return ids;
+                return (ids, -1);
             }
 
             var hdr = new byte[8];
@@ -143,23 +147,23 @@ public sealed class FevBank
 
                 var id = Cc(hdr, 0);
                 var size = (int) U32(hdr, 4);
-                if (size < 0 || size > fs.Length - fs.Position) return ids;
+                if (size < 0 || size > fs.Length - fs.Position) return (ids, -1);
 
                 if (id == "LIST")
                 {
                     if (size < 0 || size > fs.Length - fs.Position)
                     {
-                        return ids;
+                        return (ids, -1);
                     }
 
                     var list = new byte[size];
                     
                     if (fs.Read(list, 0, size) == size)
                     {
-                        ParseStblIds(list, ids);
+                        return (ids, ParseStblIds(list, ids));
                     }
 
-                    return ids;
+                    return (ids, -1);
                 }
 
                 if (id == "SND ")
@@ -175,106 +179,10 @@ public sealed class FevBank
         {
         }
 
-        return ids;
+        return (ids, -1);
     }
     
-    public static int ReadStblCountFromFile(string path)
-    {
-        try
-        {
-            using var fs = File.OpenRead(path);
-
-            if (fs.Length < 12)
-            {
-                return -1;
-            }
-
-            var head = new byte[12];
-
-            if (fs.Read(head, 0, 12) < 12 || Cc(head, 0) != "RIFF" || Cc(head, 8) != "FEV ")
-            {
-                return -1;
-            }
-
-            var hdr = new byte[8];
-
-            while (fs.Position + 8 <= fs.Length)
-            {
-                if (fs.Read(hdr, 0, 8) < 8)
-                {
-                    break;
-                }
-
-                var id = Cc(hdr, 0);
-                var size = (int) U32(hdr, 4);
-                if (size < 0 || size > fs.Length - fs.Position) return -1;
-
-                if (id == "LIST")
-                {
-                    if (size < 0 || size > fs.Length - fs.Position)
-                    {
-                        return -1;
-                    }
-
-                    var list = new byte[size];
-
-                    if (fs.Read(list, 0, size) != size)
-                    {
-                        return -1;
-                    }
-
-                    return StblCountInList(list);
-                }
-
-                if (id == "SND ")
-                {
-                    break;
-                }
-
-                fs.Seek(size, SeekOrigin.Current);
-                if ((size & 1) != 0) fs.Seek(1, SeekOrigin.Current);
-            }
-
-            return -1;
-        }
-        catch
-        {
-            return -1;
-        }
-    }
-
-    private static int StblCountInList(byte[] list)
-    {
-        var p = 4;
-
-        while (p + 8 <= list.Length)
-        {
-            var id = Cc(list, p);
-            var size = (int) U32(list, p + 4);
-            var pay = p + 8;
-
-            if (id == "STBL")
-            {
-                if (size < 10 || pay + 10 > list.Length)
-                {
-                    return -1;
-                }
-
-                return U16(list, pay + 8);
-            }
-
-            p = pay + size;
-
-            if ((p & 1) != 0)
-            {
-                p++;
-            }
-        }
-
-        return -1;
-    }
-
-    private static void ParseStblIds(byte[] list, HashSet<ulong> ids)
+    private static int ParseStblIds(byte[] list, HashSet<ulong> ids)
     {
         var p = 4;
         
@@ -284,19 +192,21 @@ public sealed class FevBank
             var size = (int) U32(list, p + 4);
             var pay = p + 8;
 
+            if (size < 0 || size > list.Length - pay) return -1;
+
             if (id == "STBL")
             {
-                if (size < 10 || pay + 10 > list.Length) return;
+                if (size < 10 || pay + 10 > list.Length) return -1;
                 
                 int count = U16(list, pay + 8);
                 var idp = pay + 10;
                 
-                for (var i = 0; i < count && idp + 8 <= list.Length; i++, idp += 8)
+                for (var i = 0; i < count && idp + 8 <= pay + size; i++, idp += 8)
                 {
                     ids.Add(BinaryPrimitives.ReadUInt64LittleEndian(list.AsSpan(idp)));
                 }
 
-                return;
+                return count;
             }
 
             p = pay + size;
@@ -306,6 +216,8 @@ public sealed class FevBank
                 p++;
             }
         }
+
+        return -1;
     }
     
     public sealed record BankTrack(ulong Id, int Index, long Frames, int SampleRate);
@@ -724,6 +636,11 @@ public sealed class FevBank
     public static BankSkeleton ReadSkeleton(string path)
     {
         using var fs = File.OpenRead(path);
+        return ReadSkeleton(fs);
+    }
+
+    internal static BankSkeleton ReadSkeleton(Stream fs)
+    {
         var head = ReadExact(fs, 12);
         
         if (Tag4(head, 0) != "RIFF" || Tag4(head, 8) != "FEV ")

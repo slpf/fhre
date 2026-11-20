@@ -3,6 +3,9 @@ namespace FH6RB.Core;
 public static class AppPaths
 {
     public static string TempBase { get; } = ResolveTempBase();
+    private static readonly string SessionId = Guid.NewGuid().ToString("N");
+
+    public static string SessionDirectory(string name) => Path.Combine(TempBase, name, SessionId);
 
     private static string ResolveTempBase()
     {

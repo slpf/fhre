@@ -9,6 +9,8 @@ public static class Log
     private static readonly SessionLog Writer = new(Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FHRE", "fhre.log"));
 
+    internal static bool IsVerbose { get; } = Environment.GetEnvironmentVariable("FHRE_VERBOSE_LOG") == "1";
+
     public static void Line(string message) => Writer.Line(message);
 }
 

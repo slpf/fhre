@@ -8,7 +8,7 @@ namespace FH6RB.Services;
 
 public static class AudioDecoder
 {
-    private static readonly string Dir = Path.Combine(AppPaths.TempBase, "preview");
+    private static readonly string Dir = AppPaths.SessionDirectory("preview");
     private static readonly TimeSpan MaxCacheAge = TimeSpan.FromDays(7);
     private const int NormScheme = 10;
     private static int _purged;

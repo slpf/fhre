@@ -208,6 +208,7 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             GameScanner.GameScanIssue.DirectoryMissing => string.Format(Str.ErrScanDirectoryMissingFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.ExeMissing => string.Format(Str.ErrScanExeMissingFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.LanguageFilesMissing => Str.ErrScanLanguageMissing,
+            GameScanner.GameScanIssue.RadioBanksMissing => Str.ErrScanRadioBanksMissing,
             GameScanner.GameScanIssue.AccessDenied => string.Format(Str.ErrScanAccessDeniedFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.ResourceReadDenied => string.Format(Str.ErrScanResourceReadDeniedFmt, r.Detail ?? ""),
             GameScanner.GameScanIssue.EncryptedResources => string.Format(Str.ErrScanEncryptedResourcesFmt, r.Detail ?? ""),
@@ -241,6 +242,12 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
         _settings.LoopPreEmphasis = d.LoopPreEmphasis;
         _settings.LoopMultiResolution = d.LoopMultiResolution;
         _settings.LoopDisablePruning = d.LoopDisablePruning;
+        _settings.LoopBorderSimilarity = d.LoopBorderSimilarity;
+        _settings.LoopTransitionSmoothness = d.LoopTransitionSmoothness;
+        _settings.LoopLoudnessDifference = d.LoopLoudnessDifference;
+        _settings.LoopUseHarmonicChroma = d.LoopUseHarmonicChroma;
+        _settings.LoopRequireOnsetAlignment = d.LoopRequireOnsetAlignment;
+        _settings.LoopStages = d.LoopStages;
         _settings.SettingsVersion = SettingsService.CurrentSettingsVersion;
         _settings.GamePath = keepPath;
 

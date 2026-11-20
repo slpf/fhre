@@ -168,7 +168,7 @@ static TrackItemViewModel Track(string name, TrackOrigin origin = TrackOrigin.Or
 static MainWindowViewModel CreateMain(IEnumerable<TrackItemViewModel> tracks)
 {
     var vm = (MainWindowViewModel) RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));
-    SetField(vm, "<Tracks>k__BackingField", new ObservableCollection<TrackItemViewModel>(tracks));
+    SetField(vm, "<Tracks>k__BackingField", new FH6RB.Collections.RangeObservableCollection<TrackItemViewModel>(tracks));
     return vm;
 }
 

@@ -48,7 +48,11 @@ public static class TrackPack
 
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
-    public static async Task ExportAsync(string outPath, string? bankName, string? bankPath,
+    public static Task ExportAsync(string outPath, string? bankName, string? bankPath,
+        IReadOnlyList<ExportItem> tracks, Action<string>? progress, Action<string>? log, CancellationToken ct) =>
+        Task.Run(() => Export(outPath, bankName, bankPath, tracks, progress, log, ct), ct);
+
+    private static void Export(string outPath, string? bankName, string? bankPath,
         IReadOnlyList<ExportItem> tracks, Action<string>? progress, Action<string>? log, CancellationToken ct)
     {
         if (tracks.Count == 0)
@@ -57,7 +61,7 @@ public static class TrackPack
         }
 
         var manifest = new PackManifest { ExportedFromBank = bankName, Tracks = [] };
-        var audioSources = new List<(string Entry, string? Path, byte[]? Bytes)>();
+        var audioSources = new List<(string Entry, string? Path, int SubIndex)>();
 
         for (var i = 0; i < tracks.Count; i++)
         {
@@ -67,7 +71,6 @@ public static class TrackPack
 
             string entry;
             string? srcPath = null;
-            byte[]? srcBytes = null;
 
             if (t.FileSource is not null && File.Exists(t.FileSource))
             {
@@ -76,8 +79,6 @@ public static class TrackPack
             }
             else if (bankPath is not null && t.SubIndex >= 0)
             {
-                progress?.Invoke($"Extracting {t.DisplayName ?? "track"}…");
-                srcBytes = await Task.Run(() => ExtractSampleFsb(bankPath, t.SubIndex), ct);
                 entry = AudioPrefix + id + ".fsb";
             }
             else
@@ -86,7 +87,7 @@ public static class TrackPack
                 continue;
             }
 
-            audioSources.Add((entry, srcPath, srcBytes));
+            audioSources.Add((entry, srcPath, t.SubIndex));
 
             manifest.Tracks.Add(new PackTrack
             {
@@ -115,15 +116,17 @@ public static class TrackPack
         Atomic.Write(outPath, fs =>
         {
             using var zip = new ZipArchive(fs, ZipArchiveMode.Create, leaveOpen: true);
+            using var bank = audioSources.Any(source => source.Path is null) ? new SampleReader(bankPath!) : null;
 
-            foreach (var (entry, srcPath, srcBytes) in audioSources)
+            foreach (var (entry, srcPath, subIndex) in audioSources)
             {
+                ct.ThrowIfCancellationRequested();
                 var ze = zip.CreateEntry(entry, CompressionLevel.Optimal);
                 using var zes = ze.Open();
 
-                if (srcBytes is not null)
+                if (srcPath is null)
                 {
-                    zes.Write(srcBytes, 0, srcBytes.Length);
+                    bank!.CopySample(subIndex, zes, ct);
                 }
                 else
                 {
@@ -131,6 +134,8 @@ public static class TrackPack
                     src.CopyTo(zes);
                 }
             }
+
+            ct.ThrowIfCancellationRequested();
 
             var me = zip.CreateEntry(ManifestEntry, CompressionLevel.Optimal);
             using (var mes = me.Open())
@@ -158,7 +163,17 @@ public static class TrackPack
 
     public static ImportedPack Load(string path)
     {
-        var dir = Path.Combine(AppPaths.TempBase, "import", Guid.NewGuid().ToString("N"));
+        var dir = Path.Combine(AppPaths.SessionDirectory("import"), Guid.NewGuid().ToString("N"));
+        try { return Load(path, dir); }
+        catch
+        {
+            CleanupImportDirectory(dir);
+            throw;
+        }
+    }
+
+    private static ImportedPack Load(string path, string dir)
+    {
         PackManifest manifest;
 
         using (var fs = File.OpenRead(path))
@@ -272,18 +287,28 @@ public static class TrackPack
         return new ImportedPack(manifest, dir);
     }
 
-    public static void CleanupImport()
+    public static void CleanupImport() => CleanupImportDirectory(AppPaths.SessionDirectory("import"));
+
+    internal static void DiscardImport(ImportedPack pack)
     {
-        var importRoot = Path.Combine(AppPaths.TempBase, "import");
+        var root = Path.GetFullPath(AppPaths.SessionDirectory("import"));
+        var directory = Path.GetFullPath(pack.Dir);
+        if (string.Equals(Path.GetDirectoryName(directory), root, StringComparison.OrdinalIgnoreCase))
+            CleanupImportDirectory(directory);
+    }
+
+    private static void CleanupImportDirectory(string directory)
+    {
         try
         {
-            if (Directory.Exists(importRoot))
+            if (Directory.Exists(directory))
             {
-                Directory.Delete(importRoot, recursive: true);
+                Directory.Delete(directory, recursive: true);
             }
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            Log.Line($"pack import: could not remove {directory}: {ex}");
         }
     }
 
@@ -314,26 +339,79 @@ public static class TrackPack
 
     public static byte[] ExtractSampleFsb(string bankPath, int sub0)
     {
-        var sk = FevBank.ReadSkeleton(bankPath);
-        var (header60, layout) = Fsb5.ReadLayout(sk.Fsb5HeaderRegion);
+        using var reader = new SampleReader(bankPath);
+        return reader.ReadSample(sub0);
+    }
 
-        if (sub0 < 0 || sub0 >= layout.Count)
+    internal sealed class SampleReader : IDisposable
+    {
+        private readonly FileStream _input;
+        private readonly byte[] _header;
+        private readonly List<Fsb5.SampleLayout> _samples;
+        private readonly long _dataStart;
+        private readonly byte[] _buffer = new byte[128 * 1024];
+
+        public SampleReader(string bankPath)
         {
-            throw new InvalidOperationException($"sample index {sub0} out of range in {Path.GetFileName(bankPath)}");
+            _input = File.OpenRead(bankPath);
+            try
+            {
+                var skeleton = FevBank.ReadSkeleton(_input);
+                (_header, _samples) = Fsb5.ReadLayout(skeleton.Fsb5HeaderRegion);
+                _dataStart = skeleton.DataStartAbs;
+            }
+            catch
+            {
+                _input.Dispose();
+                throw;
+            }
         }
 
-        var sl = layout[sub0];
-        using var fs = File.OpenRead(bankPath);
-        if (sl.DataOff < 0 || sl.DataLen < 0 || sl.DataLen > int.MaxValue
-            || sk.DataStartAbs + sl.DataOff + sl.DataLen > fs.Length)
+        public void CopySample(int index, Stream output, CancellationToken ct = default)
         {
-            throw new InvalidDataException($"sample {sub0} data is outside {Path.GetFileName(bankPath)}");
-        }
-        var data = new byte[checked((int) sl.DataLen)];
-        fs.Position = sk.DataStartAbs + sl.DataOff;
-        fs.ReadExactly(data);
+            var sample = GetSample(index);
+            var padding = (int)((32 - sample.DataLen % 32) % 32);
+            var header = new byte[_header.Length + sample.Header.Length];
+            Fsb5.WriteSingleSampleHeader(_header, sample.Header, (uint)(sample.DataLen + padding), header);
+            output.Write(header);
+            _input.Position = _dataStart + sample.DataOff;
 
-        return Fsb5.BuildSingleSample(header60, new Fsb5Sample { Header = sl.Header, Data = data });
+            for (var remaining = sample.DataLen; remaining > 0;)
+            {
+                ct.ThrowIfCancellationRequested();
+                var count = (int)Math.Min(remaining, _buffer.Length);
+                _input.ReadExactly(_buffer.AsSpan(0, count));
+                output.Write(_buffer.AsSpan(0, count));
+                remaining -= count;
+            }
+
+            _buffer.AsSpan(0, padding).Clear();
+            output.Write(_buffer.AsSpan(0, padding));
+        }
+
+        public byte[] ReadSample(int index)
+        {
+            var sample = GetSample(index);
+            var padding = (32 - sample.DataLen % 32) % 32;
+            var bytes = new byte[checked((int)(_header.Length + sample.Header.Length + sample.DataLen + padding))];
+            using var output = new MemoryStream(bytes, writable: true);
+            CopySample(index, output);
+            return bytes;
+        }
+
+        private Fsb5.SampleLayout GetSample(int index)
+        {
+            if (index < 0 || index >= _samples.Count)
+                throw new InvalidOperationException($"sample index {index} out of range in {_input.Name}");
+
+            var sample = _samples[index];
+            if (sample.DataOff < 0 || sample.DataLen < 0 || sample.DataLen > int.MaxValue
+                || _dataStart + sample.DataOff + sample.DataLen > _input.Length)
+                throw new InvalidDataException($"sample {index} data is outside {_input.Name}");
+            return sample;
+        }
+
+        public void Dispose() => _input.Dispose();
     }
 
     public static int IndexOfSoundName(string bankPath, string soundName)

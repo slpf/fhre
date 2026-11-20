@@ -225,17 +225,19 @@ public sealed class Fsb5
         var total = checked((int)(HeaderSize + headersLen + dataLen));
 
         var outBuf = new byte[total];
-        header60.AsSpan(0, HeaderSize).CopyTo(outBuf);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(8), 1u);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(12), (uint) headersLen);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(16), 0u);
-        BinaryPrimitives.WriteUInt32LittleEndian(outBuf.AsSpan(20), (uint) dataLen);
-
-        var hPos = HeaderSize;
-        var dPos = HeaderSize + headersLen;
-        RebaseOffsetInto(sample.Header, 0, outBuf.AsSpan(hPos, sample.Header.Length));
-        sample.Data.CopyTo(outBuf.AsSpan(dPos));
+        WriteSingleSampleHeader(header60, sample.Header, (uint)dataLen, outBuf);
+        sample.Data.CopyTo(outBuf.AsSpan(HeaderSize + headersLen));
 
         return outBuf;
+    }
+
+    internal static void WriteSingleSampleHeader(byte[] header60, byte[] sampleHeader, uint dataLength, Span<byte> output)
+    {
+        header60.AsSpan(0, HeaderSize).CopyTo(output);
+        BinaryPrimitives.WriteUInt32LittleEndian(output[8..], 1u);
+        BinaryPrimitives.WriteUInt32LittleEndian(output[12..], (uint)sampleHeader.Length);
+        BinaryPrimitives.WriteUInt32LittleEndian(output[16..], 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(output[20..], dataLength);
+        RebaseOffsetInto(sampleHeader, 0, output.Slice(HeaderSize, sampleHeader.Length));
     }
 }

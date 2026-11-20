@@ -30,10 +30,8 @@ public partial class App : Application
         {
             var settings = SettingsService.Load();
             MarkerDefaults.Apply(settings.MarkerDefaults);
-            var window = new MainWindow
-            {
-                DataContext = new MainWindowViewModel(settings)
-            };
+            var vm = new MainWindowViewModel(settings);
+            var window = new MainWindow { DataContext = vm };
 
             WindowMemory.Restore(window, settings, "Main");
             window.Closing += (_, _) => WindowMemory.Save(window, settings, "Main");
@@ -43,7 +41,7 @@ public partial class App : Application
             window.Opened += async (_, _) =>
             {
                 await CheckRequiredToolsAsync(window);
-                if (!GameScanner.IsValid(settings.GamePath))
+                if (!vm.HasValidGamePath)
                 {
                     await window.ShowSettingsAsync(firstRun: true);
                 }
@@ -51,8 +49,9 @@ public partial class App : Application
 
             desktop.Exit += (_, _) =>
             {
-                (window.DataContext as MainWindowViewModel)?.Shutdown();
+                vm.Shutdown();
                 AudioDecoder.ClearAll();
+                TrackPack.CleanupImport();
             };
         }
 

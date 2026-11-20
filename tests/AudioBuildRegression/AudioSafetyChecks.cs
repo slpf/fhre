@@ -105,6 +105,7 @@ internal static class AudioSafetyChecks
             $"\"aevalsrc=0.99*sgn(sin(2*PI*7000*t))|0.99*sgn(sin(2*PI*7100*t)):s=48000:d=3\" -c:a pcm_s16le \"{input}\"");
         var vorbis = Encode(temp, input, "final-encoded-vorbis", "vorbis -quality 95");
         var original = File.ReadAllBytes(vorbis);
+        await CheckQuietRestoreDiagnosticsAsync(temp, vorbis, original, writeEmptyBank);
         var mutable = Path.Combine(temp, "final-mutable-import.fsb");
         File.WriteAllBytes(mutable, original);
         var expected = Fsb5.Parse(original).Samples.Single().Data;
@@ -153,6 +154,52 @@ internal static class AudioSafetyChecks
             && !log.Any(line => line.Contains("loudnorm.render.start ", StringComparison.Ordinal))
             && Events(log, "fsb.peak_correction").Count == 0 && FevBank.ReadSkeleton(converted).Mode == 16,
             "Cross-codec import clipped PCM16 or reapplied global loudness, gain or normalization.");
+    }
+
+    private static async Task CheckQuietRestoreDiagnosticsAsync(string temp, string vorbis, byte[] original,
+        Action<string, int> writeEmptyBank)
+    {
+        var source = Path.Combine(temp, "quiet-restore-source.bank");
+        var empty = Path.Combine(temp, "quiet-restore-template.bank");
+        writeEmptyBank(empty, 0);
+        File.WriteAllBytes(source, new FevBank(File.ReadAllBytes(empty)).FillEmpty(
+            FevBank.BuildStbl([(Lookup.SoundNameToId(Naming.MakeSoundName(274)), 0)]), original));
+        var build = typeof(BankBuildService).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Single(method => method.Name == nameof(BankBuildService.BuildToFileAsync));
+        var log = new List<string>();
+        var output = Path.Combine(temp, "quiet-restore-output.bank");
+        Task Build(Action<string> logger) => (Task)build.Invoke(null, [source, output,
+            new BuildItem[] { new(Naming.MakeSoundName(275), true, vorbis, "Quiet restore", null, null, true) },
+            new AppSettings { EncodeParallelism = 1 }, logger, null, false, true])!;
+
+        await Build(log.Add);
+        Check(!log.Any(line => line.Contains("process.stdout", StringComparison.Ordinal)) && File.Exists(output),
+            "An ordinary successful restore printed decoder diagnostics.");
+        var previous = File.ReadAllBytes(output);
+        log.Clear();
+        try
+        {
+            await Build(line =>
+            {
+                log.Add(line);
+                const string start = "build.start ";
+                var index = line.IndexOf(start, StringComparison.Ordinal);
+                if (index < 0) return;
+                using var details = JsonDocument.Parse(line[(index + start.Length)..]);
+                var workDir = details.RootElement.GetProperty("workDir").GetString()!;
+                Directory.CreateDirectory(Path.Combine(workDir, "sample_0.verified.wav"));
+            });
+            throw new Exception("A decoder failure was accepted.");
+        }
+        catch (InvalidOperationException)
+        {
+            Check(log.Any(line => line.Contains("$ vgmstream", StringComparison.OrdinalIgnoreCase)
+                && line.Contains("process.exit", StringComparison.Ordinal))
+                && log.Any(line => line.Contains("track.failed", StringComparison.Ordinal)
+                    && line.Contains(Path.GetFileName(vorbis), StringComparison.Ordinal)),
+                "An ordinary failed restore dropped decoder diagnostics or the source path.");
+            Check(File.ReadAllBytes(output).AsSpan().SequenceEqual(previous), "A failed restore replaced its previous output.");
+        }
     }
 
     private static string Encode(string temp, string input, string name, string format)

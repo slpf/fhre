@@ -7,6 +7,10 @@ namespace FH6RB.Collections;
 
 public sealed class RangeObservableCollection<T> : ObservableCollection<T>
 {
+    public RangeObservableCollection() { }
+
+    public RangeObservableCollection(IEnumerable<T> items) : base(items) { }
+
     public void Reset(IEnumerable<T> items)
     {
         CheckReentrancy();

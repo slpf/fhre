@@ -14,11 +14,14 @@ public sealed record StationInfo(int Number, string Name, IReadOnlyList<string> 
 
 public static partial class RadioCatalog
 {
-    public static List<StationInfo> Build(string gamePath, RadioInfo? radio)
+    public static List<StationInfo> Build(string gamePath, RadioInfo? radio) =>
+        Build(GameScanner.RadioBankNames(gamePath), radio);
+
+    internal static List<StationInfo> Build(IReadOnlyList<string> banks, RadioInfo? radio)
     {
         var groups = new Dictionary<int, Dictionary<string, string>>();
 
-        foreach (var bank in GameScanner.RadioBankNames(gamePath))
+        foreach (var bank in banks)
         {
             int number;
             string label;
@@ -76,12 +79,11 @@ public static partial class RadioCatalog
             .Where(st => !string.Equals(st.Name, StreamerModeName, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        Log.Line($"RadioCatalog: {stations.Count} stations");
-        
-        foreach (var st in stations)
-        {
-            Log.Line($"  #{st.Number} '{st.Name}' variants=[{string.Join(", ", st.Variants)}]");
-        }
+        var summary = $"RadioCatalog: {stations.Count} stations";
+        Log.Line(Log.IsVerbose
+            ? string.Join(Environment.NewLine, stations.Select(st =>
+                $"  #{st.Number} '{st.Name}' variants=[{string.Join(", ", st.Variants)}]").Prepend(summary))
+            : summary);
         
         return stations;
     }

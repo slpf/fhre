@@ -131,5 +131,9 @@ public sealed partial class MainWindowViewModel
         });
     }
 
-    partial void OnIsLoadingChanged(bool value) => ScheduleLoudnessMeasurements();
+    partial void OnIsLoadingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanBuild));
+        ScheduleLoudnessMeasurements();
+    }
 }
