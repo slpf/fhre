@@ -39,6 +39,7 @@ public sealed class BackupManifest
     public string StationName { get; set; } = "";
     public string Variant { get; set; } = "";
     public string BankName { get; set; } = "";
+    public string? EditorLanguage { get; set; }
     public List<BackupVariant> Variants { get; set; } = [];
     public List<string> Languages { get; set; } = [];
     public List<BackupTrack> Tracks { get; set; } = [];
@@ -143,8 +144,12 @@ public static class StationBackupService
         IReadOnlyList<BackupTrackSource> sources, Action<string>? log = null) =>
         Create(name, gamePath, station, variant, sources, Root, log ?? Log.Line);
 
+    internal static BackupEntry CreateFromEditor(string name, string gamePath, StationInfo station, string variant,
+        IReadOnlyList<BackupTrackSource> sources, string? language, Action<string> log) =>
+        Create(name, gamePath, station, variant, sources, Root, log, language);
+
     private static BackupEntry Create(string name, string gamePath, StationInfo station, string variant,
-        IReadOnlyList<BackupTrackSource> sources, string root, Action<string> log)
+        IReadOnlyList<BackupTrackSource> sources, string root, Action<string> log, string? editorLanguage = null)
     {
         if (!station.Variants.Contains(variant, StringComparer.Ordinal))
         {
@@ -166,7 +171,7 @@ public static class StationBackupService
         try
         {
             log($"backup: saving station #{station.Number} variant={variant} game={gamePath} destination={destination}");
-            return CreateBackup(name, gamePath, station, variant, sources, destination, log);
+            return CreateBackup(name, gamePath, station, variant, sources, destination, log, editorLanguage);
         }
         finally
         {
@@ -182,7 +187,7 @@ public static class StationBackupService
     }
 
     private static BackupEntry CreateBackup(string name, string gamePath, StationInfo station, string variant,
-        IReadOnlyList<BackupTrackSource> sources, string folder, Action<string> log)
+        IReadOnlyList<BackupTrackSource> sources, string folder, Action<string> log, string? editorLanguage)
     {
         var audioDir = Path.Combine(folder, "audio");
         Directory.CreateDirectory(audioDir);
@@ -298,6 +303,7 @@ public static class StationBackupService
             StationNumber = station.Number,
             StationName = station.Name,
             Variant = variant,
+            EditorLanguage = editorLanguage is null or "*" ? editorLanguage : LangCode(editorLanguage),
             BankName = "",
             Variants = variants,
             Languages = languages,
@@ -371,8 +377,7 @@ public static class StationBackupService
     {
         try
         {
-            var skeleton = FevBank.ReadSkeleton(bankPath);
-            if (skeleton.Stbl.Count > 0)
+            if (FevBank.ReadCompleteStblIdsFromFile(bankPath) is not { Count: 0 })
             {
                 throw new InvalidDataException("The bank has tracks, but no audio sources were found.");
             }
@@ -432,6 +437,7 @@ public static class StationBackupService
         }
 
         using var transaction = new GameFileTransaction(gamePath);
+        transaction.EnsureGameClosed();
         var resources = GameScanner.ReadRadioResources(gamePath);
         var m = e.Manifest;
 
@@ -441,7 +447,7 @@ public static class StationBackupService
             tracks = LoadLegacyTracks(e, m, log);
         }
 
-        var groups = GroupByBank(m, tracks);
+        var groups = GroupByBank(m, tracks, includeEmpty: m.Version >= 2 && m.Tracks.Count > 0);
 
         if (groups.Count == 0)
         {
@@ -479,6 +485,31 @@ public static class StationBackupService
 
         var referenceStations = xmlTargets.ToDictionary(path => path,
             path => LoadBackupStation(e, path, m.StationNumber), StringComparer.OrdinalIgnoreCase);
+        var archivedTracks = referenceStations
+            .Where(pair => pair.Value is not null && File.Exists(StationSnapshotPath(e, pair.Key)))
+            .ToDictionary(pair => pair.Key, pair => pair.Value!.ReadTracks().ToDictionary(track => track.SoundName),
+                StringComparer.OrdinalIgnoreCase);
+        var editorPath = m.EditorLanguage == "*"
+            ? archivedTracks.Keys.OrderByDescending(path => LangCode(path).StartsWith("en", StringComparison.OrdinalIgnoreCase)).FirstOrDefault()
+            : archivedTracks.Keys.FirstOrDefault(path => LangCode(path).Equals(m.EditorLanguage, StringComparison.OrdinalIgnoreCase));
+        var editorBank = m.Variants.FirstOrDefault(variant => variant.Variant == m.Variant)?.BankName ?? m.BankName;
+        var playbackOverrides = new Dictionary<BackupTrack, (bool Enabled, bool Markers)>();
+        foreach (var track in tracks.Where(t => !IsBankOnlyTrack(t)))
+        {
+            var sources = archivedTracks.Keys.Where(path => archivedTracks[path].ContainsKey(track.SoundName)).ToArray();
+            if (m.EditorLanguage is not null)
+            {
+                if (!track.Bank.Equals(editorBank, StringComparison.OrdinalIgnoreCase)
+                    || editorPath is null || !sources.Contains(editorPath, StringComparer.OrdinalIgnoreCase)) continue;
+                sources = [editorPath];
+            }
+            if (sources.Length == 0) continue;
+
+            playbackOverrides.Add(track, (
+                sources.All(path => archivedTracks[path][track.SoundName].Enabled != track.Enabled),
+                track.Markers is { Count: > 0 } markers && sources.All(path =>
+                    !MarkersMatch(referenceStations[path]!.GetMarkers(track.SoundName, track.SampleRate), markers))));
+        }
         var metadataOverrides = new Dictionary<string, (bool Title, bool Artist)>(StringComparer.Ordinal);
         foreach (var track in tracks.Where(t => t.Role == "default" && !IsBankOnlyTrack(t)))
         {
@@ -501,10 +532,10 @@ public static class StationBackupService
             if (editor is not null)
             {
                 var reference = referenceStations[path];
-                foreach (var track in tracks.Where(t => t.Role != "custom" && !IsBankOnlyTrack(t)))
+                foreach (var track in tracks.Where(t => !IsBankOnlyTrack(t)))
                 {
                     var restored = reference is not null && editor.RestoreTrackFrom(reference, track.SoundName);
-                    if (!restored && editor.GetSampleMeta(track.SoundName) is null)
+                    if (!restored && track.Role != "custom" && editor.GetSampleMeta(track.SoundName) is null)
                     {
                         throw new InvalidDataException($"Original XML metadata for {track.SoundName} is missing from the backup and {Path.GetFileName(path)}.");
                     }
@@ -530,6 +561,9 @@ public static class StationBackupService
 
         foreach (var (bank, bankPath, bankTracks) in bankPaths)
         {
+            if (bankTracks.Count == 0 && FevBank.ReadCompleteStblIdsFromFile(bankPath) is { Count: 0 })
+                continue;
+
             var buildItems = bankTracks
                 .Select(t => new BuildItem(
                     t.SoundName,
@@ -547,9 +581,19 @@ public static class StationBackupService
                 .ToList();
 
             var staged = transaction.Stage(bankPath);
-            var added = await BankBuildService.BuildToStageAsync(bankPath, staged, buildItems, settings, log, null,
-                    Log.IsVerbose, useBackupSources: true)
-                .ConfigureAwait(false);
+            IReadOnlyList<AddedSample> added = [];
+            if (bankTracks.Count == 0 && File.Exists(bankPath + ".bak")
+                && FevBank.ReadCompleteStblIdsFromFile(bankPath + ".bak") is { Count: 0 })
+            {
+                Atomic.Copy(bankPath + ".bak", staged);
+                BackupService.ValidateBank(staged, bankPath + ".bak");
+            }
+            else
+            {
+                added = await BankBuildService.BuildToStageAsync(bankPath, staged, buildItems, settings, log, null,
+                        Log.IsVerbose, useBackupSources: true)
+                    .ConfigureAwait(false);
+            }
 
             foreach (var a in added)
             {
@@ -581,21 +625,31 @@ public static class StationBackupService
 
             foreach (var (bank, _, bankTracks) in bankPaths)
             {
+                if (bankTracks.Count == 0)
+                {
+                    var reference = referenceStations[path];
+                    if (reference?.TrackBankNames().Contains(bank, StringComparer.OrdinalIgnoreCase) == true) editor.RegisterBank(bank);
+                    else editor.UnregisterBank(bank);
+                    continue;
+                }
                 editor.RegisterBank(bank);
+                var snapshot = archivedTracks.GetValueOrDefault(path);
+                var applyEditorChanges = m.EditorLanguage is null or "*"
+                    || m.EditorLanguage.Equals(LangCode(path), StringComparison.OrdinalIgnoreCase);
 
                 foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                 {
                     var frames = framesByName.TryGetValue(t.SoundName, out var f) ? f : t.SampleLength;
                     var sampleRate = sampleRatesByName.GetValueOrDefault(t.SoundName, t.SampleRate);
 
-                    if (t.Role == "custom")
+                    if (t.Role == "custom" && snapshot?.ContainsKey(t.SoundName) != true)
                     {
                         editor.AddCustom(t.SoundName, frames, sampleRate, t.DisplayName, t.Artist);
                     }
                     else
                     {
                         editor.ApplyReplacement(t.SoundName, frames, sampleRate);
-                        if (t.Role == "default") editor.ClearReplacement(t.SoundName);
+                        if (t.Role != "replacement") editor.ClearReplacement(t.SoundName);
                         if (t.Role == "default" && metadataOverrides.TryGetValue(t.SoundName, out var changed))
                         {
                             editor.SetSampleMeta(t.SoundName, changed.Title ? t.DisplayName : null,
@@ -607,11 +661,16 @@ public static class StationBackupService
 
                 foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                 {
-                    if (t.Markers is not null)
+                    var saved = snapshot?.GetValueOrDefault(t.SoundName);
+                    var overrides = playbackOverrides.GetValueOrDefault(t);
+                    var useTrackMarkers = saved is null || applyEditorChanges && overrides.Markers;
+                    var markers = useTrackMarkers ? t.Markers : saved?.Markers;
+                    if (markers is { Count: > 0 })
                     {
-                        editor.SetMarkers(t.SoundName, t.Markers, t.SampleRate);
+                        editor.SetMarkers(t.SoundName, markers, useTrackMarkers ? t.SampleRate : saved!.SampleRate);
                     }
-                    editor.SetEnabled(t.SoundName, t.Enabled);
+                    if (saved is null || applyEditorChanges && overrides.Enabled)
+                        editor.SetEnabled(t.SoundName, t.Enabled);
                 }
             }
 
@@ -651,7 +710,7 @@ public static class StationBackupService
 
     private static RadioStationEditor? LoadBackupStation(BackupEntry backup, string xmlPath, int stationNumber)
     {
-        var snapshot = Path.Combine(backup.Folder, "xml", LangCode(Path.GetFileName(xmlPath)) + ".xml");
+        var snapshot = StationSnapshotPath(backup, xmlPath);
         if (File.Exists(snapshot))
         {
             var station = RadioInfo.ParseElement(File.ReadAllText(snapshot));
@@ -665,7 +724,13 @@ public static class StationBackupService
         return File.Exists(original) ? RadioInfo.Load(original).StationByNumber(stationNumber) : null;
     }
 
-    private static List<(string Bank, List<BackupTrack> Tracks)> GroupByBank(BackupManifest m, List<BackupTrack> tracks)
+    private static string StationSnapshotPath(BackupEntry backup, string xmlPath) =>
+        Path.Combine(backup.Folder, "xml", LangCode(xmlPath) + ".xml");
+
+    private static bool MarkersMatch(IReadOnlyDictionary<string, long>? snapshot, IReadOnlyDictionary<string, long> markers) =>
+        snapshot is not null && markers.All(marker => snapshot.TryGetValue(marker.Key, out var value) && value == marker.Value);
+
+    private static List<(string Bank, List<BackupTrack> Tracks)> GroupByBank(BackupManifest m, List<BackupTrack> tracks, bool includeEmpty)
     {
         var fallback = !string.IsNullOrEmpty(m.BankName)
             ? m.BankName
@@ -699,7 +764,7 @@ public static class StationBackupService
         }
 
         return byBank
-            .Where(kv => kv.Value.Count > 0)
+            .Where(kv => includeEmpty || kv.Value.Count > 0)
             .Select(kv => (kv.Key, kv.Value))
             .ToList();
     }

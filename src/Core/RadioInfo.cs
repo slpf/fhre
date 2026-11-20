@@ -130,6 +130,7 @@ public sealed class RadioInfo
 public sealed class RadioStationEditor(XElement station)
 {
     private XElement Station => station;
+    internal int? Number => (int?)station.Attribute("Number");
 
     public bool UsesMilliseconds => station.Elements("Playlist")
         .Any(pl => (string?) pl.Attribute("Type") is "FreeroamTracks" or "EventTracks");
@@ -974,6 +975,44 @@ public sealed class RadioStationEditor(XElement station)
         }
 
         return true;
+    }
+
+    private static readonly string[] AudioDimensions = ["SampleLength", "SampleRate", "Replaced"];
+    private static readonly string[] AudioElements = ["Marker", "BPM"];
+
+    internal bool SameAudioFields(RadioStationEditor reference, string soundName)
+    {
+        var current = FindSample(soundName);
+        var original = reference.FindSample(soundName);
+        return current is not null && original is not null
+            && AudioDimensions.Concat(MarkerNames).All(attribute => current.Attribute(attribute)?.Value == original.Attribute(attribute)?.Value)
+            && AudioElements.All(name => current.Elements(name).SequenceEqual(original.Elements(name), XNode.EqualityComparer));
+    }
+
+    internal bool RestoreAudioFieldsFrom(RadioStationEditor reference, string soundName, bool restoreMarkers)
+    {
+        var original = reference.FindSample(soundName);
+        if (original is null) return false;
+
+        return EditSamples(soundName, sample =>
+        {
+            if (!restoreMarkers && AudioDimensions.All(attribute => sample.Attribute(attribute)?.Value == original.Attribute(attribute)?.Value))
+                return;
+
+            foreach (var attribute in AudioDimensions.Concat(MarkerNames))
+                sample.SetAttributeValue(attribute, original.Attribute(attribute)?.Value);
+
+            foreach (var name in AudioElements)
+            {
+                var source = original.Elements(name).ToArray();
+                var current = sample.Elements(name).ToArray();
+                if (source.Length == current.Length && source.Zip(current).All(pair => XNode.DeepEquals(pair.First, pair.Second)))
+                    continue;
+                if (current.Length > 0 && source.Length > 0) current[0].AddBeforeSelf(source.Select(node => new XElement(node)));
+                else if (source.Length > 0) sample.Add(source.Select(node => new XElement(node)));
+                foreach (var node in current) node.Remove();
+            }
+        });
     }
 
     private static List<XNode> ModernPlaylistNodes(XElement playlist, string soundName) => playlist.Nodes()

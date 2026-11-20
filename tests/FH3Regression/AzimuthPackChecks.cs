@@ -18,6 +18,7 @@ internal static class AzimuthPackChecks
              new BuildItem("AUDIT_KEEP", true, audio, "Keep original", "Keep artist", null, true)],
             new AppSettings { LoudnessNormalize = false });
         var frames = FevBank.ReadTrackInfoFromFile(encoded).First().Frames;
+        await CheckEmptyVariantAndLocalPlaybackAsync(root, empty, encoded, audio, frames);
         var fixtures = new Dictionary<int, (string Game, string Bank, string Xml)>();
         foreach (var version in new[] { 2, 3 })
         {
@@ -185,7 +186,7 @@ internal static class AzimuthPackChecks
             File.WriteAllText(bank, "damaged bank");
             File.WriteAllText(xml, "damaged XML");
             var all = BackupService.Restore(game);
-            Check(all.Restored == 3 && all.Failed == 0 && File.ReadAllBytes(bank).SequenceEqual(savedBank)
+            Check(all.Restored == 2 && all.Failed == 0 && File.ReadAllBytes(bank).SequenceEqual(savedBank)
                 && File.ReadAllBytes(xml).SequenceEqual(File.ReadAllBytes(xml + ".bak")),
                 "Full original restore could not recover malformed bank/XML files.");
         }
@@ -196,6 +197,54 @@ internal static class AzimuthPackChecks
             File.WriteAllBytes(xml, originalXml);
             foreach (var extra in new[] { french, french + ".bak", bank + ".bak", xml + ".bak" }) File.Delete(extra);
         }
+    }
+
+    private static async Task CheckEmptyVariantAndLocalPlaybackAsync(string root, string empty, string encoded, string audio, long frames)
+    {
+        var game = Path.Combine(root, "backup-local-playback");
+        Directory.CreateDirectory(game);
+        File.WriteAllBytes(Path.Combine(game, "ForzaHorizon6.exe"), []);
+        var en = Path.Combine(game, "RadioInfo_EN.xml");
+        var fr = Path.Combine(game, "RadioInfo_FR.xml");
+        WriteRadio(en, 3, "R1_Tracks", frames);
+        var french = RadioInfo.Load(en);
+        var localized = french.StationByNumber(1)!;
+        localized.SetEnabled("AUDIT_NATIVE", false);
+        localized.SetMarkers("AUDIT_NATIVE", new Dictionary<string, long> { ["TrackStart"] = 8200 }, 48000);
+        french.Save(fr);
+
+        var primary = Path.Combine(game, "R1_Tracks.assets.bank");
+        var variant = Path.Combine(game, "R1_Tracks_CU2.assets.bank");
+        File.Copy(encoded, primary);
+        File.Copy(empty, variant);
+        var radio = RadioInfo.Load(en);
+        var station = RadioCatalog.Build(game, radio).Single();
+        var source = BankReader.ReadTracks(primary, radio, 1).Tracks.Select(t => new BackupTrackSource(
+            t.SoundName, false, false, false, null, null, t.SubIndex, t.DisplayName, t.Artist, t.SampleLength,
+            t.SampleRate, null, t.Enabled, t.Markers?.ToDictionary(), BankId: t.BankId)).ToArray();
+        var backup = StationBackupService.Create("Empty-variant regression", game, station, "Tracks", source);
+        try
+        {
+            var custom = Naming.MakeSoundName(133);
+            var populated = Path.Combine(root, "backup-populated.bank");
+            var settings = new AppSettings { LoudnessNormalize = false };
+            var added = (await BankBuildService.BuildToFileAsync(empty, populated,
+                [new BuildItem(custom, true, audio, "Later track", null, null, true)], settings)).Single();
+            File.Copy(populated, variant, overwrite: true);
+            var modified = RadioInfo.Load(en);
+            modified.StationByNumber(1)!.RegisterBank("R1_Tracks_CU2");
+            modified.StationByNumber(1)!.AddCustom(custom, added.Frames, added.SampleRate, added.DisplayName, null);
+            modified.Save(en);
+
+            var restored = await StationBackupService.RestoreAsync(backup, game, settings);
+            Check(restored.Banks == 2 && FevBank.ReadSkeleton(variant).Stbl.Count == 0
+                && RadioInfo.Load(en).StationByNumber(1)!.ReadTracks().All(t => t.SoundName != custom),
+                "Manual restore left audio or XML in a previously empty variant.");
+            var saved = RadioInfo.Load(fr).StationByNumber(1)!.ReadTracks().Single(t => t.SoundName == "AUDIT_NATIVE");
+            Check(!saved.Enabled && saved.Markers!["TrackStart"] == 8200,
+                "Manual restore overrode locale-specific markers or playlist state.");
+        }
+        finally { StationBackupService.Delete(backup); }
     }
 
     private static void CheckBackupCreationFailures(string root, string game, string bank, string french,
@@ -209,10 +258,10 @@ internal static class AzimuthPackChecks
         var create = typeof(StationBackupService).GetMethod(nameof(StationBackupService.Create),
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, null,
             [typeof(string), typeof(string), typeof(StationInfo), typeof(string), typeof(IReadOnlyList<BackupTrackSource>),
-                typeof(string), typeof(Action<string>)], null)!;
+                typeof(string), typeof(Action<string>), typeof(string)], null)!;
         var log = new List<string>();
         BackupEntry Create(IReadOnlyList<BackupTrackSource> tracks, string destination) => (BackupEntry)create.Invoke(null,
-            ["Audit", game, station, "Tracks", tracks, destination, (Action<string>)log.Add])!;
+            ["Audit", game, station, "Tracks", tracks, destination, (Action<string>)log.Add, null])!;
 
         CheckFailure(sources, inaccessible, inaccessible);
         Check(Directory.GetFileSystemEntries(testRoot).SequenceEqual([inaccessible]),

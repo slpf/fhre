@@ -172,13 +172,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public bool CanRestoreAll { get; private set; }
     internal bool HasValidGamePath { get; private set; }
     internal string? GameRecoveryError { get; private set; }
+    internal Task RestoreAvailability { get; private set; } = Task.CompletedTask;
     public long ProjectedTotalBytes => _projectedTotalBytes;
 
-    private async Task RefreshCanRestoreAllAsync(bool isGameValid)
+    private async Task RefreshCanRestoreAllAsync()
     {
         var generation = ++_restoreAvailabilityGeneration;
         var gamePath = Settings.GamePath;
-        var has = isGameValid && await Task.Run(() => BackupService.Has(gamePath));
+        var has = await Task.Run(() => BackupService.Has(gamePath));
         if (generation != _restoreAvailabilityGeneration
             || !string.Equals(gamePath, Settings.GamePath, StringComparison.OrdinalIgnoreCase)) return;
 
@@ -319,7 +320,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 : new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError, GameRecoveryError, null, 0, 0);
             _radioResources = scan.Resources;
             HasValidGamePath = scan.IsValid;
-            _ = RefreshCanRestoreAllAsync(scan.IsValid);
+            RestoreAvailability = RefreshCanRestoreAllAsync();
 
             if (!scan.IsValid)
             {

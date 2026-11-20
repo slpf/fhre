@@ -235,6 +235,7 @@ public partial class MainWindow : Window
         }
 
         var gamePath = Vm.Settings.GamePath;
+        var language = Vm.SelectedLanguage?.FileName;
         var sources = Vm.Tracks
             .Select(t => new BackupTrackSource(
                 t.SoundName, t.IsCustom, t.IsReplacing, t.Replaced,
@@ -254,7 +255,7 @@ public partial class MainWindow : Window
 
         try
         {
-            var entry = await Task.Run(() => StationBackupService.Create(name, gamePath, station, variant, sources, Log.Line));
+            var entry = await Task.Run(() => StationBackupService.CreateFromEditor(name, gamePath, station, variant, sources, language, Log.Line));
             Vm.Status = string.Format(Str.StatusBackupSavedFmt, entry.Manifest.Name);
             if (entry.SkippedLanguages.Count > 0)
             {
@@ -531,7 +532,7 @@ public partial class MainWindow : Window
     private async Task RestoreAllStationsAsync()
     {
         var gamePath = Vm.Settings.GamePath;
-        if (Vm.IsBusy || !Vm.HasValidGamePath) return;
+        if (Vm.IsBusy) return;
 
         var backups = await Task.Run(() => BackupService.Find(gamePath));
         if (Vm.IsBusy || !string.Equals(gamePath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase)) return;
@@ -570,7 +571,8 @@ public partial class MainWindow : Window
         {
             await Vm.StopLoudnessAnalysisAsync();
             var (restored, failed) = await Task.Run(() => BackupService.Restore(gamePath, backups, Log.Line));
-            await Dispatcher.UIThread.InvokeAsync(async () => await Vm.ReloadAsync());
+            if (Vm.HasValidGamePath) await Vm.ReloadAsync();
+            else Vm.ReloadFromGame();
             status = failed == 0
                 ? string.Format(Str.EditRestoredFmt, restored)
                 : string.Format(Str.EditRestoredFailedFmt, restored, failed);

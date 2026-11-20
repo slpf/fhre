@@ -108,11 +108,30 @@ internal static class SyntheticChecks
         Check(catalog.Count == 2 && catalog.Single(s => s.Number == 1).Variants.Count == 2
             && catalog.Single(s => s.Number == 6).Variants.Count == 2, "FH3 catalog omitted base/DLC variants.");
         var baseBank = GameScanner.BankPath(game, "R1_Tracks")!;
-        File.WriteAllBytes(baseBank + ".bak", [1, 2, 3]);
+        UwpBuildChecks.WriteTemplate(baseBank + ".bak");
+        var originalBank = File.ReadAllBytes(baseBank + ".bak");
         File.Copy(xml, xml + ".bak");
         Check(GameScanner.BackupFiles(game).Contains(baseBank + ".bak") && BackupService.Has(game), "FH3 physical original backups were not discovered.");
         var restore = BackupService.Restore(game);
-        Check(restore.Restored == 2 && restore.Failed == 0 && File.ReadAllBytes(baseBank).SequenceEqual(new byte[] { 1, 2, 3 }), "FH3 original backup restore missed obfuscated paths.");
+        Check(restore.Restored == 1 && restore.Failed == 0 && File.ReadAllBytes(baseBank).SequenceEqual(originalBank), "FH3 original backup restore missed obfuscated paths.");
+        File.SetLastWriteTimeUtc(baseBank, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var savedTime = File.GetLastWriteTimeUtc(baseBank);
+        Check(BackupService.Restore(game).Restored == 0 && File.GetLastWriteTimeUtc(baseBank) == savedTime,
+            "Repeating the original restore rewrote an identical bank.");
+        File.WriteAllBytes(baseBank + ".bak", originalBank[..20]);
+        try
+        {
+            BackupService.Restore(game);
+            throw new InvalidOperationException("Restore accepted a truncated bank backup.");
+        }
+        catch (IOException)
+        {
+            Check(File.ReadAllBytes(baseBank).SequenceEqual(originalBank), "An invalid backup changed the live bank.");
+        }
+        File.WriteAllBytes(baseBank + ".bak", originalBank);
+        File.Delete(xml);
+        Check(BackupService.Restore(game).Restored == 1 && File.ReadAllBytes(xml).SequenceEqual(File.ReadAllBytes(xml + ".bak")),
+            "The original XML could not be restored after the live file was removed.");
         var vm = CreateVm(game, "RadioInfo_EN.xml");
         try
         {

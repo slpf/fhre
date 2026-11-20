@@ -291,6 +291,15 @@ static async Task TestGameWritesAsync(string temp, string input)
         (Task<(IReadOnlyList<AddedSample>, long, int, int)>)build.Invoke(vm,
             [game, station, bankName, bank, en, languages, resources, plan, settings, (Action<string>)(_ => { })])!;
 
+    var markersOnly = await BuildAsync([new BuildItem(shared, false, null, "English", null, null, true,
+        new Dictionary<string, long> { ["TrackStart"] = 4800, ["End"] = 143999 }, MarkerSampleRate: 48000)], []);
+    Check(markersOnly.Written == 0 && !File.Exists(bank + ".bak")
+        && RadioInfo.Load(de).StationByNumber(2)!.ReadTracks().Single().Markers!["TrackStart"] == 4800,
+        "The marker-only fixture did not change the linked station without writing the bank.");
+    var restoredMarkers = BackupService.RestoreStation(game, station);
+    Check(restoredMarkers.Banks == 0 && RadioInfo.Load(de).StationByNumber(2)!.ReadTracks().Single().Markers?.ContainsKey("TrackStart") == false,
+        "Original restore missed shared markers in a bank without an audio backup.");
+
     var edited = await BuildAsync([new BuildItem(shared, false, replacement, "Edited", null, null, true, IsReplacement: true)], []);
     Check(edited.SavedXml == 2 && edited.Dead == 0, "Single-language replacement skipped shared audio or pruned the truncated sibling bank.");
     foreach (var path in new[] { en, de })
@@ -313,6 +322,22 @@ static async Task TestGameWritesAsync(string temp, string input)
     var repeat = await BuildAsync(plan, []);
     Check(repeat.Written == 0 && repeat.SavedXml == 0 && stamps.All(pair => File.GetLastWriteTimeUtc(pair.Key) == pair.Value),
         "A build without changes rewrote the bank or RadioInfo.");
+
+    foreach (var path in new[] { en, de })
+    {
+        var radio = RadioInfo.Load(path);
+        radio.StationByNumber(2)!.SetSampleMeta(shared, "Independent station edit", null);
+        radio.Save(path);
+    }
+    var restored = BackupService.RestoreStation(game, station);
+    Check(restored.Banks == 1 && restored.Langs == 2 && File.ReadAllBytes(bank).SequenceEqual(File.ReadAllBytes(bank + ".bak")),
+        "Original station restore did not recover the bank byte for byte.");
+    foreach (var path in new[] { en, de })
+    {
+        var track = RadioInfo.Load(path).StationByNumber(2)!.ReadTracks().Single();
+        Check(track.SampleLength == 144000 && track.Markers!["End"] == 143999 && track.DisplayName == "Independent station edit",
+            "Original station restore left stale audio timing or removed another station's edit.");
+    }
     Console.WriteLine("Verified bank writes preserve sibling tracks, synchronize shared audio, and skip unchanged files.");
 }
 

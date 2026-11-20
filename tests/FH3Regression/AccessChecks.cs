@@ -112,7 +112,7 @@ internal static class AccessChecks
 
         var bank = Path.Combine(folder, "R1_Tracks.assets.bank");
         File.WriteAllText(bank, "live bank");
-        File.WriteAllText(bank + ".bak", "original bank");
+        UwpBuildChecks.WriteTemplate(bank + ".bak");
         File.Copy(xml, xml + ".bak");
         File.WriteAllText(xml, "<Radio><RadioStation");
         var station = new StationInfo(1, "Test", ["Tracks"], new Dictionary<string, string> { ["Tracks"] = "R1_Tracks" });

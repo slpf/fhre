@@ -62,10 +62,12 @@ static void TestScanner(string temp)
     Check(station.BankName(station.Variants.Single()) == "HZ2_MX_Radio_01_Tracks", "FH2 bank mapping failed.");
     Check(GameScanner.BankPath(game, station.BankName("Tracks")) == Path.Combine(banks, "HZ2_MX_Radio_01_Tracks.bank"), "FH2 bank lookup failed.");
     var bankPath = Path.Combine(banks, "HZ2_MX_Radio_01_Tracks.bank");
-    File.WriteAllBytes(bankPath + ".bak", [1, 2, 3]);
+    var originalBank = Convert.FromHexString(
+        "524946463400000046455620464D542004000000500000004C4953541C00000050524F4A424E4B49000000005354424C00000000534E444800000000");
+    File.WriteAllBytes(bankPath + ".bak", originalBank);
     Check(BackupService.Has(game), "FH2 original bank backup was not found.");
     var restored = BackupService.Restore(game);
-    Check(restored.Restored == 1 && restored.Failed == 0 && File.ReadAllBytes(bankPath).SequenceEqual(new byte[] { 1, 2, 3 }), "FH2 original bank restore failed.");
+    Check(restored.Restored == 1 && restored.Failed == 0 && File.ReadAllBytes(bankPath).SequenceEqual(originalBank), "FH2 original bank restore failed.");
 
     var modern = Path.Combine(temp, "FH5");
     Directory.CreateDirectory(modern);

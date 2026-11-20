@@ -47,7 +47,8 @@ public partial class App : Application
                 }
                 else if (!vm.HasValidGamePath)
                 {
-                    await window.ShowSettingsAsync(firstRun: true);
+                    await vm.RestoreAvailability;
+                    if (!vm.CanRestoreAll) await window.ShowSettingsAsync(firstRun: true);
                 }
             };
 
