@@ -189,6 +189,7 @@ internal static class AzimuthPackChecks
             Check(all.Restored == 2 && all.Failed == 0 && File.ReadAllBytes(bank).SequenceEqual(savedBank)
                 && File.ReadAllBytes(xml).SequenceEqual(File.ReadAllBytes(xml + ".bak")),
                 "Full original restore could not recover malformed bank/XML files.");
+            await CheckRenamedRestoreAsync(game, bank, xml, french, station, sources, version);
         }
         finally
         {
@@ -196,6 +197,48 @@ internal static class AzimuthPackChecks
             File.WriteAllBytes(bank, originalBank);
             File.WriteAllBytes(xml, originalXml);
             foreach (var extra in new[] { french, french + ".bak", bank + ".bak", xml + ".bak" }) File.Delete(extra);
+        }
+    }
+
+    private static async Task CheckRenamedRestoreAsync(string game, string bank, string xml, string french,
+        StationInfo station, BackupTrackSource[] sources, int version)
+    {
+        var custom = sources.First(track => track.IsCustom);
+        var localized = RadioInfo.Load(french);
+        var editor = localized.StationByNumber(1)!;
+        editor.SetEnabled(custom.SoundName, !custom.Enabled);
+        editor.SetMarkers(custom.SoundName, new Dictionary<string, long> { ["TrackStart"] = 4800 }, 48000);
+        editor.SetSampleMeta(custom.SoundName, "French title", "French artist");
+        localized.Save(french);
+        var backup = StationBackupService.Create("Conflicting names", game, station, "Tracks", sources);
+        var sibling = Path.Combine(game, version == 2 ? "HZ2_MX_Radio_02_Tracks.bank" : "R2_Tracks.bank");
+        try
+        {
+            var original = BankState(bank);
+            File.Copy(bank, sibling);
+            UwpBuildChecks.WriteTemplate(bank);
+            await StationBackupService.RestoreAsync(backup, game, new AppSettings { LoudnessNormalize = false });
+            var restored = FevBank.ReadTrackInfoFromFile(bank);
+            var audio = BankState(bank);
+            Check(restored.Count == sources.Length && sources.All(track =>
+            {
+                var id = restored.Single(sample => sample.Index == track.SubIndex).Id;
+                return (track.IsCustom ? id != track.BankId : id == track.BankId) && original[track.BankId!.Value] == audio[id];
+            }), "Restoring into an empty bank lost a sample, changed its audio or used the wrong ID.");
+            var actualId = restored.Single(sample => sample.Index == custom.SubIndex).Id;
+            var enTrack = RadioInfo.Load(xml).StationByNumber(1)!.ReadTracks().Single(t => Lookup.SoundNameToId(t.SoundName) == actualId);
+            var frEditor = RadioInfo.Load(french).StationByNumber(1)!;
+            var frTrack = frEditor.ReadTracks().Single(t => t.SoundName == enTrack.SoundName);
+            Check(frTrack.Enabled != enTrack.Enabled && enTrack.Enabled == custom.Enabled
+                && frEditor.GetMarkers(frTrack.SoundName, 48000)!["TrackStart"] == 4800
+                && frTrack.DisplayName == "French title" && frTrack.Artist == "French artist"
+                && backup.Manifest.Tracks.Any(t => t.SoundName == custom.SoundName && t.BankId == custom.BankId),
+                "Renaming a backup track lost localized playback or metadata, or modified its manifest.");
+        }
+        finally
+        {
+            File.Delete(sibling);
+            StationBackupService.Delete(backup);
         }
     }
 
@@ -222,6 +265,7 @@ internal static class AzimuthPackChecks
         var source = BankReader.ReadTracks(primary, radio, 1).Tracks.Select(t => new BackupTrackSource(
             t.SoundName, false, false, false, null, null, t.SubIndex, t.DisplayName, t.Artist, t.SampleLength,
             t.SampleRate, null, t.Enabled, t.Markers?.ToDictionary(), BankId: t.BankId)).ToArray();
+        await CheckBuildLockOrderAsync(game, station, primary, en);
         var backup = StationBackupService.Create("Empty-variant regression", game, station, "Tracks", source);
         try
         {
@@ -245,6 +289,37 @@ internal static class AzimuthPackChecks
                 "Manual restore overrode locale-specific markers or playlist state.");
         }
         finally { StationBackupService.Delete(backup); }
+    }
+
+    private static async Task CheckBuildLockOrderAsync(string game, StationInfo station, string bank, string xml)
+    {
+        var vm = new MainWindowViewModel(new AppSettings { GamePath = game });
+        Set(vm, "_selectedStation", station);
+        Set(vm, "_selectedLanguage", new LangOption("EN", Path.GetFileName(xml)));
+        Set(vm, "_selectedVariant", "Tracks");
+        Set(vm, "_otherBanksActive", 20);
+        Set(vm, "_loadedBankPath", bank);
+        var result = BankReader.ReadTracks(bank, RadioInfo.Load(xml), station.Number);
+        Set(vm, "_loadedBankSnapshot", typeof(BankReadResult).GetProperty("Snapshot",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(result)!);
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Set(vm, "_loudnessTask", pending.Task);
+        using var externalLock = File.OpenRead(xml);
+        using var measurement = File.OpenRead(bank);
+        var build = vm.BuildAsync();
+        try
+        {
+            Check(vm.IsBuilding && !build.IsCompleted && vm.PendingErrorDialog is null,
+                "Build reported its own loudness reader as a file lock before the measurement finished.");
+        }
+        finally
+        {
+            measurement.Dispose();
+            pending.SetResult();
+            await build.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Check(!vm.IsBuilding && vm.PendingErrorDialog == FH6RB.Assets.Str.DlgFilesInUseBody,
+            "Build ignored an external reader after waiting for the loudness measurement.");
     }
 
     private static void CheckBackupCreationFailures(string root, string game, string bank, string french,
@@ -282,6 +357,8 @@ internal static class AzimuthPackChecks
                 "The backup manifests were not published.");
 
             var bad = sources.ToArray();
+            bad[^1] = bad[^1] with { SubIndex = sources[0].SubIndex };
+            CheckFailure(bad, backups, bank);
             bad[^1] = bad[^1] with { SubIndex = int.MaxValue };
             CheckFailure(bad, backups, bank);
             CheckFailure([], backups, bank);

@@ -327,6 +327,7 @@ public static class StationBackupService
             if (extract)
             {
                 reader ??= new TrackPack.SampleReader(bankPath);
+                reader.ValidateSample(track.SubIndex, track.BankId, track.SoundName);
                 using var stream = File.Create(output);
                 reader.CopySample(track.SubIndex, stream);
             }
@@ -470,7 +471,8 @@ public static class StationBackupService
 
         var xmlTargets = resources.Languages.Select(language => resources.LanguagePath(language)!).ToList();
 
-        ResolveCustomConflicts(tracks, resources, groups.Select(g => g.Bank).ToList(), log);
+        var renamed = ResolveCustomConflicts(tracks, resources, groups.Select(g => g.Bank).ToList(), log);
+        string TargetName(BackupTrack track) => renamed.GetValueOrDefault(track, track.SoundName);
         
         var missing = tracks
             .Where(t => string.IsNullOrEmpty(t.Audio) || !File.Exists(Path.Combine(e.Folder, t.Audio)))
@@ -510,14 +512,14 @@ public static class StationBackupService
                 track.Markers is { Count: > 0 } markers && sources.All(path =>
                     !MarkersMatch(referenceStations[path]!.GetMarkers(track.SoundName, track.SampleRate), markers))));
         }
-        var metadataOverrides = new Dictionary<string, (bool Title, bool Artist)>(StringComparer.Ordinal);
-        foreach (var track in tracks.Where(t => t.Role == "default" && !IsBankOnlyTrack(t)))
+        var metadataOverrides = new Dictionary<BackupTrack, (bool Title, bool Artist)>();
+        foreach (var track in tracks.Where(t => t.Role is "default" or "custom" && !IsBankOnlyTrack(t)))
         {
             var snapshots = referenceStations.Values.Where(station => station is not null)
                 .Select(station => station!.GetSampleMeta(track.SoundName)).Where(meta => meta.HasValue)
                 .Select(meta => meta!.Value).ToArray();
             if (snapshots.Length == 0) continue;
-            metadataOverrides[track.SoundName] = (
+            metadataOverrides[track] = (
                 track.DisplayName is not null && !snapshots.Any(meta =>
                     string.Equals(meta.DisplayName, track.DisplayName, StringComparison.Ordinal)
                     || meta.DisplayName is null && track.DisplayName == track.SoundName),
@@ -534,7 +536,7 @@ public static class StationBackupService
                 var reference = referenceStations[path];
                 foreach (var track in tracks.Where(t => !IsBankOnlyTrack(t)))
                 {
-                    var restored = reference is not null && editor.RestoreTrackFrom(reference, track.SoundName);
+                    var restored = reference is not null && editor.RestoreTrackFrom(reference, track.SoundName, TargetName(track));
                     if (!restored && track.Role != "custom" && editor.GetSampleMeta(track.SoundName) is null)
                     {
                         throw new InvalidDataException($"Original XML metadata for {track.SoundName} is missing from the backup and {Path.GetFileName(path)}.");
@@ -554,7 +556,7 @@ public static class StationBackupService
 
         FileGuard.EnsureWritable(bankPaths.Select(b => b.Path).Concat(xmlTargets));
         
-        var stagedBanks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var idsByBank = new Dictionary<string, HashSet<ulong>>(StringComparer.OrdinalIgnoreCase);
         var framesByName = new Dictionary<string, long>(StringComparer.Ordinal);
         var sampleRatesByName = new Dictionary<string, int>(StringComparer.Ordinal);
         var backupCustoms = new HashSet<string>(StringComparer.Ordinal);
@@ -566,7 +568,7 @@ public static class StationBackupService
 
             var buildItems = bankTracks
                 .Select(t => new BuildItem(
-                    t.SoundName,
+                    TargetName(t),
                     IsNewCustom: t.Role == "custom",
                     SourcePath: Path.Combine(e.Folder, t.Audio),
                     DisplayName: t.DisplayName,
@@ -577,7 +579,7 @@ public static class StationBackupService
                     IsReplacement: t.Role == "replacement" || t.Role == "default",
                     MarkerSampleRate: t.SampleRate,
                     Normalization: t.Normalization,
-                    BankId: t.BankId))
+                    BankId: renamed.ContainsKey(t) ? null : t.BankId))
                 .ToList();
 
             var staged = transaction.Stage(bankPath);
@@ -601,17 +603,21 @@ public static class StationBackupService
                 sampleRatesByName[a.SoundName] = a.SampleRate;
             }
 
+            var stagedIds = FevBank.ReadCompleteStblIdsFromFile(staged);
+            if (stagedIds is null || stagedIds.Count != bankTracks.Count
+                || !stagedIds.SetEquals(buildItems.Select(item => item.BankId ?? Lookup.SoundNameToId(item.SoundName))))
+                throw new InvalidDataException($"Restored track IDs differ from the backup for {bank}.");
+            idsByBank.Add(bank, stagedIds);
             transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath));
-            stagedBanks.Add(bank, staged);
 
             foreach (var t in bankTracks.Where(t => t.Role == "custom"))
             {
-                backupCustoms.Add(t.SoundName);
+                backupCustoms.Add(TargetName(t));
             }
         }
         
         var langs = 0;
-        var idsByBank = new Dictionary<string, HashSet<ulong>>(StringComparer.OrdinalIgnoreCase);
+        var restoredBanks = idsByBank.Count;
         foreach (var path in xmlTargets)
         {
             var radio = radioDocuments[path];
@@ -639,23 +645,24 @@ public static class StationBackupService
 
                 foreach (var t in bankTracks.Where(t => !IsBankOnlyTrack(t)))
                 {
-                    var frames = framesByName.TryGetValue(t.SoundName, out var f) ? f : t.SampleLength;
-                    var sampleRate = sampleRatesByName.GetValueOrDefault(t.SoundName, t.SampleRate);
+                    var name = TargetName(t);
+                    var frames = framesByName.GetValueOrDefault(name, t.SampleLength);
+                    var sampleRate = sampleRatesByName.GetValueOrDefault(name, t.SampleRate);
 
                     if (t.Role == "custom" && snapshot?.ContainsKey(t.SoundName) != true)
                     {
-                        editor.AddCustom(t.SoundName, frames, sampleRate, t.DisplayName, t.Artist);
+                        editor.AddCustom(name, frames, sampleRate, t.DisplayName, t.Artist);
                     }
                     else
                     {
-                        editor.ApplyReplacement(t.SoundName, frames, sampleRate);
-                        if (t.Role != "replacement") editor.ClearReplacement(t.SoundName);
-                        if (t.Role == "default" && metadataOverrides.TryGetValue(t.SoundName, out var changed))
+                        editor.ApplyReplacement(name, frames, sampleRate);
+                        if (t.Role != "replacement") editor.ClearReplacement(name);
+                        if (metadataOverrides.TryGetValue(t, out var changed))
                         {
-                            editor.SetSampleMeta(t.SoundName, changed.Title ? t.DisplayName : null,
+                            editor.SetSampleMeta(name, changed.Title ? t.DisplayName : null,
                                 changed.Artist ? t.Artist : null, clearMissingArtist: changed.Artist);
                         }
-                        else editor.SetSampleMeta(t.SoundName, t.DisplayName, t.Artist, clearMissingArtist: t.Role == "replacement");
+                        else editor.SetSampleMeta(name, t.DisplayName, t.Artist, clearMissingArtist: t.Role == "replacement");
                     }
                 }
 
@@ -667,10 +674,10 @@ public static class StationBackupService
                     var markers = useTrackMarkers ? t.Markers : saved?.Markers;
                     if (markers is { Count: > 0 })
                     {
-                        editor.SetMarkers(t.SoundName, markers, useTrackMarkers ? t.SampleRate : saved!.SampleRate);
+                        editor.SetMarkers(TargetName(t), markers, useTrackMarkers ? t.SampleRate : saved!.SampleRate);
                     }
                     if (saved is null || applyEditorChanges && overrides.Enabled)
-                        editor.SetEnabled(t.SoundName, t.Enabled);
+                        editor.SetEnabled(TargetName(t), t.Enabled);
                 }
             }
 
@@ -685,7 +692,7 @@ public static class StationBackupService
             {
                 if (!idsByBank.TryGetValue(bank, out var ids))
                 {
-                    var bankPath = stagedBanks.GetValueOrDefault(bank) ?? resources.BankPath(bank)
+                    var bankPath = resources.BankPath(bank)
                         ?? throw new InvalidOperationException($"bank not found while restoring playlists: {bank}");
                     var skeleton = FevBank.ReadSkeleton(bankPath);
                     ids = skeleton.Stbl.Select(track => track.Id).ToHashSet();
@@ -700,8 +707,8 @@ public static class StationBackupService
         }
 
         transaction.Commit();
-        log?.Invoke($"restored {stagedBanks.Count} bank(s), {langs} language file(s)");
-        return (stagedBanks.Count, langs);
+        log?.Invoke($"restored {restoredBanks} bank(s), {langs} language file(s)");
+        return (restoredBanks, langs);
     }
 
     private static bool IsBankOnlyTrack(BackupTrack track) => track.BankId is { } id
@@ -769,11 +776,12 @@ public static class StationBackupService
             .ToList();
     }
 
-    private static void ResolveCustomConflicts(List<BackupTrack> tracks, GameScanner.RadioResources resources,
+    private static Dictionary<BackupTrack, string> ResolveCustomConflicts(List<BackupTrack> tracks, GameScanner.RadioResources resources,
         IReadOnlyCollection<string> restoredBanks, Action<string>? log)
     {
         var occupied = CollectOccupiedCustomNames(resources, excludeBankNames: restoredBanks);
         var assigned = new HashSet<string>(StringComparer.Ordinal);
+        var renamed = new Dictionary<BackupTrack, string>();
 
         var seq = occupied.Count == 0
             ? 0
@@ -799,10 +807,10 @@ public static class StationBackupService
             }
             while (occupied.Contains(newName) || !assigned.Add(newName));
 
-            t.SoundName = newName;
-            t.BankId = null;
+            renamed.Add(t, newName);
             log?.Invoke($"restore: custom {original} renamed to {newName} (conflict)");
         }
+        return renamed;
     }
 
     private static int ExtractSeq(string soundName)

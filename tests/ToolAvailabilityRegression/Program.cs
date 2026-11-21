@@ -83,6 +83,7 @@ try
     TestBatchAddition();
     SetTools(0);
     TestNotifications(vm, tracks.Select(t => t.Track).ToArray(), () => SetTools(15));
+    await TestLoudnessRefreshAsync(SetTools);
     SetTools(0);
     TestBackupNotifications(backupRows, () => SetTools(15));
     TestSourceTransitions();
@@ -280,6 +281,44 @@ static void TestSourceTransitions()
     empty.RestoreFsbPath = "restored.fsb";
     empty.SubIndex = -1;
     Check(empty.CanPlay && empty.CanEditMarkers, "A staged standalone restore incorrectly required an original bank index.");
+}
+
+static async Task TestLoudnessRefreshAsync(Action<int> setTools)
+{
+    var track = Track("LOUDNESS", TrackOrigin.Custom);
+    track.SourcePath = "unopened.wav";
+    var vm = CreateMain([track]);
+    var settings = new AppSettings { MeasureTrackLoudness = true };
+    SetField(vm, "<Settings>k__BackingField", settings);
+    SetField(vm, "_loudnessTracks", new HashSet<TrackItemViewModel> { track });
+    var queue = typeof(MainWindowViewModel).GetField("_loudnessTask", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new MissingFieldException(nameof(MainWindowViewModel), "_loudnessTask");
+    var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    queue.SetValue(vm, blocked.Task);
+    try
+    {
+        setTools(1);
+        vm.RefreshToolAvailability();
+        var active = queue.GetValue(vm);
+        Check(active is Task && active != blocked.Task && track.LoudnessText == Str.TrackLoudnessPending,
+            "Enabling loudness did not queue a measurement.");
+        setTools(3);
+        vm.RefreshToolAvailability();
+        vm.RefreshToolAvailability();
+        Check(ReferenceEquals(active, queue.GetValue(vm)), "Refreshing unrelated tool availability restarted loudness analysis.");
+        setTools(0);
+        vm.RefreshToolAvailability();
+        Check(track.LoudnessText == Str.TrackLoudnessUnavailable, "Loudness stayed pending after losing ffmpeg.");
+        settings.MeasureTrackLoudness = false;
+        vm.RefreshToolAvailability();
+        Check(track.LoudnessText.Length == 0, "Disabling loudness did not clear its status.");
+    }
+    finally
+    {
+        var stopped = vm.StopLoudnessAnalysisAsync();
+        blocked.SetResult();
+        await stopped;
+    }
 }
 
 static void TestBackupNotifications(BackupRow[] rows, Action installTools)

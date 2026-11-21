@@ -1,18 +1,13 @@
-# ============================================================
-#  FHRE release build script (PowerShell)
-#  Place in project root (next to "src" and "tools").
-#  Run:  powershell -ExecutionPolicy Bypass -File .\build-release.ps1
-# ============================================================
-
 $ErrorActionPreference = 'Stop'
-Set-Location -Path $PSScriptRoot
+Set-Location -LiteralPath $PSScriptRoot
 
 $Proj     = 'src\FH6RB.csproj'
-$Bin      = 'bin'
-$BuildOut = 'bin\publish'
-$Dist     = 'publish'
 $Tools    = 'tools'
 $Zip      = Join-Path $PSScriptRoot 'fhre.zip'
+$RunId    = [Guid]::NewGuid().ToString('N')
+$BuildOut = Join-Path $PSScriptRoot "bin\release-$RunId"
+$zipTmp   = "$Zip.$RunId.tmp"
+$requiredTools = @('ffmpeg/ffmpeg.exe', 'ffmpeg/ffprobe.exe', 'fsbank/fsbankcl.exe', 'vgmstream/vgmstream-cli.exe')
 
 function Fail($msg) {
     Write-Host ''
@@ -22,12 +17,10 @@ function Fail($msg) {
     exit 1
 }
 
-# Antivirus often holds freshly written executables for a moment;
-# retry removal instead of failing the build on a transient lock.
 function Remove-PathWithRetry([string]$Path, [int]$Attempts = 6, [int]$DelayMs = 500) {
     for ($i = 1; $i -le $Attempts; $i++) {
         try {
-            if (Test-Path $Path) { Remove-Item -Recurse -Force $Path -ErrorAction Stop }
+            if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop }
             return $true
         } catch {
             if ($i -lt $Attempts) { Start-Sleep -Milliseconds $DelayMs }
@@ -40,47 +33,10 @@ Write-Host '============================================'
 Write-Host '  FHRE release build'
 Write-Host '============================================'
 
-# --- prerequisites ---
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { Fail 'dotnet SDK not found in PATH.' }
-if (-not (Test-Path $Proj))  { Fail "project not found: $Proj (run from project root)." }
-if (-not (Test-Path $Tools)) { Fail "tools folder not found: $Tools." }
-
-# --- clean previous outputs ---
-if (Test-Path $Dist)     { Write-Host "Removing old $Dist ...";     if (-not (Remove-PathWithRetry $Dist))     { Fail "cannot remove old $Dist - locked by another process (antivirus?). Close it and retry." } }
-if (Test-Path $BuildOut) { Write-Host "Removing old $BuildOut ..."; if (-not (Remove-PathWithRetry $BuildOut)) { Fail "cannot remove old $BuildOut - locked by another process (antivirus?). Close it and retry." } }
-
-# --- [1/5] publish ---
-Write-Host ''
-Write-Host '[1/5] Building single-file exe ...'
-dotnet publish $Proj -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:EnableCompressionInSingleFile=true -o $BuildOut
-if ($LASTEXITCODE -ne 0)   { Fail 'dotnet publish failed.' }
-if (-not (Test-Path $BuildOut)) { Fail "build output not found: $BuildOut." }
-
-# --- [2/5] move build output to publish ---
-Write-Host ''
-Write-Host "[2/5] Moving build output to $Dist ..."
-Move-Item -Path $BuildOut -Destination $Dist
-if (-not (Test-Path $Dist)) { Fail "move to $Dist failed." }
-
-Get-ChildItem -Path $Dist -Filter *.pdb -File | ForEach-Object { Remove-Item -Force $_.FullName }
-
-# --- [3/5] copy tools into publish ---
-Write-Host ''
-Write-Host "[3/5] Copying $Tools into $Dist ..."
-Copy-Item -Path (Join-Path $Tools '*') -Destination $Dist -Recurse -Force
-
-# --- [4/5] zip ---
-Write-Host ''
-Write-Host "[4/5] Creating $Zip ..."
-
-Add-Type -AssemblyName System.IO.Compression
-
-$zipTmp = "$Zip.$([Guid]::NewGuid().ToString('N')).tmp"
-
-$filesToZip = @(Get-ChildItem -Path $Dist -Recurse -File | ForEach-Object { $_.FullName })
-$distRoot = (Resolve-Path $Dist).ProviderPath.TrimEnd('\')
+if (-not (Test-Path -LiteralPath $Proj -PathType Leaf)) { Fail "project not found: $Proj." }
+$missing = @($requiredTools | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Tools $_) -PathType Leaf) })
+if ($missing.Count -gt 0) { Fail ("required tools missing: " + ($missing -join ', ')) }
 
 function Open-ZipSource([string]$Path) {
     for ($attempt = 1; $attempt -le 15; $attempt++) {
@@ -99,9 +55,8 @@ function Write-ReleaseZip {
     try {
         $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
         try {
-            foreach ($src in $filesToZip) {
-                $rel = $src.Substring($distRoot.Length + 1).Replace('\', '/')
-                $in = Open-ZipSource $src
+            foreach ($rel in $filesToZip.Keys) {
+                $in = Open-ZipSource $filesToZip[$rel]
                 try {
                     $entry = $archive.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
                     $out = $entry.Open()
@@ -114,6 +69,33 @@ function Write-ReleaseZip {
 }
 
 try {
+    Write-Host ''
+    Write-Host '[1/2] Building single-file exe ...'
+    dotnet publish $Proj -c Release -r win-x64 --self-contained true `
+        -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:EnableCompressionInSingleFile=true -o $BuildOut
+    if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $BuildOut 'fhre.exe') -PathType Leaf)) {
+        throw 'fhre.exe is missing from the publish output.'
+    }
+
+    Write-Host ''
+    Write-Host "[2/2] Creating $Zip ..."
+    Add-Type -AssemblyName System.IO.Compression
+    $filesToZip = [ordered]@{}
+    foreach ($source in @($BuildOut, $Tools)) {
+        $sourceRoot = (Resolve-Path -LiteralPath $source).ProviderPath.TrimEnd('\')
+        foreach ($file in (Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)) {
+            $rel = $file.FullName.Substring($sourceRoot.Length + 1).Replace('\', '/')
+            if ($source -eq $Tools -and $rel -eq 'ffmpeg/ffplay.exe') { continue }
+            if ($filesToZip.Contains($rel)) { throw "duplicate archive entry: $rel." }
+            $filesToZip.Add($rel, $file.FullName)
+        }
+    }
+    foreach ($required in $requiredTools) {
+        if (-not $filesToZip.Contains($required)) { throw "required tool missing from the archive: $required." }
+    }
+
     for ($i = 1; $i -le 3; $i++) {
         try {
             Write-ReleaseZip
@@ -140,14 +122,10 @@ try {
     }
 } catch {
     try { [System.IO.File]::Delete($zipTmp) } catch { Write-Warning "Could not remove $zipTmp" }
-    Fail "could not package $Zip - $($_.Exception.Message)"
+    Fail $_.Exception.Message
+} finally {
+    if (-not (Remove-PathWithRetry $BuildOut)) { Write-Warning "Could not remove $BuildOut" }
 }
-
-# --- [5/5] cleanup ---
-Write-Host ''
-Write-Host '[5/5] Cleaning up ...'
-if (-not (Remove-PathWithRetry $Bin))  { Write-Host "  WARNING: could not remove $Bin (locked) - remove it manually." -ForegroundColor Yellow }
-if (-not (Remove-PathWithRetry $Dist)) { Write-Host "  WARNING: could not remove $Dist (locked) - remove it manually." -ForegroundColor Yellow }
 
 Write-Host ''
 Write-Host '============================================' -ForegroundColor Green

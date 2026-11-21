@@ -70,7 +70,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         OnPropertyChanged(nameof(AddTracksTip));
         OnPropertyChanged(nameof(BuildTip));
         foreach (var track in Tracks) track.RefreshToolAvailability();
-        ScheduleLoudnessMeasurements();
+        ScheduleLoudnessMeasurements(onlyIfAvailabilityChanged: true);
     }
 
     public bool HasUnbuiltTracks => Tracks.Any(t => t.IsUnbuilt || t.IsReplacing);
@@ -1942,18 +1942,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var otherFiles = SelectedLanguage.FileName == AllLanguagesFile
             ? Languages.Where(l => l.FileName != AllLanguagesFile && l.FileName != refFile).Select(l => l.FileName).ToList()
             : [];
-        var lockedFiles = FileGuard.Locked(
-            new string?[] { bankPath, radioPath }
-                .Concat(otherFiles.Select(resources.LanguagePath)));
-
-        if (lockedFiles.Count > 0)
-        {
-            Status = Str.StatusFilesInUse;
-            PendingDialogTitle = Str.DlgFilesInUseTitle;
-            PendingErrorDialog = Str.DlgFilesInUseBody;
-            return;
-        }
-        
         var items = Tracks.Select(t =>
         {
             var customReplacing = t.IsCustom && t.ReplacementPath is not null;
@@ -2000,6 +1988,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             await StopLoudnessAnalysisAsync();
+            ct.ThrowIfCancellationRequested();
+            var lockedFiles = FileGuard.Locked(new string?[] { bankPath, radioPath }
+                .Concat(otherFiles.Select(resources.LanguagePath)));
+            if (lockedFiles.Count > 0)
+            {
+                Status = Str.StatusFilesInUse;
+                PendingDialogTitle = Str.DlgFilesInUseTitle;
+                PendingErrorDialog = Str.DlgFilesInUseBody;
+                return;
+            }
             var (addedSamples, written, savedXml, dead) = await Task.Run(() => BuildGameFilesAsync(
                 gamePath, station, bankName, bankPath, radioPath, otherFiles, resources, items, settings, Progress, ct,
                 () => Dispatcher.UIThread.Invoke(() =>

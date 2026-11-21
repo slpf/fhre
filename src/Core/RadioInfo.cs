@@ -897,7 +897,10 @@ public sealed class RadioStationEditor(XElement station)
         return fr?.Elements("Entry").Any(e => (string?) e.Attribute(UsesMilliseconds ? "SoundName" : "Name") == soundName) == true;
     }
 
-    public bool RestoreTrackFrom(RadioStationEditor reference, string soundName)
+    public bool RestoreTrackFrom(RadioStationEditor reference, string soundName) =>
+        RestoreTrackFrom(reference, soundName, soundName);
+
+    internal bool RestoreTrackFrom(RadioStationEditor reference, string soundName, string targetName)
     {
         var sample = reference.FindSample(soundName);
         if (sample is null)
@@ -905,7 +908,7 @@ public sealed class RadioStationEditor(XElement station)
             return false;
         }
 
-        if (ReferenceEquals(station, reference.Station))
+        if (ReferenceEquals(station, reference.Station) && soundName == targetName)
         {
             return true;
         }
@@ -920,7 +923,7 @@ public sealed class RadioStationEditor(XElement station)
         var usesTrackBreakDown = UsesTrackBreakDownForCopy(reference);
         if (UsesMilliseconds || station.Elements("SampleList").Any(sl => (string?) sl.Attribute("Type") == "Track"))
         {
-            PurgeSoundName(soundName);
+            PurgeSoundName(targetName);
         }
 
         if (!reference.UsesMilliseconds)
@@ -933,18 +936,18 @@ public sealed class RadioStationEditor(XElement station)
             }
 
             var restored = new XElement(sample);
+            restored.SetAttributeValue("SoundName", targetName);
             NormalizeBreakdownSchema(restored, usesTrackBreakDown);
             trackList.Add(restored);
         }
 
+        var nameAttribute = reference.UsesMilliseconds ? "SoundName" : "Name";
         foreach (var source in sourcePlaylists)
         {
             var nodes = source.Nodes().Where(node => node switch
             {
-                XElement entry => (string?) entry.Attribute(reference.UsesMilliseconds ? "SoundName" : "Name") == soundName,
-                XComment comment => reference.UsesMilliseconds
-                    ? (string?) ReadDisabledEntry(comment)?.Attribute("SoundName") == soundName
-                    : (string?) ReadDisabledEntry(comment)?.Attribute("Name") == soundName,
+                XElement entry => (string?) entry.Attribute(nameAttribute) == soundName,
+                XComment comment => (string?) ReadDisabledEntry(comment)?.Attribute(nameAttribute) == soundName,
                 _ => false,
             }).ToList();
             if (nodes.Count == 0)
@@ -964,11 +967,19 @@ public sealed class RadioStationEditor(XElement station)
             {
                 if (node is XElement entry)
                 {
-                    playlist.Add(new XElement(entry));
+                    var copy = new XElement(entry);
+                    copy.SetAttributeValue(nameAttribute, targetName);
+                    playlist.Add(copy);
                 }
                 else if (node is XComment comment)
                 {
-                    playlist.Add(new XComment(comment.Value));
+                    if (soundName == targetName) playlist.Add(new XComment(comment.Value));
+                    else
+                    {
+                        var copy = ReadDisabledEntry(comment)!;
+                        copy.SetAttributeValue(nameAttribute, targetName);
+                        playlist.Add(new XComment(DisabledMarkup(copy)));
+                    }
                 }
             }
         }

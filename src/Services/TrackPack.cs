@@ -368,6 +368,16 @@ public static class TrackPack
         return reader.ReadSample(sub0);
     }
 
+    internal static long WriteSampleFsb(string bankPath, int sub0, string outputPath, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        using var reader = new SampleReader(bankPath);
+        using var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        reader.CopySample(sub0, output, ct);
+        ct.ThrowIfCancellationRequested();
+        return output.Length;
+    }
+
     internal sealed class SampleReader : IDisposable
     {
         private readonly FileStream _input;
@@ -403,7 +413,7 @@ public static class TrackPack
         public void ValidateSample(int index, ulong? bankId, string title)
         {
             if (bankId is { } id && (!_trackIds.TryGetValue(index, out var actual) || actual != id))
-                throw new IOException($"The bank sample for '{title}' has changed. Reload the station before exporting.");
+                throw new IOException($"The bank sample for '{title}' has changed. Reload the station and try again.");
             var sample = GetSample(index);
             if (sample.DataLen == 0) throw new InvalidDataException($"The bank sample for '{title}' is empty.");
         }

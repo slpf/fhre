@@ -10,21 +10,24 @@ public sealed partial class MainWindowViewModel
 {
     private sealed record LoudnessRequest(TrackItemViewModel Track, string Path, int? SubIndex);
     private HashSet<TrackItemViewModel>? _loudnessTracks;
+    private (bool Enabled, bool Ffmpeg, bool Vgmstream) _loudnessAvailability;
     private CancellationTokenSource? _loudnessCts;
     private Task? _loudnessTask;
     private bool _loudnessShutdown;
 
     private void RefreshLoudnessTracking()
     {
-        _loudnessTracks ??= [];
-        foreach (var removed in _loudnessTracks.Where(t => !Tracks.Contains(t)).ToArray())
+        var previous = _loudnessTracks;
+        var current = Tracks.ToHashSet();
+        _loudnessTracks = current;
+        if (previous is not null)
         {
-            removed.PropertyChanged -= OnLoudnessSourceChanged;
-            _loudnessTracks.Remove(removed);
+            foreach (var track in previous)
+                if (!current.Contains(track)) track.PropertyChanged -= OnLoudnessSourceChanged;
         }
-        foreach (var track in Tracks)
+        foreach (var track in current)
         {
-            if (_loudnessTracks.Add(track)) track.PropertyChanged += OnLoudnessSourceChanged;
+            if (previous?.Contains(track) != true) track.PropertyChanged += OnLoudnessSourceChanged;
         }
         ScheduleLoudnessMeasurements();
     }
@@ -63,11 +66,15 @@ public sealed partial class MainWindowViewModel
         if (_loudnessTask is { } task) await task;
     }
 
-    private void ScheduleLoudnessMeasurements()
+    private void ScheduleLoudnessMeasurements(bool onlyIfAvailabilityChanged = false)
     {
-        CancelLoudnessMeasurements();
         if (_loudnessTracks is null || _loudnessShutdown) return;
-        if (!Settings.MeasureTrackLoudness)
+        var enabled = Settings.MeasureTrackLoudness;
+        var availability = (Enabled: enabled, Ffmpeg: enabled && Tools.HasFfmpeg, Vgmstream: enabled && Tools.HasVgmstream);
+        if (onlyIfAvailabilityChanged && availability == _loudnessAvailability) return;
+        _loudnessAvailability = availability;
+        CancelLoudnessMeasurements();
+        if (!availability.Enabled)
         {
             foreach (var track in Tracks)
             {
@@ -82,13 +89,14 @@ public sealed partial class MainWindowViewModel
         {
             if (track.LoudnessText.Length == 0) track.LoudnessText = Str.TrackLoudnessPending;
             var source = LoudnessSource(track);
-            if (source is null || !Tools.HasFfmpeg || source.SubIndex is not null && !Tools.HasVgmstream)
+            if (source is null || !availability.Ffmpeg || source.SubIndex is not null && !availability.Vgmstream)
             {
                 track.LoudnessText = Str.TrackLoudnessUnavailable;
                 continue;
             }
             requests.Add(source);
         }
+        if (requests.Count == 0) return;
         var cancellation = new CancellationTokenSource();
         _loudnessCts = cancellation;
         var previous = _loudnessTask ?? Task.CompletedTask;
@@ -119,7 +127,7 @@ public sealed partial class MainWindowViewModel
                         await Dispatcher.UIThread.InvokeAsync(() =>
                         {
                             if (ct.IsCancellationRequested || !Settings.MeasureTrackLoudness
-                                || !Tracks.Contains(request.Track) || LoudnessSource(request.Track) != request) return;
+                                || _loudnessTracks?.Contains(request.Track) != true || LoudnessSource(request.Track) != request) return;
                             request.Track.LoudnessError = error;
                             request.Track.LoudnessText = text;
                         });

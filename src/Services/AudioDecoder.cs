@@ -145,12 +145,9 @@ public static class AudioDecoder
             if (!rawFsb)
             {
                 Log.Line($"{context}: extracting selected sample as standalone FSB5");
-                var fsb = TrackPack.ExtractSampleFsb(bankPath, sub0);
-                ct.ThrowIfCancellationRequested();
                 extractedFsb = Path.ChangeExtension(part, ".fsb");
-                File.WriteAllBytes(extractedFsb, fsb);
-                Log.Line($"{context}: extracted FSB5=\"{extractedFsb}\", bytes={fsb.Length}, " +
-                    $"sha256={Convert.ToHexString(SHA256.HashData(fsb))}");
+                var bytes = TrackPack.WriteSampleFsb(bankPath, sub0, extractedFsb, ct);
+                Log.Line($"{context}: extracted FSB5=\"{extractedFsb}\", bytes={bytes}");
                 decodePath = extractedFsb;
                 decodeIndex = 0;
             }

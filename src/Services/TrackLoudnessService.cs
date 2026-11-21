@@ -112,13 +112,10 @@ public static class TrackLoudnessService
             }
             if (subIndex is not null && !rawFsb)
             {
-                token.ThrowIfCancellationRequested();
-                var data = TrackPack.ExtractSampleFsb(source, subIndex.Value);
-                token.ThrowIfCancellationRequested();
                 var directory = Path.Combine(AppPaths.TempBase, "ui-loudness");
                 Directory.CreateDirectory(directory);
                 extracted = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".fsb");
-                await File.WriteAllBytesAsync(extracted, data, token).ConfigureAwait(false);
+                TrackPack.WriteSampleFsb(source, subIndex.Value, extracted, token);
                 decodeSource = extracted;
                 decodeIndex = 0;
             }
@@ -202,5 +199,9 @@ public static class TrackLoudnessService
         try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); }
         catch (InvalidOperationException) { }
         catch (Win32Exception) { }
+        catch (AggregateException ex) when (ex.Flatten().InnerExceptions.All(error => error is Win32Exception or InvalidOperationException))
+        {
+            Log.Line($"ui.loudness.process.cleanup.failed: {ex.Message}");
+        }
     }
 }

@@ -43,62 +43,6 @@
         <PackageReference Include="Tmds.DBus.Protocol" Version="0.94.2" />
     </ItemGroup>
 
-    <Target Name="RelocateDepsToLibs" AfterTargets="Build"
-            Condition="'$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
-        <ItemGroup>
-            <_LibDll Include="$(TargetDir)*.dll" Exclude="$(TargetDir)$(TargetName).dll" />
-        </ItemGroup>
-        <Move SourceFiles="@(_LibDll)" DestinationFolder="$(TargetDir)libs"
-              OverwriteReadOnlyFiles="true" Condition="'@(_LibDll)' != ''" />
-    </Target>
-
-    <Target Name="RelocateDepsToLibsPublish" AfterTargets="Publish"
-            Condition="'$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
-        <ItemGroup>
-            <_LibDllP Include="$(PublishDir)*.dll" Exclude="$(PublishDir)$(TargetName).dll" />
-        </ItemGroup>
-        <Move SourceFiles="@(_LibDllP)" DestinationFolder="$(PublishDir)libs"
-              OverwriteReadOnlyFiles="true" Condition="'@(_LibDllP)' != ''" />
-    </Target>
-
-    <Target Name="TrimRuntimesBuild" AfterTargets="Build"
-            Condition="Exists('$(TargetDir)runtimes') And '$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
-        <ItemGroup>
-            <_RtDir Include="$([System.IO.Directory]::GetDirectories('$(TargetDir)runtimes'))" />
-            <_RtDel Include="@(_RtDir)" Condition="'%(Filename)' != 'win-x64'" />
-        </ItemGroup>
-        <RemoveDir Directories="@(_RtDel)" />
-    </Target>
-
-    <Target Name="TrimRuntimesPublish" AfterTargets="Publish"
-            Condition="Exists('$(PublishDir)runtimes') And '$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
-        <ItemGroup>
-            <_RtDirP Include="$([System.IO.Directory]::GetDirectories('$(PublishDir)runtimes'))" />
-            <_RtDelP Include="@(_RtDirP)" Condition="'%(Filename)' != 'win-x64'" />
-        </ItemGroup>
-        <RemoveDir Directories="@(_RtDelP)" />
-    </Target>
-
-    <Target Name="MoveNativeToLibs" AfterTargets="TrimRuntimesBuild"
-            Condition="Exists('$(TargetDir)runtimes\win-x64\native') And '$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
-        <ItemGroup>
-            <_NativeDll Include="$(TargetDir)runtimes\win-x64\native\*.dll" />
-        </ItemGroup>
-        <Move SourceFiles="@(_NativeDll)" DestinationFolder="$(TargetDir)libs"
-              OverwriteReadOnlyFiles="true" Condition="'@(_NativeDll)' != ''" />
-        <RemoveDir Directories="$(TargetDir)runtimes" />
-    </Target>
-
-    <Target Name="MoveNativeToLibsPublish" AfterTargets="TrimRuntimesPublish"
-            Condition="Exists('$(PublishDir)runtimes\win-x64\native') And '$(SelfContained)' != 'true' And '$(PublishSingleFile)' != 'true'">
-        <ItemGroup>
-            <_NativeDllP Include="$(PublishDir)runtimes\win-x64\native\*.dll" />
-        </ItemGroup>
-        <Move SourceFiles="@(_NativeDllP)" DestinationFolder="$(PublishDir)libs"
-              OverwriteReadOnlyFiles="true" Condition="'@(_NativeDllP)' != ''" />
-        <RemoveDir Directories="$(PublishDir)runtimes" />
-    </Target>
-
     <Target Name="RenameExePublish" AfterTargets="Publish"
             Condition="Exists('$(PublishDir)$(TargetName).exe') And '$(TargetName)' != 'fhre'">
         <Move SourceFiles="$(PublishDir)$(TargetName).exe" DestinationFiles="$(PublishDir)fhre.exe"

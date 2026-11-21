@@ -158,7 +158,7 @@ public static class BankBuildService
 
                 entry = new PlannedSample(item, backup, backupIndex);
             }
-            else if (item.IsNewCustom || item.IsReplacement && !skel.Empty)
+            else if (item.IsNewCustom || item.IsReplacement && (useBackupSources || !skel.Empty))
             {
                 if (item.SourcePath is null || !File.Exists(item.SourcePath))
                 {
@@ -172,6 +172,8 @@ public static class BankBuildService
             }
             else
             {
+                if (useBackupSources)
+                    throw new InvalidDataException($"Backup track {item.SoundName} has no matching audio source.");
                 log?.Invoke($"  WARN: {item.SoundName} not found in source bank, skipped");
                 continue;
             }
