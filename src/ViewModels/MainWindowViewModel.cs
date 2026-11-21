@@ -760,7 +760,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         if (_baseBankMode == 10)
         {
-            if (BankBuildService.TargetMode(_baseBankMode, false, XmaEncoderService.IsAvailable) == 10)
+            var needsEncoder = Tracks.Any(track => (track.UsesFileSource || track.RestoreFromBak)
+                && !TryProjectedXmaBytes(track.UsesFileSource ? track.FileSource : track.RestoreFsbPath, out _));
+            if (!needsEncoder || XmaEncoderService.IsAvailable)
             {
                 long sampleBytes = 0;
                 var approximate = 0;
@@ -1626,6 +1628,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         RefreshFilter();
     }
 
+    private CancellationTokenSource? _buildCancellation;
+    public bool CanCancelBuild => _buildCancellation is { IsCancellationRequested: false };
+
+    public void CancelBuild()
+    {
+        _buildCancellation?.Cancel();
+        OnPropertyChanged(nameof(CanCancelBuild));
+    }
+
     public async Task BuildAsync()
     {
         RefreshToolAvailability();
@@ -1721,13 +1732,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }).ToList();
         var settings = Settings;
 
+        using var cancellation = new CancellationTokenSource();
+        var ct = cancellation.Token;
+        _buildCancellation = cancellation;
         IsBuilding = true;
+        OnPropertyChanged(nameof(CanCancelBuild));
         StopPlayback();
         Status = string.Format(Str.StatusProcessingFmt, bankName);
         Log.Line($"=== BUILD {bankName} (station #{station.Number}) ===");
         
         void Progress(string m) => Dispatcher.UIThread.Post(() =>
         {
+            if (_buildCancellation != cancellation || ct.IsCancellationRequested) return;
             var tab = m.IndexOf('\t');
             if (tab >= 0)
             {
@@ -1745,7 +1761,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             await StopLoudnessAnalysisAsync();
             var (addedSamples, written, savedXml, dead) = await Task.Run(() => BuildGameFilesAsync(
-                gamePath, station, bankName, bankPath, radioPath, otherFiles, resources, items, settings, Progress));
+                gamePath, station, bankName, bankPath, radioPath, otherFiles, resources, items, settings, Progress, ct,
+                () => Dispatcher.UIThread.Invoke(() =>
+                {
+                    ct.ThrowIfCancellationRequested();
+                    _buildCancellation = null;
+                    OnPropertyChanged(nameof(CanCancelBuild));
+                    Status = Str.StatusBuildPublishing;
+                    StatusDetail = "";
+                })));
             if (written == 0 && savedXml == 0)
             {
                 HasUnsavedChanges = false;
@@ -1777,6 +1801,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             catch (Exception ex) { Log.Line("reload after build failed: " + ex); }
             Status = status;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            Status = Str.StatusBuildCancelled;
+        }
         catch (BankTooLargeException ex)
         {
             Log.Line("BUILD ERROR: " + ex);
@@ -1791,6 +1819,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         finally
         {
+            _buildCancellation = null;
+            OnPropertyChanged(nameof(CanCancelBuild));
             IsBuilding = false;
             StatusDetail = "";
             WorkDirs.Clean();
@@ -1814,8 +1844,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private async Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)> BuildGameFilesAsync(
         string gamePath, StationInfo station, string bankName, string bankPath, string refPath, IReadOnlyList<string> otherFiles,
-        GameScanner.RadioResources resources, List<BuildItem> items, AppSettings settings, Action<string> progress)
+        GameScanner.RadioResources resources, List<BuildItem> items, AppSettings settings, Action<string> progress,
+        CancellationToken ct, Action? beginCommit)
     {
+        ct.ThrowIfCancellationRequested();
         using var transaction = new GameFileTransaction(gamePath);
         transaction.EnsureGameClosed();
 
@@ -1860,7 +1892,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         {
             var stagedBank = transaction.Stage(bankPath);
             addedSamples = await BankBuildService.BuildToStageAsync(bankPath, stagedBank, items, settings, Log.Line, progress,
-                    Log.IsVerbose, useBackupSources: false)
+                    Log.IsVerbose, useBackupSources: false, ct)
                 .ConfigureAwait(false);
             outputIds = FevBank.ReadCompleteStblIdsFromFile(stagedBank)
                 ?? throw new InvalidDataException($"Could not verify the rebuilt bank: {bankName}");
@@ -1909,6 +1941,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         foreach (var path in requested.Union(sharedPaths, StringComparer.OrdinalIgnoreCase)
                      .Where(path => !string.Equals(path, refPath, StringComparison.OrdinalIgnoreCase)))
         {
+            ct.ThrowIfCancellationRequested();
             var radio = ReadRadio(path);
             var original = new XDocument(radio.Document);
             var backup = ReadTempoBackup(path, restored);
@@ -1934,8 +1967,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
             savedXml++;
         }
 
-        if (bankChanges) transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath));
+        ct.ThrowIfCancellationRequested();
+        if (bankChanges) transaction.StageOriginal(bankPath, !FevBank.LooksModified(bankPath), ct);
         bank.Dispose();
+        beginCommit?.Invoke();
+        ct.ThrowIfCancellationRequested();
         transaction.Commit();
         return (addedSamples, written, savedXml, dead);
     }

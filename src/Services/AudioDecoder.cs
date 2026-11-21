@@ -74,7 +74,9 @@ public static class AudioDecoder
         var norm = s.LoudnessNormalize;
         var i = s.TargetLufs.ToString(CultureInfo.InvariantCulture);
         var tp = s.TargetTruePeak.ToString(CultureInfo.InvariantCulture);
-        var key = Key($"add|{source}|{Stamp(source)}|{norm}|{s.PeakLimiter}|{i}|{tp}|" +
+        using var input = File.OpenRead(source);
+        var contentHash = Loudnorm.ContentHash(input, ct);
+        var key = Key($"add|{source}|{contentHash}|{norm}|{s.PeakLimiter}|{i}|{tp}|" +
             $"{gainDb.ToString("R", CultureInfo.InvariantCulture)}|nv{NormScheme}");
         var outWav = Path.Combine(Dir, key + ".wav");
         var context = $"preview source \"{source}\"";
@@ -94,7 +96,7 @@ public static class AudioDecoder
         var part = Path.Combine(Dir, key + "." + Guid.NewGuid().ToString("N") + ".part.wav");
         try
         {
-            Loudnorm.Render(source, part, s, gainDb, message => Log.Line($"{context}: {message}"), ct);
+            Loudnorm.RenderPreview(source, part, s, gainDb, contentHash, message => Log.Line($"{context}: {message}"), ct);
             Publish(part, outWav, context, ct);
             LogWave(context, outWav, cacheHit: false);
         }

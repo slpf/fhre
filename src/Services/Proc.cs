@@ -5,6 +5,12 @@ namespace FH6RB.Services;
 
 public static class Proc
 {
+    internal static async Task WaitForCleanupAsync(Process process)
+    {
+        try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false); }
+        catch (TimeoutException) { Log.Line($"Process cleanup timed out for PID {process.Id}."); }
+    }
+
     public static (string StdOut, string StdErr, int ExitCode) Run(
         string exe, string args,
         CancellationToken ct = default,
@@ -12,6 +18,7 @@ public static class Proc
         Encoding? stdoutEncoding = null,
         Encoding? stderrEncoding = null)
     {
+        ct.ThrowIfCancellationRequested();
         var psi = new ProcessStartInfo(exe, args)
         {
             RedirectStandardOutput = true,
@@ -36,19 +43,13 @@ public static class Proc
         var so = p.StandardOutput.ReadToEndAsync();
         var se = p.StandardError.ReadToEndAsync();
 
-        var deadline = Environment.TickCount + timeoutMs;
-        while (!p.HasExited)
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(timeoutMs);
+        try
         {
-            var remain = unchecked(deadline - Environment.TickCount);
-            if (ct.IsCancellationRequested || remain <= 0)
-            {
-                break;
-            }
-
-            p.WaitForExit(Math.Min(remain, 500));
+            Task.WhenAll(p.WaitForExitAsync(timeout.Token), so, se).WaitAsync(timeout.Token).GetAwaiter().GetResult();
         }
-
-        if (!p.HasExited)
+        catch (OperationCanceledException)
         {
             try
             {
@@ -58,6 +59,7 @@ public static class Proc
             {
             }
 
+            WaitForCleanupAsync(p).GetAwaiter().GetResult();
             ct.ThrowIfCancellationRequested();
             throw new TimeoutException($"{Path.GetFileName(exe)} exceeded {timeoutMs} ms");
         }

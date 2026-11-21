@@ -1,4 +1,6 @@
-using System.Diagnostics;
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
 
 namespace FH6RB.Services;
 
@@ -6,64 +8,48 @@ public static class MetadataReader
 {
     public static (string? Title, string? Artist, double Duration) Read(string path)
     {
-        var exe = Tools.FfprobePath;
-        
-        if (!File.Exists(exe))
-        {
-            return (null, null, 0);
-        }
+        if (!Tools.HasFfprobe)
+            throw new FileNotFoundException("ffprobe is required to read audio metadata.", Tools.FfprobePath);
 
-        try
-        {
-            var args =
-                $"-v error -select_streams a:0 " +
-                $"-show_entries format=duration:format_tags=title,artist:stream_tags=title,artist " +
-                $"-of default=noprint_wrappers=1 \"{path}\"";
+        var args = "-v error -show_entries " +
+            "stream=codec_type,duration:stream_tags=title,artist:format=duration:format_tags=title,artist " +
+            $"-of json \"{Path.GetFullPath(path)}\"";
+        var (output, error, exitCode) = Proc.Run(Tools.FfprobePath, args, timeoutMs: 120_000,
+            stdoutEncoding: Encoding.UTF8, stderrEncoding: Encoding.UTF8);
+        if (exitCode != 0)
+            throw new InvalidDataException($"ffprobe could not read {Path.GetFileName(path)}: {error.Trim()}");
 
-            var (output, _, _) = Proc.Run(exe, args, timeoutMs: 120_000,
-                stdoutEncoding: System.Text.Encoding.UTF8, stderrEncoding: System.Text.Encoding.UTF8);
+        using var document = JsonDocument.Parse(output);
+        var root = document.RootElement;
+        var streams = root.GetProperty("streams");
+        var audio = streams.EnumerateArray().FirstOrDefault(stream => ReadString(stream, "codec_type") == "audio");
+        if (audio.ValueKind == JsonValueKind.Undefined)
+            throw new InvalidDataException($"No audio stream found in {Path.GetFileName(path)}.");
 
-            string? title = null;
-            string? artist = null;
-            double duration = 0;
-
-            foreach (var raw in output.Split('\n'))
-            {
-                var line = raw.Trim();
-                var eq = line.IndexOf('=');
-                
-                if (eq <= 0)
-                {
-                    continue;
-                }
-
-                var key = line[..eq].Trim().ToLowerInvariant();
-                var val = line[(eq + 1)..].Trim();
-                
-                if (val.Length == 0)
-                {
-                    continue;
-                }
-
-                if (title is null && key.EndsWith("title"))
-                {
-                    title = val;
-                }
-                else if (artist is null && key.EndsWith("artist"))
-                {
-                    artist = val;
-                }
-                else if (key == "duration" && double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
-                {
-                    duration = d;
-                }
-            }
-
-            return (title, artist, duration);
-        }
-        catch
-        {
-            return (null, null, 0);
-        }
+        var format = root.TryGetProperty("format", out var container) ? container : default;
+        var title = ReadTag(audio, "title") ?? ReadTag(format, "title");
+        var artist = ReadTag(audio, "artist") ?? ReadTag(format, "artist");
+        var duration = ReadDuration(audio) ?? (streams.GetArrayLength() == 1 ? ReadDuration(format) : null) ?? 0;
+        return (title, artist, duration);
     }
+
+    private static double? ReadDuration(JsonElement element) =>
+        double.TryParse(ReadString(element, "duration"), NumberStyles.Float, CultureInfo.InvariantCulture, out var duration)
+        && double.IsFinite(duration) && duration > 0 ? duration : null;
+
+    private static string? ReadTag(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty("tags", out var tags)) return null;
+        foreach (var tag in tags.EnumerateObject())
+        {
+            if (tag.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && tag.Value.ValueKind == JsonValueKind.String
+                && tag.Value.GetString()?.Trim() is { Length: > 0 } value)
+                return value;
+        }
+        return null;
+    }
+
+    private static string? ReadString(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 }

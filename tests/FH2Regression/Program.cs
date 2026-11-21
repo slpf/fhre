@@ -331,12 +331,9 @@ static async Task TestInstallationAsync(string game, string temp, string? previe
     var added = await BankBuildService.BuildToFileAsync(source, output, items, settings, progress: Console.WriteLine);
     Check(added.Count == 0, "FH2 codec conversion reported retained originals as added or replaced.");
     var rebuilt = FevBank.ReadSkeleton(output);
-    Check(rebuilt.Mode == expectedMainMode && rebuilt.Stbl.Count == skel.Stbl.Count, "FH2 whole-bank build selected an unexpected codec or lost tracks.");
-    if (xmaEncoder.Available)
-    {
-        for (var index = 0; index < tracks.Count; index++) CheckSampleDataEqual(source, output, index);
-    }
-    Check(FevBank.ReadStblIdsFromFile(output).SetEquals(skel.Stbl.Select(t => t.Id)), "FH2 whole-bank conversion changed sound identifiers.");
+    Check(rebuilt.Mode == skel.Mode && rebuilt.Stbl.Count == skel.Stbl.Count, "FH2 whole-bank build selected an unexpected codec or lost tracks.");
+    for (var index = 0; index < skel.Stbl.Count; index++) CheckSampleDataEqual(source, output, index);
+    Check(FevBank.ReadStblIdsFromFile(output).SetEquals(skel.Stbl.Select(t => t.Id)), "FH2 whole-bank build changed sound identifiers.");
     var convertedTracks = FevBank.ReadTrackInfoFromFile(output);
     Check(convertedTracks.All(t => t.Frames == tracks[t.Index].SampleLength && t.SampleRate == tracks[t.Index].SampleRate), "FH2 whole-bank conversion changed original sample dimensions.");
     var xmlBefore = new XDocument(radioForBuild.Document);
@@ -672,7 +669,7 @@ static async Task TestCopiedWorkflowAsync(string originalGame, string temp, stri
     var writeFiles = typeof(MainWindowViewModel).GetMethod("BuildGameFilesAsync", BindingFlags.NonPublic | BindingFlags.Instance)!;
     var buildTask = (Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)>)writeFiles.Invoke(vm,
         [game, station, bankName, bank, Path.Combine(audio, referenceFile), languages.Where(file => file != referenceFile).ToList(),
-            resources, items, settings, (Action<string>)Console.WriteLine])!;
+            resources, items, settings, (Action<string>)Console.WriteLine, CancellationToken.None, null])!;
     var build = await buildTask;
     Check(FevBank.ReadSkeleton(bank).Mode == expectedMainMode && FevBank.ReadSkeleton(bank + ".bak").Mode == 10, "FH2 workflow did not preserve the native XMA bank backup.");
     Check(build.SavedXml == languages.Count, "FH2 workflow did not write all language files.");
@@ -699,7 +696,7 @@ static async Task TestCopiedWorkflowAsync(string originalGame, string temp, stri
     };
     var rewrite = (Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)>)writeFiles.Invoke(vm,
         [game, station, bankName, bank, Path.Combine(audio, referenceFile), languages.Where(file => file != referenceFile).ToList(),
-            resources, changes, settings, (Action<string>)Console.WriteLine])!;
+            resources, changes, settings, (Action<string>)Console.WriteLine, CancellationToken.None, null])!;
     await rewrite;
     foreach (var file in languages)
     {

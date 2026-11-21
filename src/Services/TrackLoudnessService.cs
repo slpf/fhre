@@ -18,7 +18,13 @@ public static class TrackLoudnessService
     private static readonly SemaphoreSlim Workers = new(2, 2);
     private static readonly object CacheSync = new();
     private static readonly Dictionary<CacheKey, double?> Cache = new();
+    private static readonly Dictionary<CacheKey, PendingMeasurement> Pending = new();
     private readonly record struct CacheKey(string Path, long Modified, long Bytes, int? SubIndex);
+    private sealed class PendingMeasurement
+    {
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public int Callers { get; set; }
+    }
 
     public static async Task<double?> MeasureAsync(string source, int? subIndex = null, CancellationToken ct = default)
     {
@@ -28,17 +34,25 @@ public static class TrackLoudnessService
         if (subIndex is not null && !Tools.HasVgmstream)
             throw new FileNotFoundException("vgmstream is required to measure bank loudness.", Tools.VgmstreamPath);
         var key = Key(source, subIndex);
+        PendingMeasurement pending;
         lock (CacheSync)
         {
             if (Cache.TryGetValue(key, out var cached)) return cached;
+            if (!Pending.TryGetValue(key, out pending!)) Pending.Add(key, pending = new PendingMeasurement());
+            pending.Callers++;
         }
-        await Workers.WaitAsync(ct).ConfigureAwait(false);
+        var entered = false;
+        var worker = false;
         try
         {
+            await pending.Gate.WaitAsync(ct).ConfigureAwait(false);
+            entered = true;
             lock (CacheSync)
             {
                 if (Cache.TryGetValue(key, out var cached)) return cached;
             }
+            await Workers.WaitAsync(ct).ConfigureAwait(false);
+            worker = true;
             var timer = Stopwatch.StartNew();
             var result = await Task.Run(() => MeasureCoreAsync(source, subIndex, ct), ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
@@ -52,7 +66,19 @@ public static class TrackLoudnessService
                 Log.Line("ui.loudness.ok " + JsonSerializer.Serialize(new { source, subIndex, lufs = result, elapsedMs = timer.ElapsedMilliseconds }));
             return result;
         }
-        finally { Workers.Release(); }
+        finally
+        {
+            if (worker) Workers.Release();
+            if (entered) pending.Gate.Release();
+            lock (CacheSync)
+            {
+                if (--pending.Callers == 0)
+                {
+                    Pending.Remove(key);
+                    pending.Gate.Dispose();
+                }
+            }
+        }
     }
 
     private static CacheKey Key(string source, int? subIndex)

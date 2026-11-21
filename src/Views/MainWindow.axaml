@@ -318,6 +318,8 @@
                                FontFamily="{DynamicResource MonoFont}" HorizontalAlignment="Center" TextAlignment="Center"
                                IsVisible="{Binding HasStatusDetail}"/>
                 </StackPanel>
+                <Button Content="{x:Static assets:Str.BtnCancel}" IsVisible="{Binding CanCancelBuild}"
+                        Click="OnCancelBuild" HorizontalAlignment="Center"/>
             </StackPanel>
         </Border>
     </Grid>

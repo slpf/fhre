@@ -682,7 +682,8 @@ public sealed class FevBank
 
     public static void AssembleToFile(string outPath, byte[] fmtChunk, byte[] srcListPayload,
         int stblRelOff, int stblOldSize, byte[] newStblPayload, byte[] fsb5Header60,
-        IReadOnlyList<byte[]> sampleHeaders, IReadOnlyList<DataRef> sampleData, byte[]? nameTable = null, bool emptyTemplate = false)
+        IReadOnlyList<byte[]> sampleHeaders, IReadOnlyList<DataRef> sampleData, byte[]? nameTable = null,
+        bool emptyTemplate = false, CancellationToken ct = default)
     {
         if (sampleHeaders.Count != sampleData.Count)
         {
@@ -734,7 +735,7 @@ public sealed class FevBank
                 }
 
                 src.Seek(dr.Offset, SeekOrigin.Begin);
-                CopyExact(src, f, dr.Length, buf);
+                CopyExact(src, f, dr.Length, buf, ct);
                 WriteZeros(f, AlignDataLength(dr.Length) - dr.Length);
             }
         }
@@ -854,10 +855,11 @@ public sealed class FevBank
         return buf;
     }
 
-    private static void CopyExact(Stream src, Stream dst, long length, byte[] buf)
+    private static void CopyExact(Stream src, Stream dst, long length, byte[] buf, CancellationToken ct)
     {
         while (length > 0)
         {
+            ct.ThrowIfCancellationRequested();
             var n = src.Read(buf, 0, (int) Math.Min(length, buf.Length));
             
             if (n <= 0)

@@ -72,7 +72,7 @@ internal static class XmaEncoderChecks
         var arguments = $"-format xma -quality 50 -o \"{output}\" \"{source}\" -cache_dir \"{cache}\"";
         try
         {
-            var task = (Task<string>) (Method("RunAsync").Invoke(null, [Tools.FsbankclPath, arguments, (Action<string>) log.Add])
+            var task = (Task<string>) (Method("RunAsync").Invoke(null, [Tools.FsbankclPath, arguments, (Action<string>) log.Add, CancellationToken.None])
                 ?? throw new InvalidOperationException("The process runner returned no task."));
             await task;
         }

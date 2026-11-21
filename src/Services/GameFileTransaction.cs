@@ -61,13 +61,13 @@ internal sealed class GameFileTransaction : IDisposable
         return StagePath(target, _id);
     }
 
-    public void StageOriginal(string path, bool refresh)
+    public void StageOriginal(string path, bool refresh, CancellationToken ct = default)
     {
         var backup = path + ".bak";
-        if (!File.Exists(backup) || refresh) StageCopy(path, backup);
+        if (!File.Exists(backup) || refresh) StageCopy(path, backup, ct);
     }
 
-    public void StageCopy(string source, string target) => Atomic.Copy(source, Stage(target));
+    public void StageCopy(string source, string target, CancellationToken ct = default) => Atomic.Copy(source, Stage(target), ct);
 
     public void EnsureGameClosed()
     {

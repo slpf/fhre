@@ -60,7 +60,6 @@ internal static class InstallationChecks
         }
         finally { ReleaseVm(main); }
         var settings = new AppSettings { GamePath = game, LoudnessNormalize = false, EncodeParallelism = 4, VorbisQuality = 95 };
-        var xma = await XmaEncoderService.CheckAsync();
         if (workflowOnly)
         {
             await CheckWorkflowsAsync(game, catalog, settings, scratch);
@@ -99,12 +98,10 @@ internal static class InstallationChecks
                 }
                 var output = Path.Combine(scratch, bankName + ".roundtrip.bank");
                 var sourceMode = FevBank.ReadSkeleton(bank).Mode;
-                var targetMode = sourceMode == 10 && !xma.Available ? 15 : sourceMode;
-                Console.WriteLine($"Checking {bankName}: {read.Tracks.Count} streams, codec {sourceMode} -> {targetMode}.");
+                Console.WriteLine($"Checking {bankName}: {read.Tracks.Count} streams, codec {sourceMode}.");
                 var added = await BankBuildService.BuildToFileAsync(bank, output, items, settings);
-                if (sourceMode == targetMode) CheckState(BankState(bank), BankState(output), bankName + " no-op");
-                else CheckDimensions(BankState(bank), BankState(output), bankName + " XMA fallback");
-                Check(FevBank.ReadSkeleton(output).Mode == targetMode, "A no-op build used an unexpected codec mode.");
+                CheckState(BankState(bank), BankState(output), bankName + " no-op");
+                Check(FevBank.ReadSkeleton(output).Mode == sourceMode, "A no-op build used an unexpected codec mode.");
                 Apply(radio, station, bankName, added, items);
                 foreach (var local in localized.Values)
                 {
@@ -173,8 +170,8 @@ internal static class InstallationChecks
         var temporary = Path.Combine(scratch, bankName + ".encoded.bank");
         var before = BankState(bank);
         var mode = FevBank.ReadSkeleton(bank).Mode;
-        var targetMode = mode == 10 && !XmaEncoderService.IsAvailable ? 15 : mode;
         var added = await BankBuildService.BuildToFileAsync(bank, temporary, items, settings, log.Enqueue);
+        var targetMode = mode == 10 && !XmaEncoderService.IsAvailable ? 15 : mode;
         var state = BankState(temporary);
         Check(state.Count == before.Count + 1 && state.ContainsKey(originalId), "Adding/replacing audio lost original STBL identity.");
         foreach (var (id, data) in before.Where(p => p.Key != originalId))
@@ -258,10 +255,8 @@ internal static class InstallationChecks
             {
                 var restoredBank = GameScanner.BankPath(game, station.BankName(v))!;
                 var restoredMode = FevBank.ReadSkeleton(restoredBank).Mode;
-                var expectedMode = beforeModes[v] == 10 && !XmaEncoderService.IsAvailable ? 15 : beforeModes[v];
-                Check(restoredMode == expectedMode, "Station backup restore used an unexpected codec: " + v);
-                if (beforeModes[v] == restoredMode) CheckState(before[v], BankState(restoredBank), "Station backup restore " + v);
-                else CheckDimensions(before[v], BankState(restoredBank), "Station backup codec conversion " + v);
+                Check(restoredMode == beforeModes[v], "Station backup restore used an unexpected codec: " + v);
+                CheckState(before[v], BankState(restoredBank), "Station backup restore " + v);
             }
             var track = RadioInfo.Load(xml).StationByNumber(1)!.ReadTracks().Single(t => t.SoundName == custom.SoundName);
             Check(!track.Enabled && track.DisplayName == "Custom & FH3" && track.Markers!.ContainsKey("TrackBreakDown") && !track.Markers.ContainsKey("PostDrop"), "FH3 station restore changed native marker metadata or inactive state.");
@@ -299,14 +294,6 @@ internal static class InstallationChecks
     {
         Check(expected.Count == actual.Count && expected.All(p => actual.TryGetValue(p.Key, out var found) && p.Value == found),
             label + " changed STBL identities, compressed bytes, frames, rate or channels.");
-    }
-
-    private static void CheckDimensions(Dictionary<ulong, (long Frames, int Rate, int Channels, string Hash)> expected,
-        Dictionary<ulong, (long Frames, int Rate, int Channels, string Hash)> actual, string label)
-    {
-        Check(expected.Count == actual.Count && expected.All(p => actual.TryGetValue(p.Key, out var found)
-            && found.Frames == p.Value.Frames && found.Rate == p.Value.Rate && found.Channels == p.Value.Channels),
-            label + " changed STBL identities, frames, rate or channels.");
     }
 
     private static void CheckNativeXml(RadioInfo radio, string file)

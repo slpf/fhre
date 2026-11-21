@@ -107,6 +107,7 @@ public static class Str
     public const string StatusReadingManyFmt = "Reading metadata for {0} files…";
     public const string StatusAddedOneFmt = "Added: {0}";
     public const string StatusAddedManyFmt = "Added {0} tracks";
+    public const string StatusAddedWithErrorsFmt = "Added {0} tracks, skipped {1} unreadable files";
     public const string StatusDecodingFmt = "Decoding {0}…";
     public const string StatusPlayingFmt = "Playing {0}";
     public const string StatusPlaybackErrorFmt = "Playback error: {0}";
@@ -136,6 +137,8 @@ public static class Str
     public const string StatusBuiltCleanedFmt = ", cleaned {0} dead";
     public const string StatusBuildTooLarge = "Build stopped: bank exceeds the 2 GB limit";
     public const string StatusBuildErrorFmt = "Build error: {0}";
+    public const string StatusBuildCancelled = "Build cancelled";
+    public const string StatusBuildPublishing = "Publishing radio files…";
     public const string StatusBuildRadioChangedFmt = "{0} changed on disk. Reload the station before building.";
     public const string StatusBuildBankChanged = "The bank has changed since it was opened. Reload the station before building.";
     public const string DlgBankTooLargeWarnTitle = "Bank may be too large";

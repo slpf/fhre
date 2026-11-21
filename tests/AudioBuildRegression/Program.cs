@@ -40,6 +40,7 @@ try
     await LimiterSettingsChecks.RunAsync(temp);
     await PeakLimiterChecks.RunAsync(temp, path => WriteEmptyBank(path));
     await AudioSafetyChecks.RunAsync(temp, WriteEmptyBank);
+    await AudioPipelineChecks.RunAsync(temp, path => WriteEmptyBank(path));
     await GainEnvelopeChecks.RunAsync(temp);
     await NormalizationOverrideChecks.RunAsync(temp, path => WriteEmptyBank(path));
     var inputs = GenerateInputs(temp);
@@ -291,7 +292,7 @@ static async Task TestGameWritesAsync(string temp, string input)
 
     Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)> BuildAsync(List<BuildItem> plan, string[] languages) =>
         (Task<(IReadOnlyList<AddedSample>, long, int, int)>)build.Invoke(vm,
-            [game, station, bankName, bank, en, languages, resources, plan, settings, (Action<string>)(_ => { })])!;
+            [game, station, bankName, bank, en, languages, resources, plan, settings, (Action<string>)(_ => { }), CancellationToken.None, null])!;
 
     var markersOnly = await BuildAsync([new BuildItem(shared, false, null, "English", null, null, true,
         new Dictionary<string, long> { ["TrackStart"] = 4800, ["End"] = 143999 }, MarkerSampleRate: 48000)], []);

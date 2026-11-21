@@ -48,23 +48,24 @@ public static class BankBuildService
 
     public static Task<IReadOnlyList<AddedSample>> BuildToFileAsync(
         string sourcePath, string outPath, IReadOnlyList<BuildItem> items,
-        AppSettings settings, Action<string>? log = null, Action<string>? progress = null) =>
-        BuildToFileAsync(sourcePath, outPath, items, settings, log, progress, verbose: true, useBackupSources: false);
+        AppSettings settings, Action<string>? log = null, Action<string>? progress = null, CancellationToken ct = default) =>
+        BuildToFileAsync(sourcePath, outPath, items, settings, log, progress, verbose: true, useBackupSources: false, ct);
 
     internal static Task<IReadOnlyList<AddedSample>> BuildToFileAsync(
         string sourcePath, string outPath, IReadOnlyList<BuildItem> items,
-        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources) =>
-        PrepareBankFileAsync(sourcePath, outPath, items, settings, log, progress, verbose, useBackupSources);
+        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources, CancellationToken ct = default) =>
+        PrepareBankFileAsync(sourcePath, outPath, items, settings, log, progress, verbose, useBackupSources, ct);
 
     internal static Task<IReadOnlyList<AddedSample>> BuildToStageAsync(
         string sourcePath, string stagePath, IReadOnlyList<BuildItem> items,
-        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources) =>
-        PrepareBankFileAsync(sourcePath, stagePath, items, settings, log, progress, verbose, useBackupSources, stagePath + ".tmp");
+        AppSettings settings, Action<string>? log, Action<string>? progress, bool verbose, bool useBackupSources, CancellationToken ct = default) =>
+        PrepareBankFileAsync(sourcePath, stagePath, items, settings, log, progress, verbose, useBackupSources, ct, stagePath + ".tmp");
 
     private static async Task<IReadOnlyList<AddedSample>> PrepareBankFileAsync(
         string sourcePath, string outPath, IReadOnlyList<BuildItem> items, AppSettings settings, Action<string>? log,
-        Action<string>? progress, bool verbose, bool useBackupSources, string? stagedOutput = null)
+        Action<string>? progress, bool verbose, bool useBackupSources, CancellationToken ct, string? stagedOutput = null)
     {
+        ct.ThrowIfCancellationRequested();
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(outPath), comparison))
         {
@@ -94,24 +95,22 @@ public static class BankBuildService
         {
             using var sourceStream = File.OpenRead(sourcePath);
             var skel = FevBank.ReadSkeleton(sourceStream);
-            var xmaEncoder = skel.Mode == 10
-                ? await XmaEncoderService.CheckAsync(buildLog).ConfigureAwait(false)
-                : new XmaEncoderStatus(false, "XMA encoding is not required by the source bank.");
             Diagnostic(buildLog, "build.start", new { sourcePath, outPath, workDir, tracks = items.Count,
                 settings.LoudnessNormalize, settings.PeakLimiter,
                 settings.TargetLufs, settings.TargetTruePeak, settings.VorbisQuality,
-                settings.EncodeParallelism, xmaEncoder,
+                settings.EncodeParallelism,
                 runtime = Environment.Version.ToString(), processors = Environment.ProcessorCount });
             foreach (var tool in buildLog is null || !verbose ? Array.Empty<string>() : new[] { Tools.FfmpegPath, Tools.FsbankclPath, Tools.VgmstreamPath })
             {
                 var info = FileVersionInfo.GetVersionInfo(tool);
                 Diagnostic(buildLog, "build.tool", new { path = tool, info.FileVersion, info.ProductVersion,
-                    bytes = new FileInfo(tool).Length, sha256 = HashRange(tool, 0, new FileInfo(tool).Length) });
+                    bytes = new FileInfo(tool).Length, sha256 = HashRange(tool, 0, new FileInfo(tool).Length, ct) });
             }
-            var result = await BuildCoreAsync(sourcePath, sourceStream, stagedOutput, items, settings, skel, xmaEncoder.Available,
-                workDir, buildLog, progress, verbose, useBackupSources)
+            var result = await BuildCoreAsync(sourcePath, sourceStream, stagedOutput, items, settings, skel,
+                workDir, buildLog, progress, verbose, useBackupSources, ct)
                 .ConfigureAwait(false);
             if (verbose) Diagnostic(buildLog, "build.publish.start", new { source = stagedOutput, destination = outPath });
+            ct.ThrowIfCancellationRequested();
             File.Move(stagedOutput, outPath, overwrite: true);
             Diagnostic(buildLog, "build.ok", new { elapsedMs = timer.ElapsedMilliseconds, bytes = new FileInfo(outPath).Length });
             return result;
@@ -131,11 +130,9 @@ public static class BankBuildService
 
     private static async Task<IReadOnlyList<AddedSample>> BuildCoreAsync(
         string sourcePath, Stream sourceStream, string outPath, IReadOnlyList<BuildItem> items, AppSettings settings,
-        FevBank.BankSkeleton skel, bool xmaEncoderAvailable, string workDir, Action<string>? log,
-        Action<string>? progress, bool verbose, bool useBackupSources)
+        FevBank.BankSkeleton skel, string workDir, Action<string>? log,
+        Action<string>? progress, bool verbose, bool useBackupSources, CancellationToken ct)
     {
-        var targetMode = TargetMode(skel.Mode, skel.Empty, xmaEncoderAvailable);
-        var fmtArgs = FormatArgs(targetMode, settings.VorbisQuality);
         var source = skel.Empty ? null : ReadSource(sourcePath, skel);
         var bakPath = sourcePath + ".bak";
         using var backupStream = items.Any(item => item.RestoreFromBak) ? File.OpenRead(bakPath) : null;
@@ -150,6 +147,7 @@ public static class BankBuildService
         var seen = new HashSet<ulong>();
         foreach (var item in items)
         {
+            ct.ThrowIfCancellationRequested();
             var hash = BankIdFor(item);
             PlannedSample entry;
             if (item.RestoreFromBak)
@@ -186,6 +184,11 @@ public static class BankBuildService
             throw new InvalidOperationException("nothing to build (no matching samples)");
         }
 
+        var needsXmaEncoding = skel.Mode == 10 && plan.Any(entry => entry.Source is { } existing
+            ? existing.Skeleton.Mode != 10
+            : !IsFsbSource(entry.Item.SourcePath) || FsbMode(entry.Item.SourcePath!) != 10);
+        var keepXma = !needsXmaEncoding || (await XmaEncoderService.CheckAsync(log, ct).ConfigureAwait(false)).Available;
+        var targetMode = TargetMode(skel.Mode, skel.Empty, keepXma);
         var nameTable = ReadPlannedNameTable(sourceStream, source, plan);
         var conversionCount = plan.Count(p => p.Source is not null && p.Source.Skeleton.Mode != targetMode);
         var encodeCount = plan.Count(p => p.Source is null);
@@ -210,9 +213,13 @@ public static class BankBuildService
 
         var cacheDir = Path.Combine(workDir, "cache");
         Directory.CreateDirectory(cacheDir);
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var token = stop.Token;
         using var sema = new SemaphoreSlim(parallelism);
+        Exception? firstFailure = null;
         async Task PrepareOneAsync(int i)
         {
+            token.ThrowIfCancellationRequested();
             var entry = plan[i];
             var item = entry.Item;
             var rawSource = entry.Source is null && !IsFsbSource(item.SourcePath);
@@ -253,13 +260,14 @@ public static class BankBuildService
                 return;
             }
 
-            await sema.WaitAsync().ConfigureAwait(false);
+            await sema.WaitAsync(token).ConfigureAwait(false);
             var wav = Path.Combine(workDir, $"sample_{i}.wav");
             var fsb = Path.Combine(workDir, $"sample_{i}.fsb");
             var verifiedWav = Path.Combine(workDir, $"sample_{i}.verified.wav");
             string? sourceBank = null;
             try
             {
+                token.ThrowIfCancellationRequested();
                 var sourceMode = entry.Source?.Skeleton.Mode;
                 if (entry.Source is null && IsFsbSource(item.SourcePath))
                 {
@@ -274,7 +282,7 @@ public static class BankBuildService
                         using var input = File.OpenRead(importPath);
                         using (var output = new FileStream(snapshot, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                         {
-                            await input.CopyToAsync(output).ConfigureAwait(false);
+                            await input.CopyToAsync(output, token).ConfigureAwait(false);
                         }
                         item = item with { SourcePath = snapshot };
                         Diagnostic(detailLog, "source.fsb.snapshot", new { sourcePath = importPath, path = snapshot,
@@ -284,18 +292,17 @@ public static class BankBuildService
                 }
                 if (entry.Source is null && sourceMode == targetMode)
                 {
-                    var passthrough = ReadPreparedSample(item.SourcePath!, targetMode);
+                    var passthrough = ReadPreparedSample(item.SourcePath!, targetMode, token);
                     prepared[i] = passthrough;
                     Diagnostic(detailLog, "track.passthrough", new { path = item.SourcePath,
                         passthrough.Frames, passthrough.SampleRate, passthrough.Channels });
                     trackLog?.Invoke("source.fsb.preserved: normalization and gain are not reapplied to encoded FSB imports.");
                     await ValidateFsbAsync(item.SourcePath!, passthrough, null, verifiedWav, trackLog,
-                        measureLoudness: verbose).ConfigureAwait(false);
+                        measureLoudness: verbose, ct: token).ConfigureAwait(false);
                     Interlocked.Increment(ref copied);
                 }
                 else
                 {
-                    var preserveNativeXma = sourceMode == 10 && targetMode == 15;
                     var preserveEncodedQuality = sourceMode is not null;
                     var encodingQuality = preserveEncodedQuality ? OriginalAudioQuality : settings.VorbisQuality;
                     var encodingArgs = FormatArgs(targetMode, encodingQuality);
@@ -303,54 +310,50 @@ public static class BankBuildService
                     Diagnostic(trackLog, "track.encoding", new { sourceMode, targetMode,
                         qualityPolicy = preserveEncodedQuality ? "encoded audio conversion" : "user settings",
                         requestedEncodingQuality = settings.VorbisQuality,
-                        effectiveEncodingQuality = targetMode is 10 or 15 ? (int?) encodingQuality : null,
-                        preserveNativeXma });
+                        effectiveEncodingQuality = targetMode is 10 or 15 ? (int?) encodingQuality : null });
                     if (entry.Source is { } toConvert)
                     {
                         trackLog?.Invoke($"converting mode {toConvert.Skeleton.Mode} -> {targetMode}");
                         sourceBank = Path.Combine(workDir, $"sample_{i}.source.fsb");
                         var sample = toConvert.Samples[entry.Index];
                         WriteSingleFsb(sourceBank, toConvert.Header, sample.Header,
-                            new FevBank.DataRef(toConvert.Path, toConvert.Skeleton.DataStartAbs + sample.DataOff, sample.DataLen));
+                            new FevBank.DataRef(toConvert.Path, toConvert.Skeleton.DataStartAbs + sample.DataOff, sample.DataLen), token);
+                        if (sourceMode == 15) ReadPreparedSample(sourceBank, 15, token);
                         Diagnostic(trackLog, "source.extract", new { path = toConvert.Path, index = entry.Index,
                             fsb = sourceBank, sample.Frames, sample.SampleRate, sample.Channels });
                         await RunAsync(Tools.VgmstreamPath,
-                            $"-i -W 4 -s 1 -o \"{wav}\" \"{sourceBank}\"", trackLog).ConfigureAwait(false);
+                            $"-i -W 4 -s 1 -o \"{wav}\" \"{sourceBank}\"", trackLog, token).ConfigureAwait(false);
                         if (!File.Exists(wav))
                         {
                             throw new InvalidOperationException($"vgmstream produced no audio for {item.SoundName}");
                         }
                     }
-                    else if (preserveNativeXma)
+                    else if (sourceMode is { } importMode)
                     {
-                        nativeImport = ReadPreparedSample(item.SourcePath!, 10);
-                        Diagnostic(trackLog, "source.fsb.native", new { path = item.SourcePath,
-                            nativeImport.Frames, nativeImport.SampleRate, nativeImport.Channels,
-                            processing = "native float decode; source level, rate, channels and timing preserved; user processing bypassed" });
-                        await RunAsync(Tools.VgmstreamPath,
-                            $"-i -W 4 -s 1 -o \"{wav}\" \"{item.SourcePath}\"", trackLog).ConfigureAwait(false);
+                        nativeImport = ReadPreparedSample(item.SourcePath!, importMode, token);
+                        await DecodeImportAsync(item.SourcePath!, wav, targetMode, trackLog, token).ConfigureAwait(false);
                     }
                     else
                     {
-                        await CreateInputWavAsync(item, wav, effectiveSettings, trackLog).ConfigureAwait(false);
+                        await CreateInputWavAsync(item, wav, effectiveSettings, detailLog, trackLog, token).ConfigureAwait(false);
                     }
 
-                    var pcm = AudioBuildValidation.Inspect(wav);
+                    var pcm = AudioBuildValidation.Inspect(wav, token);
                     Diagnostic(trackLog, "wav.prepared", pcm);
-                    if (entry.Source is null && !preserveNativeXma && (pcm.SampleRate != 48000 || pcm.Channels != 2 || pcm.BitsPerSample != 16))
+                    if (rawSource && (pcm.SampleRate != 48000 || pcm.Channels != 2 || pcm.BitsPerSample != 16))
                     {
                         throw new InvalidDataException("Prepared input must be 48000 Hz stereo PCM16.");
                     }
                     if (nativeImport is { } imported && (pcm.Frames != imported.Frames
                         || pcm.SampleRate != imported.SampleRate || pcm.Channels != imported.Channels))
                     {
-                        throw new InvalidDataException("Native XMA decoding changed its audio timing or channel count.");
+                        throw new InvalidDataException("Decoding the imported FSB changed its audio timing or channel count.");
                     }
                     var normalize = rawSource && effectiveSettings.LoudnessNormalize;
                     var loudnessTarget = AppSettings.ClampTargetLufs(effectiveSettings.TargetLufs) + (item.GainDb ?? 0);
                     prepared[i] = await EncodeValidatedAsync(wav, fsb, verifiedWav, cacheDir, encodingArgs, targetMode,
                         pcm, normalize ? AppSettings.ClampTargetTruePeak(effectiveSettings.TargetTruePeak) : null,
-                        normalize ? loudnessTarget : null, trackLog).ConfigureAwait(false);
+                        normalize ? loudnessTarget : null, trackLog, verbose, token).ConfigureAwait(false);
                     if (entry.Source is { } converted)
                     {
                         var originalSample = converted.Samples[entry.Index];
@@ -376,12 +379,15 @@ public static class BankBuildService
                 Diagnostic(trackLog, "track.ok", new { elapsedMs = trackTimer.ElapsedMilliseconds });
                 progress?.Invoke($"Preparing audio…\t{completed}/{workCount}");
             }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
+                var failure = new InvalidOperationException($"Audio preparation failed for {item.SoundName} ({item.DisplayName}): {ex.Message}", ex);
+                if (Interlocked.CompareExchange(ref firstFailure, failure, null) is null) stop.Cancel();
                 if (failureContext is { Count: > 0 })
                     log?.Invoke(trackPrefix + "diagnostics:" + Environment.NewLine + string.Join(Environment.NewLine, failureContext));
                 Diagnostic(trackLog, "track.failed", new { item.SourcePath, elapsedMs = trackTimer.ElapsedMilliseconds, error = ex.ToString() });
-                throw new InvalidOperationException($"Audio preparation failed for {item.SoundName} ({item.DisplayName}): {ex.Message}", ex);
+                throw failure;
             }
             finally
             {
@@ -392,7 +398,16 @@ public static class BankBuildService
             }
         }
 
-        await Task.WhenAll(Enumerable.Range(0, plan.Count).Select(PrepareOneAsync)).ConfigureAwait(false);
+        try
+        {
+            await Task.WhenAll(Enumerable.Range(0, plan.Count).Select(PrepareOneAsync)).ConfigureAwait(false);
+        }
+        catch when (firstFailure is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(firstFailure);
+            throw;
+        }
+        ct.ThrowIfCancellationRequested();
 
         byte[] targetHeader;
         if (prepared.Length > 0) targetHeader = prepared[0].FsbHeader;
@@ -402,11 +417,11 @@ public static class BankBuildService
             var wav = Path.Combine(workDir, "template.wav");
             var fsb = Path.Combine(workDir, "template.fsb");
             await RunAsync(Tools.FfmpegPath,
-                $"-y -hide_banner -loglevel error -f lavfi -i anullsrc=r=48000:cl=stereo -t 0.01 -c:a pcm_s16le \"{wav}\"", log)
+                $"-y -hide_banner -loglevel error -f lavfi -i anullsrc=r=48000:cl=stereo -t 0.01 -c:a pcm_s16le \"{wav}\"", log, ct)
                 .ConfigureAwait(false);
             await RunAsync(Tools.FsbankclPath,
-                $"{fmtArgs} -o \"{fsb}\" \"{wav}\" -cache_dir \"{cacheDir}\"", log).ConfigureAwait(false);
-            targetHeader = ReadPreparedSample(fsb, targetMode).FsbHeader;
+                $"{FormatArgs(targetMode, settings.VorbisQuality)} -o \"{fsb}\" \"{wav}\" -cache_dir \"{cacheDir}\"", log, ct).ConfigureAwait(false);
+            targetHeader = ReadPreparedSample(fsb, targetMode, ct).FsbHeader;
         }
 
         var stbl = plan.Select((p, i) => (BankIdFor(p.Item), i));
@@ -417,9 +432,9 @@ public static class BankBuildService
         progress?.Invoke("Assembling bank…");
         FevBank.AssembleToFile(outPath, skel.FmtChunk, skel.ListPayload, skel.StblRelOff, skel.StblOldSize,
             stblPayload, targetHeader, prepared.Select(p => p.Header).ToArray(), prepared.Select(p => p.Data).ToArray(),
-            nameTable, emptyTemplate: skel.Empty);
+            nameTable, emptyTemplate: skel.Empty, ct: ct);
         if (verbose) log?.Invoke($"assembled bank: {prepared.Length} samples, FSB5 mode {targetMode}");
-        ValidateBank(outPath, plan, prepared, targetMode, log, verbose);
+        ValidateBank(outPath, plan, prepared, targetMode, log, verbose, ct);
         log?.Invoke($"bank audio: {copied} copied from FSB, {workCount - copied} encoded, {plan.Count - workCount} retained (mode {skel.Mode} -> {targetMode})");
         return added.OfType<AddedSample>().ToArray();
     }
@@ -431,7 +446,7 @@ public static class BankBuildService
 
     private static async Task<PreparedSample> EncodeValidatedAsync(string wavPath, string fsbPath, string decodedPath,
         string cacheDir, string formatArgs, int targetMode, AudioBuildInfo expected, double? peakCeiling,
-        double? loudnessTarget, Action<string>? log)
+        double? loudnessTarget, Action<string>? log, bool verbose, CancellationToken ct)
     {
         var currentWav = wavPath;
         var currentFsb = fsbPath;
@@ -442,36 +457,34 @@ public static class BankBuildService
             for (var attempt = 0; attempt <= MaxPeakCorrections; attempt++)
             {
                 await RunAsync(Tools.FsbankclPath,
-                    $"{formatArgs} -o \"{currentFsb}\" \"{currentWav}\" -cache_dir \"{cacheDir}\"", log).ConfigureAwait(false);
+                    $"{formatArgs} -o \"{currentFsb}\" \"{currentWav}\" -cache_dir \"{cacheDir}\"", log, ct).ConfigureAwait(false);
                 if (!File.Exists(currentFsb))
                 {
                     throw new InvalidOperationException($"fsbankcl produced no output: {currentFsb}");
                 }
-                var prepared = ReadPreparedSample(currentFsb, targetMode);
-                var measured = (await ValidateFsbAsync(currentFsb, prepared, currentWav, decodedPath, log, expected)
-                    .ConfigureAwait(false))!;
-                if (peakCeiling is not { } ceiling || measured.TruePeakDbtp is not { } peak
+                var prepared = ReadPreparedSample(currentFsb, targetMode, ct);
+                var measured = await ValidateFsbAsync(currentFsb, prepared, currentWav, decodedPath, log, expected,
+                    measureLoudness: verbose || peakCeiling is not null, ct: ct).ConfigureAwait(false);
+                if (peakCeiling is not { } ceiling) return prepared;
+                if (measured!.TruePeakDbtp is not { } peak
                     || peak + PeakReadingHalfStepDb <= ceiling)
                 {
-                    if (peakCeiling is not null)
+                    var difference = measured.IntegratedLufs - loudnessTarget;
+                    Diagnostic(log, "fsb.normalization.result", new { measured.IntegratedLufs, measured.TruePeakDbtp,
+                        targetLufs = loudnessTarget, targetTruePeak = peakCeiling, loudnessDifferenceLu = difference,
+                        loudnessToleranceLu = LoudnessToleranceLu,
+                        withinLoudnessTolerance = difference is { } delta ? (bool?) (Math.Abs(delta) <= LoudnessToleranceLu) : null,
+                        corrections = attempt, cumulativeGainDb = cumulativeGain });
+                    Diagnostic(log, "fsb.peak_correction.ok", new { attempts = attempt,
+                        integratedLufs = measured.IntegratedLufs, truePeakDbtp = measured.TruePeakDbtp,
+                        targetTruePeak = peakCeiling });
+                    if (difference > LoudnessToleranceLu)
                     {
-                        var difference = measured.IntegratedLufs - loudnessTarget;
-                        Diagnostic(log, "fsb.normalization.result", new { measured.IntegratedLufs, measured.TruePeakDbtp,
-                            targetLufs = loudnessTarget, targetTruePeak = peakCeiling, loudnessDifferenceLu = difference,
-                            loudnessToleranceLu = LoudnessToleranceLu,
-                            withinLoudnessTolerance = difference is { } delta ? (bool?) (Math.Abs(delta) <= LoudnessToleranceLu) : null,
-                            corrections = attempt, cumulativeGainDb = cumulativeGain });
-                        Diagnostic(log, "fsb.peak_correction.ok", new { attempts = attempt,
-                            integratedLufs = measured.IntegratedLufs, truePeakDbtp = measured.TruePeakDbtp,
-                            targetTruePeak = peakCeiling });
-                        if (difference > LoudnessToleranceLu)
-                        {
-                            log?.Invoke("WARN fsb.loudness_target: encoded audio is louder than its loudness target; inspect fsb.normalization.result.");
-                        }
-                        else if (difference < -LoudnessToleranceLu)
-                        {
-                            log?.Invoke("fsb.loudness.below_target: encoded audio is quieter than its loudness target; peak protection takes priority over loudness.");
-                        }
+                        log?.Invoke("WARN fsb.loudness_target: encoded audio is louder than its loudness target; inspect fsb.normalization.result.");
+                    }
+                    else if (difference < -LoudnessToleranceLu)
+                    {
+                        log?.Invoke("fsb.loudness.below_target: encoded audio is quieter than its loudness target; peak protection takes priority over loudness.");
                     }
                     return prepared;
                 }
@@ -493,8 +506,8 @@ public static class BankBuildService
                 var gain = cumulativeGain.ToString("0.############", CultureInfo.InvariantCulture);
                 await RunAsync(Tools.FfmpegPath,
                     $"-y -hide_banner -nostdin -nostats -xerror -loglevel error -i \"{wavPath}\" -map 0:a:0 " +
-                    $"-af \"volume={gain}dB:precision=double\" -c:a pcm_s16le \"{currentWav}\"", log).ConfigureAwait(false);
-                expected = AudioBuildValidation.Inspect(currentWav);
+                    $"-af \"volume={gain}dB:precision=double\" -c:a pcm_s16le \"{currentWav}\"", log, ct).ConfigureAwait(false);
+                expected = AudioBuildValidation.Inspect(currentWav, ct);
                 Diagnostic(log, "wav.peak_corrected", expected);
             }
             throw new InvalidOperationException("Encoded audio peak correction did not produce a result.");
@@ -506,7 +519,8 @@ public static class BankBuildService
     }
 
     private static async Task<LoudnessMeasurement?> ValidateFsbAsync(string fsbPath, PreparedSample sample, string? expectedWav,
-        string decodedPath, Action<string>? log, AudioBuildInfo? expected = null, bool measureLoudness = true)
+        string decodedPath, Action<string>? log, AudioBuildInfo? expected = null, bool measureLoudness = true,
+        CancellationToken ct = default)
     {
         var timer = Stopwatch.StartNew();
         var detailLog = measureLoudness ? log : null;
@@ -526,8 +540,8 @@ public static class BankBuildService
             Diagnostic(log, "fsb.padding", new { inputFrames = expected.Frames, encodedFrames = sample.Frames,
                 trailingFrames = sample.Frames - expected.Frames, maximumTrailingFrames });
         }
-        await RunAsync(Tools.VgmstreamPath, $"-i -W 4 -s 1 -o \"{decodedPath}\" \"{fsbPath}\"", log).ConfigureAwait(false);
-        var decoded = AudioBuildValidation.Inspect(decodedPath);
+        await RunAsync(Tools.VgmstreamPath, $"-i -W 4 -s 1 -o \"{decodedPath}\" \"{fsbPath}\"", log, ct).ConfigureAwait(false);
+        var decoded = AudioBuildValidation.Inspect(decodedPath, ct);
         Diagnostic(detailLog, "fsb.decoded", decoded);
         if (decoded.Frames != sample.Frames || decoded.SampleRate != sample.SampleRate || decoded.Channels != sample.Channels)
         {
@@ -536,7 +550,7 @@ public static class BankBuildService
         }
         if (expectedWav is not null)
         {
-            var comparison = AudioBuildValidation.Compare(expectedWav, decodedPath, maximumTrailingFrames);
+            var comparison = AudioBuildValidation.Compare(expectedWav, decodedPath, maximumTrailingFrames, ct);
             Diagnostic(log, "fsb.compare", comparison);
             if (expected is not null && expected.RmsDb.Where((level, channel) =>
                     level > -60 && double.IsNegativeInfinity(decoded.RmsDb[channel])).Any())
@@ -554,7 +568,7 @@ public static class BankBuildService
         }
         if (!measureLoudness) return null;
 
-        var loudness = await Loudnorm.MeasureOutputAsync(decodedPath, log).ConfigureAwait(false);
+        var loudness = await Loudnorm.MeasureOutputAsync(decodedPath, log, ct).ConfigureAwait(false);
         if (loudness.Frames != decoded.Frames)
         {
             throw new InvalidDataException("FSB loudness analysis frame count differs from its decoded audio.");
@@ -566,7 +580,7 @@ public static class BankBuildService
     }
 
     private static void ValidateBank(string path, IReadOnlyList<PlannedSample> plan,
-        IReadOnlyList<PreparedSample> prepared, int targetMode, Action<string>? log, bool verbose)
+        IReadOnlyList<PreparedSample> prepared, int targetMode, Action<string>? log, bool verbose, CancellationToken ct)
     {
         var timer = Stopwatch.StartNew();
         if (verbose)
@@ -605,8 +619,8 @@ public static class BankBuildService
             {
                 throw new InvalidDataException($"Assembled bank changed sample {i} data length.");
             }
-            var expectedHash = HashRange(expected.Data.Path, expected.Data.Offset, expected.Data.Length);
-            var actualHash = HashRange(bankStream, skeleton.DataStartAbs + stored.DataOff, expected.Data.Length);
+            var expectedHash = HashRange(expected.Data.Path, expected.Data.Offset, expected.Data.Length, ct);
+            var actualHash = HashRange(bankStream, skeleton.DataStartAbs + stored.DataOff, expected.Data.Length, ct);
             if (!string.Equals(expectedHash, actualHash, StringComparison.Ordinal))
             {
                 throw new InvalidDataException($"Assembled bank changed encoded audio bytes for sample {i}.");
@@ -623,13 +637,13 @@ public static class BankBuildService
             Diagnostic(log, "bank.validate.ok", new { samples = prepared.Count, elapsedMs = timer.ElapsedMilliseconds });
     }
 
-    private static string HashRange(string path, long offset, long length)
+    private static string HashRange(string path, long offset, long length, CancellationToken ct = default)
     {
         using var stream = File.OpenRead(path);
-        return HashRange(stream, offset, length);
+        return HashRange(stream, offset, length, ct);
     }
 
-    private static void WriteSingleFsb(string outputPath, byte[] header60, byte[] sampleHeader, FevBank.DataRef data)
+    private static void WriteSingleFsb(string outputPath, byte[] header60, byte[] sampleHeader, FevBank.DataRef data, CancellationToken ct)
     {
         using var source = File.OpenRead(data.Path);
         if (data.Offset < 0 || data.Length < 0 || data.Offset > source.Length - data.Length)
@@ -650,6 +664,7 @@ public static class BankBuildService
         var remaining = data.Length;
         while (remaining > 0)
         {
+            ct.ThrowIfCancellationRequested();
             var count = source.Read(buffer, 0, (int)Math.Min(remaining, buffer.Length));
             if (count == 0) throw new EndOfStreamException("Source FSB sample data is truncated.");
             output.Write(buffer, 0, count);
@@ -658,7 +673,7 @@ public static class BankBuildService
         output.Write(new byte[(int)padding]);
     }
 
-    private static string HashRange(Stream stream, long offset, long length)
+    private static string HashRange(Stream stream, long offset, long length, CancellationToken ct)
     {
         if (offset < 0 || length < 0 || offset > stream.Length - length)
         {
@@ -669,6 +684,7 @@ public static class BankBuildService
         var buffer = new byte[128 * 1024];
         while (length > 0)
         {
+            ct.ThrowIfCancellationRequested();
             var count = stream.Read(buffer, 0, (int)Math.Min(length, buffer.Length));
             if (count == 0) throw new EndOfStreamException("Audio data ended while calculating its checksum.");
             hash.AppendData(buffer, 0, count);
@@ -748,7 +764,7 @@ public static class BankBuildService
         _ => throw new NotSupportedException($"Encoding FSB5 codec mode {mode} is not supported."),
     };
 
-    private static PreparedSample ReadPreparedSample(string path, int targetMode)
+    private static PreparedSample ReadPreparedSample(string path, int targetMode, CancellationToken ct)
     {
         var region = ReadFsb5HeaderRegion(path);
         var mode = BinaryPrimitives.ReadUInt32LittleEndian(region.AsSpan(24));
@@ -771,7 +787,8 @@ public static class BankBuildService
         }
         if (targetMode == 15)
         {
-            AudioBuildValidation.ValidateVorbisPackets(path, dataStart + sample.DataOff, sample.DataLen);
+            AudioBuildValidation.ValidateVorbisPackets(path, dataStart + sample.DataOff, sample.DataLen,
+                sample.Frames, sample.Header, ct);
         }
         return new PreparedSample(header, sample.Header,
             new FevBank.DataRef(path, dataStart + sample.DataOff, sample.DataLen), sample.Frames, sample.SampleRate, sample.Channels);
@@ -801,10 +818,12 @@ public static class BankBuildService
         try { File.Delete(path); } catch { }
     }
 
-    private static async Task<string> RunAsync(string exe, string args, Action<string>? log)
+    private static async Task<string> RunAsync(string exe, string args, Action<string>? log, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var timer = Stopwatch.StartNew();
         log?.Invoke($"$ {Path.GetFileName(exe)} {args}");
+        ct.ThrowIfCancellationRequested();
         var psi = new ProcessStartInfo(exe, args)
         {
             RedirectStandardOutput = true, RedirectStandardError = true,
@@ -813,17 +832,17 @@ public static class BankBuildService
         using var p = Process.Start(psi) ?? throw new InvalidOperationException($"cannot start {exe}");
         var so = p.StandardOutput.ReadToEndAsync();
         var se = p.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromMinutes(20));
         try
         {
-            await p.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            await Task.WhenAll(p.WaitForExitAsync(timeout.Token), so, se).WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             try { p.Kill(entireProcessTree: true); } catch { }
-            await p.WaitForExitAsync().ConfigureAwait(false);
-            LogProcessOutput(log, "stdout", await so.ConfigureAwait(false));
-            LogProcessOutput(log, "stderr", await se.ConfigureAwait(false));
+            await Proc.WaitForCleanupAsync(p).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             Diagnostic(log, "process.timeout", new { exe, elapsedMs = timer.ElapsedMilliseconds });
             throw new TimeoutException($"{Path.GetFileName(exe)} exceeded 20 minutes.");
         }
@@ -858,62 +877,44 @@ public static class BankBuildService
 
     private static ulong BankIdFor(BuildItem item) => item.BankId ?? Lookup.SoundNameToId(item.SoundName);
 
-    private static async Task CreateInputWavAsync(BuildItem item, string wav, AppSettings settings, Action<string>? log)
+    private static async Task DecodeImportAsync(string source, string wav, int targetMode,
+        Action<string>? log, CancellationToken ct)
     {
-        if (item.SourcePath is null || !File.Exists(item.SourcePath))
+        if (targetMode == 15)
         {
-            throw new FileNotFoundException($"Audio source not found for {item.SoundName}.", item.SourcePath);
-        }
-        var sourceInfo = new FileInfo(item.SourcePath);
-        Diagnostic(log, "source.info", new { path = item.SourcePath, sourceInfo.Length, sourceInfo.LastWriteTimeUtc,
-            sha256 = HashRange(item.SourcePath, 0, sourceInfo.Length) });
-        var isFsb = IsFsbSource(item.SourcePath);
-        if (isFsb)
-        {
-            var imported = ReadPreparedSample(item.SourcePath, FsbMode(item.SourcePath));
-            Diagnostic(log, "source.fsb", new { imported.Frames, imported.SampleRate, imported.Channels,
-                processing = "decode and resample; saved normalization and manual gain are not reapplied; fixed-point headroom is protected" });
-            var decoded = Path.ChangeExtension(wav, ".decoded.wav");
-            var resampled = Path.ChangeExtension(wav, ".float.wav");
-            try
-            {
-                await RunAsync(Tools.VgmstreamPath,
-                    $"-i -W 4 -s 1 -o \"{decoded}\" \"{item.SourcePath}\"", log).ConfigureAwait(false);
-                if (!File.Exists(decoded))
-                {
-                    throw new InvalidOperationException($"vgmstream produced no audio for {item.SoundName}");
-                }
-                await RunAsync(Tools.FfmpegPath,
-                    $"-y -hide_banner -nostdin -nostats -xerror -loglevel error -i \"{decoded}\" -map 0:a:0 " +
-                    $"-af \"aresample=48000:osf=dbl:ochl=stereo:rematrix_maxval=1\" -c:a pcm_f32le \"{resampled}\"", log)
-                    .ConfigureAwait(false);
-                var pcm = AudioBuildValidation.Inspect(resampled);
-                var peak = pcm.PeakDb.Max();
-                var gain = Math.Min(0, -EncodedPeakMarginDb - peak);
-                Diagnostic(log, "source.fsb.headroom", new { inputSamplePeak = peak, gainDb = gain,
-                    ceilingDb = -EncodedPeakMarginDb, pcm.Frames, pcm.SampleRate, pcm.Channels });
-                var gainText = gain.ToString("0.############", CultureInfo.InvariantCulture);
-                await RunAsync(Tools.FfmpegPath,
-                    $"-y -hide_banner -nostdin -nostats -xerror -loglevel error -i \"{resampled}\" -map 0:a:0 " +
-                    $"-af \"volume={gainText}dB:precision=double\" -c:a pcm_s16le \"{wav}\"", log)
-                    .ConfigureAwait(false);
-                if (!File.Exists(wav))
-                {
-                    throw new InvalidOperationException($"ffmpeg produced no audio for {item.SoundName}");
-                }
-            }
-            finally
-            {
-                TryDelete(decoded);
-                TryDelete(resampled);
-            }
+            await RunAsync(Tools.VgmstreamPath, $"-i -W 4 -s 1 -o \"{wav}\" \"{source}\"", log, ct).ConfigureAwait(false);
             return;
         }
-        var sourcePath = item.SourcePath;
-        Diagnostic(log, "wav.encode.start", new { sourcePath, normalize = settings.LoudnessNormalize,
-            settings.PeakLimiter,
-            settings.TargetLufs, settings.TargetTruePeak, item.GainDb,
-            requestedOverride = item.Normalization });
-        await Loudnorm.RenderAsync(sourcePath, wav, settings, item.GainDb ?? 0, log).ConfigureAwait(false);
+
+        var decoded = Path.ChangeExtension(wav, ".decoded.wav");
+        try
+        {
+            await RunAsync(Tools.VgmstreamPath, $"-i -W 4 -s 1 -o \"{decoded}\" \"{source}\"", log, ct).ConfigureAwait(false);
+            var pcm = AudioBuildValidation.Inspect(decoded, ct);
+            var peak = pcm.PeakDb.Max();
+            var gain = Math.Min(0, -EncodedPeakMarginDb - peak);
+            Diagnostic(log, "source.fsb.headroom", new { inputSamplePeak = peak, gainDb = gain,
+                ceilingDb = -EncodedPeakMarginDb, pcm.Frames, pcm.SampleRate, pcm.Channels });
+            var gainText = gain.ToString("0.############", CultureInfo.InvariantCulture);
+            await RunAsync(Tools.FfmpegPath,
+                $"-y -hide_banner -nostdin -nostats -xerror -loglevel error -i \"{decoded}\" -map 0:a:0 " +
+                $"-af \"volume={gainText}dB:precision=double\" -c:a pcm_s16le \"{wav}\"", log, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            TryDelete(decoded);
+        }
+    }
+
+    private static Task CreateInputWavAsync(BuildItem item, string wav, AppSettings settings, Action<string>? detailLog,
+        Action<string>? log, CancellationToken ct)
+    {
+        var source = item.SourcePath ?? throw new FileNotFoundException($"Audio source not found for {item.SoundName}.");
+        if (detailLog is not null)
+        {
+            var file = new FileInfo(source);
+            Diagnostic(detailLog, "source.info", new { path = source, file.Length, file.LastWriteTimeUtc });
+        }
+        return Loudnorm.RenderAsync(source, wav, settings, item.GainDb ?? 0, log, ct);
     }
 }

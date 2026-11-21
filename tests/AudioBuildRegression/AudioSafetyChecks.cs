@@ -170,7 +170,7 @@ internal static class AudioSafetyChecks
         var output = Path.Combine(temp, "quiet-restore-output.bank");
         Task Build(Action<string> logger) => (Task)build.Invoke(null, [source, output,
             new BuildItem[] { new(Naming.MakeSoundName(275), true, vorbis, "Quiet restore", null, null, true) },
-            new AppSettings { EncodeParallelism = 1 }, logger, null, false, true])!;
+            new AppSettings { EncodeParallelism = 1 }, logger, null, false, true, CancellationToken.None])!;
 
         await Build(log.Add);
         Check(!log.Any(line => line.Contains("process.stdout", StringComparison.Ordinal)) && File.Exists(output),

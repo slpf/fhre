@@ -686,6 +686,7 @@ public partial class MainWindow : Window
         Vm.IsAddingTracks = true;
         
         var added = 0;
+        var failures = new List<string>();
         
         try
         {
@@ -693,7 +694,7 @@ public partial class MainWindow : Window
             
             var metas = await Task.Run(() =>
             {
-                var results = new (string Path, string? Title, string? Artist, double Dur)[paths.Count];
+                var results = new (string Path, string? Title, string? Artist, double Dur, string? Error)[paths.Count];
                 var opts = new ParallelOptions
                 {
                     MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8),
@@ -701,8 +702,17 @@ public partial class MainWindow : Window
 
                 Parallel.For(0, paths.Count, opts, idx =>
                 {
-                    var (t, a, d) = MetadataReader.Read(paths[idx]);
-                    results[idx] = (paths[idx], t, a, d);
+                    var path = paths[idx];
+                    try
+                    {
+                        var (title, artist, duration) = MetadataReader.Read(path);
+                        results[idx] = (path, title, artist, duration, null);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Line($"Failed to read audio metadata for {path}: {ex}");
+                        results[idx] = (path, null, null, 0, ex.Message);
+                    }
                 });
 
                 return results;
@@ -710,6 +720,11 @@ public partial class MainWindow : Window
 
             foreach (var m in metas)
             {
+                if (m.Error is { } error)
+                {
+                    failures.Add(error);
+                    continue;
+                }
                 var (fTitle, fArtist) = ParseName(System.IO.Path.GetFileNameWithoutExtension(m.Path));
                 Vm.Tracks.Add(Vm.CreateCustomStub(m.Path, m.Title ?? fTitle, m.Artist ?? fArtist, m.Dur));
                 added++;
@@ -727,7 +742,10 @@ public partial class MainWindow : Window
 
         Vm.Recount();
         Vm.RecalcProjectedSize();
-        Vm.Status = added == 1 ? string.Format(Str.StatusAddedOneFmt, Vm.Tracks[^1].SoundName) : string.Format(Str.StatusAddedManyFmt, added);
+        Vm.Status = failures.Count > 0 ? string.Format(Str.StatusAddedWithErrorsFmt, added, failures.Count)
+            : added == 1 ? string.Format(Str.StatusAddedOneFmt, Vm.Tracks[^1].SoundName) : string.Format(Str.StatusAddedManyFmt, added);
+        if (failures.Count > 0)
+            await MessageDialog.ShowAsync(this, Vm.Status, string.Join(Environment.NewLine + Environment.NewLine, failures.Take(5)));
     }
 
     private void OnEdit(object? sender, RoutedEventArgs e)
@@ -785,12 +803,8 @@ public partial class MainWindow : Window
 
         if (!CheckAddTrackAvailability()) return;
 
-        if (ReferenceEquals(Vm.NowPlaying, track))
-        {
-            Vm.StopPlayback();
-        }
-
         Vm.IsAddingTracks = true;
+        var previousStatus = Vm.Status;
         Vm.Status = string.Format(Str.StatusReplacingFmt, track.SoundName);
 
         string? mTitle, mArtist;
@@ -799,6 +813,11 @@ public partial class MainWindow : Window
         try
         {
             (mTitle, mArtist, mDuration) = await Task.Run(() => MetadataReader.Read(path));
+        }
+        catch
+        {
+            Vm.Status = previousStatus;
+            throw;
         }
         finally
         {
@@ -810,6 +829,7 @@ public partial class MainWindow : Window
         var resetMarkers = await MessageDialog.ShowAsync(this, Str.DlgReplaceResetMarkersTitle, Str.DlgReplaceResetMarkersBody,
             Str.BtnYes, Str.BtnNo);
 
+        if (ReferenceEquals(Vm.NowPlaying, track)) Vm.StopPlayback();
         track.StageReplacement(path, mTitle ?? fTitle, mArtist ?? fArtist, mDuration, resetMarkers);
 
         Vm.MarkDirty();
@@ -910,6 +930,8 @@ public partial class MainWindow : Window
 
     private void OnBuild(object? sender, RoutedEventArgs e)
         => SafeAsync.Run(BuildAsync, "build", this);
+
+    private void OnCancelBuild(object? sender, RoutedEventArgs e) => Vm.CancelBuild();
 
     private async Task BuildAsync()
     {

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -22,7 +23,7 @@ public static class Loudnorm
     private const double PeakMarginDb = 0.2;
     private const int CacheLimit = 256;
     private static readonly object CacheSync = new();
-    private static readonly Dictionary<AnalysisKey, CacheEntry> AnalysisCache = new();
+    private static readonly Dictionary<(string Path, string Hash), CacheEntry> AnalysisCache = new();
     private static readonly Regex IntegratedValue = new(@"(?m)^\s*I:\s*(\S+)\s+LUFS\s*$", RegexOptions.Compiled);
     private static readonly Regex TruePeakValue = new(@"True peak:\s*Peak:\s*(\S+)\s+dBFS", RegexOptions.Compiled);
     private static readonly Regex SamplePeakValue = new(@"Peak level dB:\s*(\S+)", RegexOptions.Compiled);
@@ -45,6 +46,10 @@ public static class Loudnorm
     public static void Render(string source, string wav, AppSettings settings, double gainDb = 0,
         Action<string>? log = null, CancellationToken ct = default)
         => RenderCore(source, wav, Options(settings, gainDb), log, ct);
+
+    internal static void RenderPreview(string source, string wav, AppSettings settings, double gainDb,
+        string contentHash, Action<string>? log, CancellationToken ct)
+        => RenderCore(source, wav, Options(settings, gainDb), log, ct, contentHash);
 
     public static Task RenderAsync(string source, string wav, AppSettings settings, double gainDb = 0,
         Action<string>? log = null, CancellationToken ct = default)
@@ -95,16 +100,19 @@ public static class Loudnorm
             AppSettings.ClampTargetLufs(settings.TargetLufs), AppSettings.ClampTargetTruePeak(settings.TargetTruePeak), gainDb);
     }
 
-    private static void RenderCore(string source, string wav, RenderOptions options, Action<string>? log, CancellationToken ct)
+    private static void RenderCore(string source, string wav, RenderOptions options, Action<string>? log,
+        CancellationToken ct, string? contentHash = null)
     {
         ct.ThrowIfCancellationRequested();
+        using var input = File.OpenRead(source);
         var sourceKey = Key(source, PreparedScheme);
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         if (string.Equals(Path.GetFullPath(source), Path.GetFullPath(wav), comparison))
         {
             throw new ArgumentException("The output WAV must differ from the audio source.", nameof(wav));
         }
-        var plan = CreatePlan(source, options, log, ct);
+        if (options.Normalize && contentHash is null) contentHash = ContentHash(input, ct);
+        var plan = CreatePlan(source, options, log, ct, contentHash);
         if (Key(source, PreparedScheme) != sourceKey) throw new IOException("Audio source changed during loudness analysis.");
         var directory = Path.GetDirectoryName(Path.GetFullPath(wav));
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
@@ -178,7 +186,8 @@ public static class Loudnorm
         }
     }
 
-    private static RenderPlan CreatePlan(string source, RenderOptions options, Action<string>? log, CancellationToken ct)
+    private static RenderPlan CreatePlan(string source, RenderOptions options, Action<string>? log, CancellationToken ct,
+        string? contentHash = null)
     {
         var prefix = ConversionFilter + "," + InputStatisticsFilter;
         if (!options.Normalize)
@@ -188,7 +197,8 @@ public static class Loudnorm
                 limiterActive = false, peakLimited = false, peakProtection = false });
             return new RenderPlan(prefix + Volume(options.GainDb), false, null);
         }
-        var input = CachedMeasure(source, log, ct);
+        using var opened = contentHash is null ? File.OpenRead(source) : null;
+        var input = CachedMeasure(source, contentHash ?? ContentHash(opened!, ct), log, ct);
         if (input.Silent)
         {
             Diagnostic(log, "loudnorm.render.plan", new { mode = "constant", source, silent = true,
@@ -230,9 +240,10 @@ public static class Loudnorm
 
     private static string Volume(double gainDb) => $",volume={Fmt(gainDb)}dB:precision=double";
 
-    private static Analysis CachedMeasure(string source, Action<string>? log, CancellationToken ct)
+    private static Analysis CachedMeasure(string source, string hash, Action<string>? log, CancellationToken ct)
     {
-        var key = Key(source, PreparedScheme);
+        var stamp = Key(source, PreparedScheme);
+        var key = (stamp.Path, hash);
         CacheEntry? entry;
         var created = false;
         lock (CacheSync)
@@ -270,7 +281,7 @@ public static class Loudnorm
             ct.ThrowIfCancellationRequested();
             if (entry.Value is { } cached) return cached;
             var measured = Measure(source, true, log, ct);
-            if (Key(source, PreparedScheme) != key) throw new IOException("Audio source changed during loudness analysis.");
+            if (Key(source, PreparedScheme) != stamp) throw new IOException("Audio source changed during loudness analysis.");
             entry.Value = measured;
             return measured;
         }
@@ -283,6 +294,12 @@ public static class Loudnorm
                 entry.LastUsed = Stopwatch.GetTimestamp();
             }
         }
+    }
+
+    internal static string ContentHash(Stream input, CancellationToken ct)
+    {
+        var hash = SHA256.HashDataAsync(input, ct).AsTask().GetAwaiter().GetResult();
+        return Convert.ToHexString(hash);
     }
 
     private static AnalysisKey Key(string source, string scheme)

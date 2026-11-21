@@ -105,7 +105,7 @@ FMOD in particular is distributed under the FMOD license. Review its license ter
 ## Optional XMA encoder
 
 FH2 and Xbox One FH3 banks can retain XMA encoding when a compatible, separately obtained `xmaencoder64.dll` is placed in `fsbank\` next to `fsbankcl.exe`. FHRE verifies the encoder through a small FSBank encoding test in a separate process.
-If the encoder is absent or fails the test, FHRE builds the XMA bank as Vorbis. Existing encoded audio that needs codec conversion uses a fixed quality of 100%; this conversion remains lossy. The encoding quality setting applies to new source audio encoded as Vorbis or XMA. Unchanged tracks in an XMA bank retain their encoded data.
+If the encoder is absent or fails the test and a track requires XMA encoding, FHRE builds the bank as Vorbis. Builds that can reuse existing XMA audio keep the XMA format. Existing encoded audio that needs codec conversion uses a fixed quality of 100%; this conversion remains lossy. The encoding quality setting applies to new source audio encoded as Vorbis or XMA.
 
 # Build and run
 

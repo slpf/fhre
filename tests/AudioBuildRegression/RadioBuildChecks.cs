@@ -45,10 +45,11 @@ internal static class RadioBuildChecks
             .Select(track => new BuildItem(track.SoundName, false, null, track.DisplayName, track.Artist, null, track.Enabled,
                 track.Markers, MarkerSampleRate: track.SampleRate, BankId: track.BankId)).ToList();
         Task<(IReadOnlyList<AddedSample> Added, long Written, int SavedXml, int Dead)> Build(string file, List<BuildItem> items,
-            string[]? other = null, string name = bankName, Action<string>? progress = null) =>
+            string[]? other = null, string name = bankName, Action<string>? progress = null,
+            CancellationToken ct = default, Action? beginCommit = null) =>
             (Task<(IReadOnlyList<AddedSample>, long, int, int)>) build.Invoke(vm,
                 [game, station, name, Path.Combine(game, name + ".assets.bank"), Path.Combine(game, file), other ?? [],
-                    resources, items, settings, progress ?? (_ => { })])!;
+                    resources, items, settings, progress ?? (_ => { }), ct, beginCommit])!;
 
         var stale = Read(english);
         loadedRadio.SetValue(vm, Load(english));
@@ -61,6 +62,20 @@ internal static class RadioBuildChecks
 
         var replacement = Read(english)[0] with { IsReplacement = true, SourcePath = replacementAudio };
         var originalBank = File.ReadAllBytes(bank);
+        var originalRadio = File.ReadAllBytes(Path.Combine(game, english));
+        using (var cancellation = new CancellationTokenSource())
+        {
+            try
+            {
+                await Build(english, [replacement], ct: cancellation.Token, beginCommit: cancellation.Cancel);
+                throw new InvalidOperationException("The staged radio transaction ignored cancellation.");
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        }
+        Check(File.ReadAllBytes(bank).SequenceEqual(originalBank)
+            && File.ReadAllBytes(Path.Combine(game, english)).SequenceEqual(originalRadio)
+            && !File.Exists(bank + ".bak") && !File.Exists(Path.Combine(game, ".fhre-transaction.json")),
+            "Cancelling before commit changed game files, published a backup, or left a journal.");
         await RejectAsync(() => Build(english, [replacement], progress: _ =>
         {
             var current = Load(english);

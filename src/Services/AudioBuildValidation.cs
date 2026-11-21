@@ -21,7 +21,11 @@ public sealed record AudioBuildComparison(
 
 public static class AudioBuildValidation
 {
-    public static void ValidateVorbisPackets(string path, long offset, long length)
+    private const int VorbisShortBlock = 256;
+    private const int VorbisLongBlock = 2048;
+
+    public static void ValidateVorbisPackets(string path, long offset, long length, long expectedFrames,
+        ReadOnlySpan<byte> sampleHeader, CancellationToken ct = default)
     {
         using var stream = File.OpenRead(path);
         if (offset < 0 || length <= 0 || offset > stream.Length - length)
@@ -31,21 +35,25 @@ public static class AudioBuildValidation
 
         stream.Position = offset;
         var remaining = length;
-        var packets = 0L;
+        var seek = VorbisSeekTable(sampleHeader);
+        var seekIndex = 0;
+        var packetCount = 0L;
+        var mixedFrames = 0L;
+        var previousBlock = 0;
+        var shortBlocks = true;
+        var longBlocks = true;
+        var mixedBlocks = true;
         Span<byte> header = stackalloc byte[2];
         while (remaining >= header.Length)
         {
+            ct.ThrowIfCancellationRequested();
+            var packetOffset = length - remaining;
             stream.ReadExactly(header);
             remaining -= header.Length;
             var size = BinaryPrimitives.ReadUInt16LittleEndian(header);
             if (size is 0 or ushort.MaxValue)
             {
-                if (packets == 0)
-                {
-                    throw new InvalidDataException("Vorbis sample contains no audio packets.");
-                }
-                ValidateVorbisPadding(stream, remaining);
-                return;
+                break;
             }
             if (size > remaining)
             {
@@ -57,23 +65,66 @@ public static class AudioBuildValidation
             {
                 throw new InvalidDataException("Vorbis sample contains an invalid audio packet.");
             }
+            var block = (first & 2) != 0 ? VorbisLongBlock : VorbisShortBlock;
+            if (packetCount > 0) mixedFrames += (previousBlock + block) / 4;
+            previousBlock = block;
+
+            while (seekIndex < seek.Length && BinaryPrimitives.ReadUInt32LittleEndian(seek[(seekIndex + 4)..]) <= packetOffset)
+            {
+                var position = BinaryPrimitives.ReadUInt32LittleEndian(seek[(seekIndex + 4)..]);
+                var frames = BinaryPrimitives.ReadUInt32LittleEndian(seek[seekIndex..]);
+                if (position != packetOffset)
+                    throw new InvalidDataException("Vorbis seek table points outside a packet boundary.");
+                shortBlocks &= frames == packetCount * (VorbisShortBlock / 2);
+                longBlocks &= frames == packetCount * (VorbisLongBlock / 2);
+                mixedBlocks &= frames == mixedFrames;
+                seekIndex += 8;
+            }
             stream.Seek(size - 1, SeekOrigin.Current);
             remaining -= size;
-            packets++;
+            packetCount++;
         }
 
-        if (packets == 0)
+        if (packetCount == 0)
         {
             throw new InvalidDataException("Vorbis sample contains no audio packets.");
         }
-        ValidateVorbisPadding(stream, remaining);
+        bool Covers(long frames) => frames >= expectedFrames && frames - expectedFrames < VorbisLongBlock / 2;
+        if (seekIndex != seek.Length || !(shortBlocks && Covers((packetCount - 1) * (VorbisShortBlock / 2))
+            || longBlocks && Covers((packetCount - 1) * (VorbisLongBlock / 2))
+            || mixedBlocks && Covers(mixedFrames)))
+            throw new InvalidDataException("Vorbis packets do not cover the duration declared by the sample header.");
+
+        ValidateVorbisPadding(stream, remaining, ct);
     }
 
-    private static void ValidateVorbisPadding(Stream stream, long length)
+    private static ReadOnlySpan<byte> VorbisSeekTable(ReadOnlySpan<byte> header)
+    {
+        for (var offset = 8; offset < header.Length;)
+        {
+            if (header.Length - offset < 4) throw new InvalidDataException("Vorbis metadata header is truncated.");
+            var chunk = BinaryPrimitives.ReadUInt32LittleEndian(header[offset..]);
+            var size = (int)((chunk >> 1) & 0xFFFFFF);
+            offset += 4;
+            if (size > header.Length - offset) throw new InvalidDataException("Vorbis metadata chunk is truncated.");
+            if (chunk >> 25 == 11 && size >= 8)
+            {
+                var length = BinaryPrimitives.ReadUInt32LittleEndian(header[(offset + 4)..]);
+                if (length % 8 != 0 || length > size - 8)
+                    throw new InvalidDataException("Vorbis seek table has an invalid length.");
+                return header.Slice(offset + 8, (int)length);
+            }
+            offset += size;
+        }
+        return [];
+    }
+
+    private static void ValidateVorbisPadding(Stream stream, long length, CancellationToken ct)
     {
         Span<byte> padding = stackalloc byte[1024];
         while (length > 0)
         {
+            ct.ThrowIfCancellationRequested();
             var bytes = padding[..(int) Math.Min(length, padding.Length)];
             stream.ReadExactly(bytes);
             foreach (var value in bytes)
@@ -87,7 +138,7 @@ public static class AudioBuildValidation
         }
     }
 
-    public static AudioBuildInfo Inspect(string wavPath)
+    public static AudioBuildInfo Inspect(string wavPath, CancellationToken ct = default)
     {
         using var input = new WaveInput(wavPath);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -98,6 +149,7 @@ public static class AudioBuildValidation
         int count;
         while ((count = input.Read()) > 0)
         {
+            ct.ThrowIfCancellationRequested();
             hash.AppendData(input.Bytes, 0, input.ByteCount);
             for (var i = 0; i < count; i += input.Channels)
             {
@@ -131,7 +183,8 @@ public static class AudioBuildValidation
             rmsDb, peakDb, stereoCorrelation, Convert.ToHexString(hash.GetHashAndReset()));
     }
 
-    public static AudioBuildComparison Compare(string expectedWav, string decodedWav, int maximumTrailingFrames = 0)
+    public static AudioBuildComparison Compare(string expectedWav, string decodedWav, int maximumTrailingFrames = 0,
+        CancellationToken ct = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(maximumTrailingFrames);
         using var expected = new WaveInput(expectedWav);
@@ -153,6 +206,7 @@ public static class AudioBuildValidation
         int count;
         while ((count = expected.Read()) > 0)
         {
+            ct.ThrowIfCancellationRequested();
             if (decoded.Read(count) != count)
             {
                 throw new InvalidDataException("Decoded WAV data ended before its expected length.");

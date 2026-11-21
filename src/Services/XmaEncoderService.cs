@@ -35,8 +35,9 @@ public static class XmaEncoderService
         }
     }
 
-    public static async Task<XmaEncoderStatus> CheckAsync(Action<string>? log = null)
+    public static async Task<XmaEncoderStatus> CheckAsync(Action<string>? log = null, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (!TryReadTools(out var tools, out var reason))
         {
             lock (CacheSync) _cached = null;
@@ -45,7 +46,7 @@ public static class XmaEncoderService
         var cached = ReadCache(tools!);
         if (cached is not null) return Report(cached, "cached", log);
 
-        await ProbeGate.WaitAsync().ConfigureAwait(false);
+        await ProbeGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             if (!TryReadTools(out tools, out reason))
@@ -59,15 +60,16 @@ public static class XmaEncoderService
             XmaEncoderStatus result;
             try
             {
-                await ProbeAsync(tools!, log).ConfigureAwait(false);
+                await ProbeAsync(tools!, log, ct).ConfigureAwait(false);
                 result = new XmaEncoderStatus(true, "XMA encoding and decoded audio validation succeeded.");
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 WriteLog(log, $"xma.probe.failed {ex}");
                 result = new XmaEncoderStatus(false, $"XMA encoder check failed: {ShortReason(ex.Message)}");
             }
 
+            ct.ThrowIfCancellationRequested();
             if (!TryReadTools(out var current, out _) || !SameTools(tools!, current!))
             {
                 lock (CacheSync) _cached = null;
@@ -141,7 +143,7 @@ public static class XmaEncoderService
         }
     }
 
-    private static async Task ProbeAsync(ProbeTools tools, Action<string>? log)
+    private static async Task ProbeAsync(ProbeTools tools, Action<string>? log, CancellationToken ct)
     {
         var workDir = Path.Combine(AppPaths.TempBase, "xma-probe", Guid.NewGuid().ToString("N"));
         try
@@ -162,11 +164,11 @@ public static class XmaEncoderService
                 var decoded = Path.Combine(workDir, $"decoded-{name}.wav");
                 WriteProbeWav(wav, frames);
                 await RunAsync(tools.Fsbank,
-                    ["-format", "xma", "-quality", "90", "-no_loop", "-o", fsb, wav, "-cache_dir", cache], workDir, log)
+                    ["-format", "xma", "-quality", "90", "-no_loop", "-o", fsb, wav, "-cache_dir", cache], workDir, log, ct)
                     .ConfigureAwait(false);
                 ValidateFsb(fsb, frames);
                 await RunAsync(tools.Vgmstream,
-                    ["-i", "-W", "4", "-s", "1", "-o", decoded, fsb], workDir, log).ConfigureAwait(false);
+                    ["-i", "-W", "4", "-s", "1", "-o", decoded, fsb], workDir, log, ct).ConfigureAwait(false);
                 ValidateProbe(wav, fsb, decoded, log);
             }
         }
@@ -267,8 +269,9 @@ public static class XmaEncoderService
         }
     }
 
-    private static async Task RunAsync(string exe, string[] args, string workDir, Action<string>? log)
+    private static async Task RunAsync(string exe, string[] args, string workDir, Action<string>? log, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(exe)
         {
             RedirectStandardOutput = true, RedirectStandardError = true,
@@ -280,17 +283,17 @@ public static class XmaEncoderService
         using var process = Process.Start(start) ?? throw new InvalidOperationException($"Could not start {Path.GetFileName(exe)}.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(45));
         try
         {
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            await Task.WhenAll(process.WaitForExitAsync(timeout.Token), stdout, stderr).WaitAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
-            await process.WaitForExitAsync().ConfigureAwait(false);
-            WriteOutput(log, "stdout", await stdout.ConfigureAwait(false));
-            WriteOutput(log, "stderr", await stderr.ConfigureAwait(false));
+            await Proc.WaitForCleanupAsync(process).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             throw new TimeoutException($"{Path.GetFileName(exe)} exceeded 45 seconds during the XMA encoder check.");
         }
         var output = (await stdout.ConfigureAwait(false)).Trim();

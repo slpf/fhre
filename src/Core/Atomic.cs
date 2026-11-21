@@ -51,7 +51,7 @@ public static class Atomic
         }
     }
     
-    public static void Copy(string src, string dst)
+    public static void Copy(string src, string dst, CancellationToken ct = default)
     {
         EnsureDir(dst);
         var tmp = Tmp(dst);
@@ -60,10 +60,11 @@ public static class Atomic
             using (var inFs = File.OpenRead(src))
             using (var outFs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
             {
-                inFs.CopyTo(outFs);
+                inFs.CopyToAsync(outFs, ct).GetAwaiter().GetResult();
                 outFs.Flush(flushToDisk: true);
             }
 
+            ct.ThrowIfCancellationRequested();
             File.Move(tmp, dst, overwrite: true);
         }
         finally
