@@ -67,8 +67,9 @@ public static class WaveformService
         return (rate, dataLen / (bytesPerSample * channels));
     }
 
-    public static float[] Samples(string wavPath)
+    public static float[] Samples(string wavPath, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         using var fs = File.OpenRead(wavPath);
         using var br = new BinaryReader(fs);
 
@@ -148,6 +149,7 @@ public static class WaveformService
 
         for (var f = 0; f < frames; f++)
         {
+            if ((f & 16383) == 0) ct.ThrowIfCancellationRequested();
             var off = f * frameBytes;
             var sum = 0;
 

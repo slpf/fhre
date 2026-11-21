@@ -114,6 +114,7 @@
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_decoding.png" Width="24" Height="24"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="50%,50%"
                                                        Classes.spin="{Binding IsLoadingPlay}"
+                                                       ToolTip.Tip="{x:Static assets:Str.TipCancelPreview}"
                                                        IsVisible="{Binding IsLoadingPlay}"/>
                                             </Panel>
                                         </Button>

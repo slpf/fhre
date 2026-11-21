@@ -208,6 +208,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly DispatcherTimer _seekDebounce;
     private double _pendingSeekSec;
     private int _playGen;
+    private CancellationTokenSource? _playbackCts;
+    private CancellationTokenSource? _markerPreparationCts;
     private bool _suppressSeek;
     private double _anchorSec;
     private long _anchorTicks;
@@ -244,7 +246,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         Settings = settings;
 
-        _player.Ended += () => Dispatcher.UIThread.Post(StopPlayback);
+        _player.Ended += error =>
+        {
+            if (error is not null)
+            {
+                Log.Line("playback error: " + error);
+                Status = string.Format(Str.StatusPlaybackErrorFmt, error.Message);
+            }
+            StopPlayback();
+        };
         _tick = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
         _tick.Tick += (_, _) =>
         {
@@ -536,6 +546,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private void RequestLoadAsync()
     {
+        _markerPreparationCts?.Cancel();
         if (!_confirmingSwitch) _ = SwitchSelectionAsync();
     }
 
@@ -970,7 +981,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var markerNames = EditWindowViewModel.MarkerNamesFor(t.UsesMilliseconds, t.UsesTrackBreakDown);
             foreach (var kv in MarkerPresetService.AdaptMarkers(t.Markers, t.UsesMilliseconds, t.SampleRate, t.UsesTrackBreakDown))
             {
-                if ((kv.Value >= 0 || t.UsesMilliseconds) && markerNames.Contains(kv.Key))
+                if (markerNames.Contains(kv.Key))
                 {
                     filtered[kv.Key] = kv.Value;
                 }
@@ -1003,7 +1014,56 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return dir;
     }
 
-    public async Task<(float[]? Peaks, string? Wav)> LoadPeaksAsync(TrackItemViewModel track)
+    public async Task<(float[]? Peaks, string? Wav)> PrepareMarkerEditorAsync(TrackItemViewModel track)
+    {
+        if (IsBusy || IsLoading || _markerPreparationCts is not null || !Tracks.Contains(track))
+        {
+            return (null, null);
+        }
+
+        track.RefreshToolAvailability();
+        if (!track.CanEditMarkers)
+        {
+            Status = track.MarkersTip;
+            return (null, null);
+        }
+
+        StopPlayback();
+        Status = "";
+        using var preparation = new CancellationTokenSource();
+        _markerPreparationCts = preparation;
+        track.MarkersLoading = true;
+        var sourcePath = track.FileSource;
+        var restorePath = track.RestoreFsbPath;
+        try
+        {
+            var media = await LoadPeaksAsync(track, preparation.Token);
+            if (preparation.IsCancellationRequested || IsBusy || IsLoading || !Tracks.Contains(track)
+                || track.FileSource != sourcePath || track.RestoreFsbPath != restorePath)
+            {
+                return (null, null);
+            }
+
+            if (media.Wav is null || media.Peaks is not { Length: > 0 } || track.SampleLength <= 0 || track.SampleRate <= 0)
+            {
+                Status = Str.StatusDecodeFailed;
+                return (null, null);
+            }
+
+            return media;
+        }
+        catch (OperationCanceledException) when (preparation.IsCancellationRequested)
+        {
+            return (null, null);
+        }
+        finally
+        {
+            _markerPreparationCts = null;
+            track.MarkersLoading = false;
+        }
+    }
+
+    public async Task<(float[]? Peaks, string? Wav)> LoadPeaksAsync(TrackItemViewModel track, CancellationToken ct = default)
     {
         track.RefreshToolAvailability();
         if (!track.CanPlay)
@@ -1013,58 +1073,57 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         var bankPath = _loadedBankPath;
+        var fileSource = track.UsesFileSource ? track.FileSource : null;
+        var isFileSourceFsb = track.IsFileSourceFsb;
+        var restorePath = track.RestoreFsbPath;
+        var subIndex = track.SubIndex;
+        var directPath = fileSource ?? restorePath;
+        var decodeIndex = directPath is null ? subIndex : 0;
+        var probe = fileSource is not null || track.SampleLength <= 0 || track.SampleRate <= 0;
         var settings = NormalizationOverride.Resolve(Settings, track.Normalization);
         var gainDb = track.GainDb ?? 0;
-        return await Task.Run<(float[]?, string?)>(() =>
+        try
         {
-            try
+            var (peaks, wav, format) = await Task.Run(() =>
             {
-                string wav;
-                if (track.UsesFileSource)
-                {
-                    wav = track.IsFileSourceFsb
-                        ? AudioDecoder.DecodeBank(track.FileSource!, 0)
-                        : AudioDecoder.DecodeAdded(track.FileSource!, settings, gainDb: gainDb);
-                }
-                else if (track.RestoreFsbPath is not null)
-                {
-                    wav = AudioDecoder.DecodeBank(track.RestoreFsbPath, 0);
-                }
-                else
-                {
-                    wav = AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
-                }
-                var peaks = WaveformService.Samples(wav);
+                var wav = fileSource is not null && !isFileSourceFsb
+                    ? AudioDecoder.DecodeAdded(fileSource, settings, ct, gainDb)
+                    : AudioDecoder.DecodeBank(directPath ?? bankPath!, decodeIndex, ct);
+                var peaks = WaveformService.Samples(wav, ct);
+                return (peaks, wav, probe ? WaveformService.Probe(wav) : default);
+            }, ct);
 
-                if (track.UsesFileSource || track.SampleLength <= 0 || track.SampleRate <= 0)
-                {
-                    var (rate, frames) = WaveformService.Probe(wav);
-                    if (rate > 0 && frames > 0)
-                    {
-                        var markerRate = track.SampleRate > 0 ? track.SampleRate : track.BankSampleRate;
-                        if (markerRate > 0 && rate != markerRate
-                            && track.Markers is { } markers)
-                        {
-                            var scale = rate / (double) markerRate;
-                            track.Markers = markers.ToDictionary(p => p.Key,
-                                p => p.Value < 0 ? p.Value : checked((long) Math.Round(p.Value * scale)));
-                        }
-                        track.SampleRate = rate;
-                        track.SampleLength = frames;
-                    }
-                }
-
-                return (peaks, wav);
-            }
-            catch (Exception ex)
+            ct.ThrowIfCancellationRequested();
+            if ((track.UsesFileSource ? track.FileSource : null) != fileSource || track.RestoreFsbPath != restorePath
+                || track.SubIndex != subIndex || (directPath is null && _loadedBankPath != bankPath))
             {
-                Log.Line($"waveform.failed sound={track.SoundName}: {ex}");
                 return (null, null);
             }
-        });
+
+            var (rate, frames) = format;
+            if (rate > 0 && frames > 0)
+            {
+                var markerRate = track.SampleRate > 0 ? track.SampleRate : track.BankSampleRate;
+                if (markerRate > 0 && rate != markerRate && track.Markers is { } markers)
+                {
+                    var scale = rate / (double)markerRate;
+                    track.Markers = markers.ToDictionary(p => p.Key,
+                        p => p.Value < 0 ? p.Value : checked((long)Math.Round(p.Value * scale)));
+                }
+                track.SampleRate = rate;
+                track.SampleLength = frames;
+            }
+
+            return (peaks, wav);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            Log.Line($"waveform.failed sound={track.SoundName}: {ex}");
+            return (null, null);
+        }
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task PlayTrack(TrackItemViewModel? track)
     {
         if (track is null || !track.CanPlay)
@@ -1074,7 +1133,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         if (ReferenceEquals(track, _nowPlaying))
         {
-            TogglePlay();
+            if (IsPreparingPlayback)
+            {
+                StopPlayback();
+                Status = "";
+            }
+            else
+            {
+                TogglePlay();
+            }
             return;
         }
 
@@ -1126,6 +1193,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
 
         var gen = ++_playGen;
+        _markerPreparationCts?.Cancel();
+        _playbackCts?.Cancel();
+        using var preparation = new CancellationTokenSource();
+        _playbackCts = preparation;
+        var ct = preparation.Token;
         var filePreview = GetFilePreview(track);
         _requestedFilePreview = filePreview;
         _previewResumeSeconds = fromSec;
@@ -1133,6 +1205,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         
         _player.Stop();
         _tick?.Stop();
+        _seekDebounce.Stop();
         if (_nowPlaying is not null)
         {
             _nowPlaying.PlayState = TrackPlayState.Idle;
@@ -1152,6 +1225,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         try
         {
             var bankPath = _loadedBankPath;
+            var directPath = (track.UsesFileSource ? track.FileSource : null) ?? track.RestoreFsbPath;
+            var decodeIndex = directPath is null ? track.SubIndex : 0;
             var wav = await Task.Run(() =>
             {
                 if (filePreview is { } preview)
@@ -1163,15 +1238,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
                         TargetLufs = preview.Lufs,
                         TargetTruePeak = preview.TruePeak
                     };
-                    return AudioDecoder.DecodeAdded(preview.Path, settings, gainDb: preview.GainDb);
+                    return AudioDecoder.DecodeAdded(preview.Path, settings, ct, preview.GainDb);
                 }
-                if (track.UsesFileSource)
-                {
-                    return AudioDecoder.DecodeBank(track.FileSource!, 0);
-                }
-                if (track.RestoreFsbPath is not null) return AudioDecoder.DecodeBank(track.RestoreFsbPath, 0);
-                return AudioDecoder.DecodeBank(bankPath!, track.SubIndex);
-            });
+                return AudioDecoder.DecodeBank(directPath ?? bankPath!, decodeIndex, ct);
+            }, ct);
 
             if (gen != _playGen)
             {
@@ -1210,6 +1280,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         finally
         {
+            if (ReferenceEquals(_playbackCts, preparation)) _playbackCts = null;
             if (gen == _playGen)
             {
                 IsPreparingPlayback = false;
@@ -1220,7 +1291,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public void StopPlayback()
     {
         _playGen++;
+        _playbackCts?.Cancel();
+        _markerPreparationCts?.Cancel();
         _tick?.Stop();
+        _seekDebounce.Stop();
         SetClockAnchor(0, false);
         _player.Stop();
         if (_nowPlaying is not null)

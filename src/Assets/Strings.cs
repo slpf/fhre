@@ -111,6 +111,9 @@ public static class Str
     public const string StatusDecodingFmt = "Decoding {0}…";
     public const string StatusPlayingFmt = "Playing {0}";
     public const string StatusPlaybackErrorFmt = "Playback error: {0}";
+    public const string TipCancelPreview = "Cancel preview preparation";
+    public const string DlgUnlockLoopMarkers = "Unlock both loop markers before applying a suggestion.";
+    public const string StatusPresetSaveFailed = "Couldn't save the marker preset.";
     public const string StatusDeletedFmt = "Deleted: {0}";
     public const string StatusRestoreTrackFmt = "Restored: {0}";
     public const string DlgRestoreTrackTitle = "Restore track";

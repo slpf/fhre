@@ -851,36 +851,8 @@ public partial class MainWindow : Window
 
     private async Task EditMarkersAsync(TrackItemViewModel track)
     {
-        if (Vm.IsBusy || track.MarkersLoading) return;
-        Vm.RefreshToolAvailability();
-        if (!track.CanEditMarkers)
-        {
-            Vm.Status = track.MarkersTip;
-            return;
-        }
-
-        Vm.StopPlayback();
-        Vm.Status = "";
-
-        (float[]? Peaks, string? Wav) media;
-        track.MarkersLoading = true;
-        Vm.IsPreparingPlayback = true;
-
-        try
-        {
-            media = await Vm.LoadPeaksAsync(track);
-        }
-        finally
-        {
-            track.MarkersLoading = false;
-            Vm.IsPreparingPlayback = false;
-        }
-
-        if (media.Wav is null || media.Peaks is null || track.SampleLength <= 0 || track.SampleRate <= 0)
-        {
-            Vm.Status = Str.StatusDecodeFailed;
-            return;
-        }
+        var media = await Vm.PrepareMarkerEditorAsync(track);
+        if (media.Wav is null || media.Peaks is null || !IsVisible || !Vm.Tracks.Contains(track)) return;
 
         var vm = new EditWindowViewModel(track, Vm.Settings)
         {
@@ -892,7 +864,7 @@ public partial class MainWindow : Window
         var w = new WaveformWindow { DataContext = vm };
         await w.ShowDialog(this);
 
-        if (w.Saved)
+        if (w.Saved && Vm.Tracks.Contains(track))
         {
             vm.Apply(track);
             Vm.MarkDirty();

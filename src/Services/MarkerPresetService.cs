@@ -183,9 +183,9 @@ public static class MarkerPresetService
     public static bool Save(string name, int sampleRate, IReadOnlyDictionary<string, long> markers)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
-        EnsureRoot();
         try
         {
+            EnsureRoot();
             File.WriteAllText(FilePathFor(name), Serialize(sampleRate, markers));
             return true;
         }
@@ -200,9 +200,37 @@ public static class MarkerPresetService
         if (string.IsNullOrWhiteSpace(name)) return "";
         var dir = Resolve(relDir);
         Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, Sanitize(name) + ".json");
-        File.WriteAllText(path, Serialize(sampleRate, markers));
-        return Path.GetRelativePath(Path.GetFullPath(Root), Path.GetFullPath(path));
+        var stem = Sanitize(name);
+        var staged = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".tmp");
+        try
+        {
+            File.WriteAllText(staged, Serialize(sampleRate, markers));
+            for (var index = 1; ; index++)
+            {
+                var fileName = index == 1 ? $"{stem}.json" : $"{stem} ({index}).json";
+                var path = Path.Combine(dir, fileName);
+                try
+                {
+                    File.Move(staged, path);
+                    return Path.GetRelativePath(Root, path);
+                }
+                catch (IOException) when (File.Exists(path) || Directory.Exists(path))
+                {
+                }
+            }
+        }
+        catch
+        {
+            try
+            {
+                File.Delete(staged);
+            }
+            catch (Exception ex)
+            {
+                Log.Line($"marker preset cleanup failed: {ex.Message}");
+            }
+            throw;
+        }
     }
 
     public static bool Delete(string name)

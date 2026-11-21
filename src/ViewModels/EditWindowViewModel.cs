@@ -20,11 +20,12 @@ public sealed partial class MarkerField : ObservableObject
     public string Description { get; init; } = "";
     public int SampleRate { get; init; }
     public long SampleLength { get; init; }
+    public bool UsesMilliseconds { get; init; }
     public long InitialPosition { get; init; }
     public string? LoopEndName { get; init; }
     public string? LoopReturnToName { get; init; }
     public bool CanLoop => LoopEndName is not null || LoopReturnToName is not null;
-    public bool CanSuggest => LoopEndName is not null && LoopReturnToName is null;
+    public bool CanSuggest => Editable && LoopEndName is not null && LoopReturnToName is null;
     public string PlayLoopTip => Name switch
     {
         "TrackDrop" => Str.TipPlayTdlsLoop,
@@ -50,9 +51,14 @@ public sealed partial class MarkerField : ObservableObject
             SampleRate > 0 ? (double) Position / SampleRate : 0,
             SampleLength > 0 ? (double) Position / SampleLength * 100 : 0);
 
-    public void Revert() => Position = InitialPosition;
+    public void Revert()
+    {
+        if (Editable) Position = InitialPosition;
+    }
+
     public void Reset()
     {
+        if (Locked) return;
         var defaultName = Name switch
         {
             "TrackBreakDown" => "PostDrop",
@@ -87,6 +93,7 @@ public sealed partial class MarkerField : ObservableObject
         }
         set
         {
+            if (Locked) return;
             var t = value?.Trim();
 
             if (string.IsNullOrEmpty(t))
@@ -95,37 +102,27 @@ public sealed partial class MarkerField : ObservableObject
                 return;
             }
 
-            if (t.EndsWith('%'))
+            if (SampleLength <= 0 || SampleRate <= 0) return;
+
+            var unit = t[^1];
+            if (unit is '%' or 's' or 'S')
             {
-                var p = t[..^1].Trim().Replace(',', '.');
-
-                if (SampleLength > 0 && double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out var pct))
-                {
-                    var off = (long) Math.Round(pct / 100.0 * SampleLength);
-                    Position = Math.Clamp(pct < 0 ? SampleLength + off : off, 0, SampleLength - 1);
-                }
-
-                return;
+                t = t[..^1].Trim();
             }
 
-            if (t.EndsWith('s') || t.EndsWith('S'))
+            if (double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var valueInUnit)
+                && double.IsFinite(valueInUnit))
             {
-                var sp = t[..^1].Trim().Replace(',', '.');
-
-                if (SampleLength > 0 && double.TryParse(sp, NumberStyles.Float, CultureInfo.InvariantCulture, out var smp))
+                var offset = unit switch
                 {
-                    var off = (long) Math.Round(smp);
-                    Position = Math.Clamp(smp < 0 ? SampleLength + off : off, 0, SampleLength - 1);
-                }
-
-                return;
-            }
-
-            if (SampleRate > 0 && double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var sec))
-            {
-                Position = sec < 0
-                    ? Math.Clamp(SampleLength + (long) Math.Round(sec * SampleRate), 0, SampleLength - 1)
-                    : (long) Math.Round(sec * SampleRate);
+                    '%' => valueInUnit / 100.0 * SampleLength,
+                    's' or 'S' => valueInUnit,
+                    _ => valueInUnit * SampleRate,
+                };
+                var frame = Math.Round(offset);
+                if (valueInUnit < 0) frame += SampleLength;
+                var last = UsesMilliseconds ? SampleLength : SampleLength - 1;
+                Position = frame >= last ? last : (long)Math.Max(0, frame);
             }
         }
     }
@@ -139,7 +136,11 @@ public sealed partial class MarkerField : ObservableObject
 
     partial void OnDisplayUnitChanged(MarkerValueUnit value) => OnPropertyChanged(nameof(SecondsText));
 
-    partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(Editable));
+    partial void OnLockedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(Editable));
+        OnPropertyChanged(nameof(CanSuggest));
+    }
 }
 
 public sealed class MarkerGroup
@@ -341,7 +342,8 @@ public sealed partial class EditWindowViewModel : ObservableObject
                     Description = UsesMilliseconds && name == "TrackDrop" ? Str.MkTrackDropHorizon2
                         : !UsesMilliseconds && name == "TrackBreakDown" ? Str.MkTrackBreakDownHorizon3
                         : Descriptions.GetValueOrDefault(name, ""),
-                    SampleRate = rate, SampleLength = len, Position = position, InitialPosition = position,
+                    SampleRate = rate, SampleLength = len, UsesMilliseconds = UsesMilliseconds,
+                    Position = position, InitialPosition = position,
                     LoopEndName = UsesMilliseconds ? null : name switch { "TrackLoopStart" => "TrackLoopEnd", "PostRaceLoopStart" => "PostRaceLoopEnd", "TrackDrop" => "TrackLoopEnd", "PostDrop" or "TrackBreakDown" => "PostRaceLoopEnd", _ => null },
                     LoopReturnToName = UsesMilliseconds ? null : name switch { "TrackDrop" => "TrackLoopStart", "PostDrop" or "TrackBreakDown" => "PostRaceLoopStart", _ => null } });
             }
@@ -385,7 +387,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
 
         foreach (var f in AllMarkers)
         {
-            f.Position = def.TryGetValue(f.Name, out var p) ? p : -1;
+            if (f.Editable) f.Position = def.TryGetValue(f.Name, out var p) ? p : -1;
         }
     }
 
@@ -401,10 +403,10 @@ public sealed partial class EditWindowViewModel : ObservableObject
             presetSampleRate > 0 ? presetSampleRate : SampleRate, UsesTrackBreakDown);
         foreach (var f in AllMarkers)
         {
-            if (adapted.TryGetValue(f.Name, out var p))
+            if (f.Editable && adapted.TryGetValue(f.Name, out var p))
             {
-                var scaled = p < 0 ? -1 : scale != 1.0 ? (long) Math.Round(p * scale) : p;
-                f.Position = scaled < 0 ? -1 : Math.Clamp(scaled, 0, max);
+                f.Position = p < 0 ? -1 : scale == 1.0 ? Math.Min(p, max) :
+                    (long)Math.Min(Math.Round(p * scale), max);
                 hits++;
             }
         }
@@ -416,7 +418,7 @@ public sealed partial class EditWindowViewModel : ObservableObject
         var dict = new Dictionary<string, long>();
         foreach (var f in AllMarkers)
         {
-            if (f.Position >= 0 || UsesMilliseconds) dict[f.Name] = f.Position;
+            dict[f.Name] = f.Position;
         }
         return dict;
     }

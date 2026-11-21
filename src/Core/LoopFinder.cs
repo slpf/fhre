@@ -201,6 +201,7 @@ public static class LoopFinder
         var result = new List<LoopPair>();
         try
         {
+            ct.ThrowIfCancellationRequested();
             if (mono is null || mono.Length < NFft * 4 || rate <= 0 || options is null)
             {
                 return result;
@@ -209,6 +210,7 @@ public static class LoopFinder
             if (cacheKey is not null && GetCached((cacheKey, CacheKeyOptions(options))) is { } cached)
             {
                 RankAndAppend(PreProcess(mono, out _), rate, cached, options, result, log);
+                ct.ThrowIfCancellationRequested();
                 return result;
             }
 
@@ -225,7 +227,7 @@ public static class LoopFinder
                 ?? options.MinDurationMultiplier * totalSec;
             var maxLoopBaseSec = options.MaxLoopSeconds ?? totalSec;
     
-            var power = Stft(mono, options.PreEmphasis);
+            var power = Stft(mono, options.PreEmphasis, ct);
             var nFrames = power.Length;
             if (nFrames < 8)
             {
@@ -244,7 +246,7 @@ public static class LoopFinder
             if (options.AutoTune)
             {
                 autoHarmonic = LoopAutoProfile.IsPercussive(onsetEnv, nFrames, rate);
-                vocalPower ??= useVocalStem ? Stft(vocalStem!, false) : power;
+                vocalPower ??= useVocalStem ? Stft(vocalStem!, false, ct) : power;
                 vadScores = DetectVocalActivity(vocalPower, rate);
                 if (MeanVad(vadScores, nFrames) > 0.45)
                 {
@@ -254,7 +256,7 @@ public static class LoopFinder
             }
             else if (options.VadThreshold > 0)
             {
-                vocalPower ??= useVocalStem ? Stft(vocalStem!, false) : power;
+                vocalPower ??= useVocalStem ? Stft(vocalStem!, false, ct) : power;
                 vadScores = DetectVocalActivity(vocalPower, rate);
             }
     
@@ -264,9 +266,10 @@ public static class LoopFinder
             var useSsm = options.UseSsmNomination;
             var useRhythm = options.UseRhythmNomination;
     
-            var chromaSource = useHarmonic ? HarmonicComponent(power, rate) : power;
-            var chromaFull = Chroma(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold);
-            var chromaLow = ChromaLowBand(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold);
+            ct.ThrowIfCancellationRequested();
+            var chromaSource = useHarmonic ? HarmonicComponent(power, rate, ct) : power;
+            var chromaFull = Chroma(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold, ct);
+            var chromaLow = ChromaLowBand(chromaSource, rate, vadScores, options.ChromaPeakThreshold, vadThreshold, ct);
             var chromaCombined = BlendChroma(chromaFull, chromaLow, fullWeight: 0.7, lowWeight: 0.3);
             var tuningOffset = DetectTuningOffset(power, rate);
             var chroma = Math.Abs(tuningOffset) > 0.05
@@ -279,7 +282,7 @@ public static class LoopFinder
             var stride = CoarseStride(nFrames);
             var coarseAnchors = StridedFrames(nFrames, stride);
             var anchors = beats.Length >= 2 ? UnionSorted(beats, coarseAnchors) : coarseAnchors;
-            var sections = options.SectionWeight > 0 ? DetectSections(chroma, beats, nFrames, rate) : [];
+            var sections = options.SectionWeight > 0 ? DetectSections(chroma, beats, nFrames, rate, ct) : [];
             if (sections.Length > 0)
             {
                 anchors = UnionSorted(anchors, sections);
@@ -318,7 +321,8 @@ public static class LoopFinder
                 };
             }
             var effNoteDev = effOptions.NoteDeviation;
-            var mfcc = effOptions.TimbreWeight > 0 ? Mfcc(power, rate) : null;
+            ct.ThrowIfCancellationRequested();
+            var mfcc = effOptions.TimbreWeight > 0 ? Mfcc(power, rate, ct) : null;
     
             if (anchors.Length < 2)
             {
@@ -352,6 +356,7 @@ public static class LoopFinder
             var allCandidates = new List<Cand>();
 
             List<Cand>? ssmCands = null;
+            ct.ThrowIfCancellationRequested();
             if (useSsm || useRhythm)
             {
                 var ds = Math.Max(2, (int) Math.Round(0.1 * rate / Hop));
@@ -359,10 +364,10 @@ public static class LoopFinder
                 {
                     var winFrames = Math.Clamp((int) Math.Round(2.0 * rate / Hop / ds), 2, Math.Max(2, nFrames / ds / 4));
                     var mfccCands = useSsm
-                        ? FindSsmCandidates(Mfcc(AggregatePower(power, ds), rate), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcSsm)
+                        ? FindSsmCandidates(Mfcc(AggregatePower(power, ds), rate, ct), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcSsm, ct)
                         : new List<Cand>();
                     var rhythmCands = useRhythm
-                        ? FindSsmCandidates(OnsetWindowFeat(onsetEnv, ds, winFrames), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcRhythm)
+                        ? FindSsmCandidates(OnsetWindowFeat(onsetEnv, ds, winFrames), baseMinLoop, baseMaxLoop, ds, nFrames, rate, SrcRhythm, ct)
                         : new List<Cand>();
                     ssmCands = new List<Cand>(mfccCands.Count + rhythmCands.Count);
                     ssmCands.AddRange(mfccCands);
@@ -387,11 +392,11 @@ public static class LoopFinder
             var ssmAdded = false;
             foreach (var (minLoop, maxLoop) in passSpecs)
             {
-                if (ct.IsCancellationRequested) break;
+                ct.ThrowIfCancellationRequested();
                 var candidates = FindCandidatePairs(
                     chroma, loudness, anchors, minLoop, maxLoop,
                     effOptions.GateScale, effOptions.PreRollFrames,
-                    effNoteDev, effOptions.LoudnessDifference);
+                    effNoteDev, effOptions.LoudnessDifference, ct);
                 if (!ssmAdded && ssmCands is { Count: > 0 })
                 {
                     candidates.AddRange(ssmCands);
@@ -404,7 +409,7 @@ public static class LoopFinder
                     continue;
                 }
     
-                Assess(chroma, candidates, testOffset, weights, effOptions.DisablePruning);
+                Assess(chroma, candidates, testOffset, weights, effOptions.DisablePruning, ct);
                 LogLine($"  assess/prune -> {candidates.Count}");
     
                 if (effOptions.RefinePasses >= 1 && stride > 1)
@@ -422,7 +427,7 @@ public static class LoopFinder
     
                 if ((effOptions.Stages & LoopStage.XCorr) != 0)
                 {
-                    RefineXCorr(candidates, mono, rate);
+                    RefineXCorr(candidates, mono, rate, ct);
                 }
 
                 if ((effOptions.Stages & LoopStage.PhraseSnap) != 0 && phraseOnsets is { Length: >= 2 })
@@ -434,6 +439,7 @@ public static class LoopFinder
                 var timbreEnabled = ReferenceEquals(timbreSignal, mfcc);
                 foreach (var c in candidates)
                 {
+                    ct.ThrowIfCancellationRequested();
                     var len = c.EndFrame - c.StartFrame;
                     var chromaSeam = c.FrameAdjusted
                         ? LoopScore(c.StartFrame, c.EndFrame, chroma, testOffset, weights)
@@ -540,6 +546,7 @@ public static class LoopFinder
                 allCandidates.AddRange(candidates);
             }
     
+            ct.ThrowIfCancellationRequested();
             allCandidates.Sort((a, b) => b.Score.CompareTo(a.Score));
 
             int[] bars = [];
@@ -558,16 +565,16 @@ public static class LoopFinder
             }
 
             var analysis = new Analysis(allCandidates, bpm, sections, bars, nFrames, trimOffset, originalLength, effOptions.SectionWeight);
+            RankAndAppend(mono, rate, analysis, options, result, log);
+            ct.ThrowIfCancellationRequested();
             if (cacheKey is not null)
             {
-                SetCache((cacheKey, CacheKeyOptions(options)), analysis);
+                SetCache((cacheKey, CacheKeyOptions(options)), analysis, ct);
             }
-    
-            RankAndAppend(mono, rate, analysis, options, result, log);
     
             return result;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             log?.Invoke($"[LoopFinder] unexpected error: {ex.Message}");
             return result;
@@ -733,10 +740,11 @@ public static class LoopFinder
         }
     }
 
-    private static void SetCache((string Path, LoopSearchOptions Options) key, Analysis analysis)
+    private static void SetCache((string Path, LoopSearchOptions Options) key, Analysis analysis, CancellationToken ct)
     {
         lock (_cacheLock)
         {
+            ct.ThrowIfCancellationRequested();
             if (_cacheNodes.TryGetValue(key, out var existing))
             {
                 _cacheOrder.Remove(existing);
@@ -780,7 +788,7 @@ public static class LoopFinder
         public int Sources = SrcChroma;
     }
 
-    private static float[][] HarmonicComponent(float[][] power, int rate)
+    private static float[][] HarmonicComponent(float[][] power, int rate, CancellationToken ct)
     {
         var n = power.Length;
         if (n == 0) return power;
@@ -790,7 +798,7 @@ public static class LoopFinder
         var cutoffBin = Math.Min(bins, Math.Max(1, (int) (6000.0 * NFft / rate)));
 
         var harmonic = new float[n][];
-        Parallel.For(0, n, t =>
+        Parallel.For(0, n, new ParallelOptions { CancellationToken = ct }, t =>
         {
             var dst = new float[bins];
             var timeBuf = new float[kernel];
@@ -958,7 +966,7 @@ public static class LoopFinder
         return feat;
     }
 
-    private static List<Cand> FindSsmCandidates(float[][] feat, int minLoop, int maxLoop, int ds, int nFrames, int rate, int source)
+    private static List<Cand> FindSsmCandidates(float[][] feat, int minLoop, int maxLoop, int ds, int nFrames, int rate, int source, CancellationToken ct)
     {
         var collected = new List<(int D, int BestI, double Score)>();
         var m = feat.Length;
@@ -974,6 +982,7 @@ public static class LoopFinder
 
         for (var d = minD; d <= maxD; d += dStep)
         {
+            ct.ThrowIfCancellationRequested();
             var span = m - d;
             if (span <= winFrames)
             {
@@ -1183,7 +1192,7 @@ public static class LoopFinder
 
     private static List<Cand> FindCandidatePairs(float[][] chroma, double[] loudness, int[] beats,
         int minLoop, int maxLoop, double gateScale, int preRollFrames,
-        double noteDeviation, double loudnessDifference)
+        double noteDeviation, double loudnessDifference, CancellationToken ct)
     {
         var list = new List<Cand>();
         var w = Math.Max(0, preRollFrames);
@@ -1198,6 +1207,7 @@ public static class LoopFinder
 
         for (var idx = 0; idx < beats.Length; idx++)
         {
+            ct.ThrowIfCancellationRequested();
             if (deviation[idx] < 0.01) continue;
             var loopEnd = beats[idx];
             var endAvg = averaged[idx];
@@ -1266,7 +1276,7 @@ public static class LoopFinder
     }
 
     private static void Assess(float[][] chroma, List<Cand> candidates, int testOffset, double[] weights,
-        bool disablePruning)
+        bool disablePruning, CancellationToken ct)
     {
         var pool = candidates;
 
@@ -1277,6 +1287,7 @@ public static class LoopFinder
 
         foreach (var c in pool)
         {
+            ct.ThrowIfCancellationRequested();
             c.Score = LoopScore(c.StartFrame, c.EndFrame, chroma, testOffset, weights);
         }
 
@@ -1626,7 +1637,7 @@ public static class LoopFinder
         return dot / Math.Max(Math.Sqrt(na) * Math.Sqrt(nb), 1e-10);
     }
 
-    private static void RefineXCorr(List<Cand> candidates, float[] audio, int rate)
+    private static void RefineXCorr(List<Cand> candidates, float[] audio, int rate, CancellationToken ct)
     {
         var topN = Math.Min(candidates.Count, 16);
         var work = candidates.GetRange(0, topN);
@@ -1635,6 +1646,7 @@ public static class LoopFinder
 
         foreach (var c in work)
         {
+            ct.ThrowIfCancellationRequested();
             if (c.Score < 0.5) continue;
 
             var sBase = c.StartFrame * Hop;
@@ -2265,7 +2277,7 @@ public static class LoopFinder
         return Math.Max(0, sampleIdx + argmin - offset + offsetCorrection);
     }
 
-    private static float[][] Stft(float[] x, bool preEmphasis)
+    private static float[][] Stft(float[] x, bool preEmphasis, CancellationToken ct)
     {
         var win = new double[NFft];
         for (var i = 0; i < NFft; i++)
@@ -2280,7 +2292,8 @@ public static class LoopFinder
 
         const double preCoef = 0.97;
 
-        Parallel.For(0, nFrames, () => (new double[NFft], new double[NFft]), (f, _, buf) =>
+        Parallel.For(0, nFrames, new ParallelOptions { CancellationToken = ct },
+            () => (new double[NFft], new double[NFft]), (f, _, buf) =>
         {
             var (re, im) = buf;
             var center = f * Hop;
@@ -2314,16 +2327,17 @@ public static class LoopFinder
         return frames;
     }
 
-    private static float[][] ChromaLowBand(float[][] power, int rate, float[]? vadScores, double peakThresh, double vadThresh)
+    private static float[][] ChromaLowBand(float[][] power, int rate, float[]? vadScores, double peakThresh, double vadThresh, CancellationToken ct)
     {
         var cutoff = Math.Max(1, (int) (250.0 * NFft / rate));
         var masked = new float[power.Length][];
         for (var f = 0; f < power.Length; f++)
         {
+            ct.ThrowIfCancellationRequested();
             masked[f] = new float[Bins];
             Array.Copy(power[f], masked[f], cutoff);
         }
-        return Chroma(masked, rate, vadScores, peakThresh, vadThresh);
+        return Chroma(masked, rate, vadScores, peakThresh, vadThresh, ct);
     }
 
     private static float[][] BlendChroma(float[][] full, float[][] low, double fullWeight, double lowWeight)
@@ -2400,7 +2414,7 @@ public static class LoopFinder
         return rotated;
     }
 
-    private static int[] DetectSections(float[][] chroma, int[] beats, int nFrames, int rate)
+    private static int[] DetectSections(float[][] chroma, int[] beats, int nFrames, int rate, CancellationToken ct)
     {
         int b;
         float[][] feat;
@@ -2458,6 +2472,7 @@ public static class LoopFinder
         var ssm = new float[b][];
         for (var i = 0; i < b; i++)
         {
+            ct.ThrowIfCancellationRequested();
             ssm[i] = new float[b];
             for (var j = 0; j < b; j++)
             {
@@ -2488,6 +2503,7 @@ public static class LoopFinder
         var novelty = new double[b];
         for (var i = 0; i < b; i++)
         {
+            ct.ThrowIfCancellationRequested();
             double sum = 0;
             for (var a = -l; a <= l; a++)
             {
@@ -2629,7 +2645,7 @@ public static class LoopFinder
         return fb;
     }
 
-    private static float[][] Mfcc(float[][] power, int rate)
+    private static float[][] Mfcc(float[][] power, int rate, CancellationToken ct)
     {
         const int nMels = 40;
         const int kCoef = 8;
@@ -2637,7 +2653,7 @@ public static class LoopFinder
         var n = power.Length;
         var mfcc = new float[n][];
 
-        Parallel.For(0, n, f =>
+        Parallel.For(0, n, new ParallelOptions { CancellationToken = ct }, f =>
         {
             var p = power[f];
             var logMel = new double[nMels];
@@ -2671,13 +2687,13 @@ public static class LoopFinder
         return mfcc;
     }
 
-    private static float[][] Chroma(float[][] power, int rate, float[]? vadScores, double peakThresh, double vadThresh)
+    private static float[][] Chroma(float[][] power, int rate, float[]? vadScores, double peakThresh, double vadThresh, CancellationToken ct)
     {
         var fb = ChromaFilterbank(rate);
         var n = power.Length;
         var chroma = new float[n][];
 
-        Parallel.For(0, n, f =>
+        Parallel.For(0, n, new ParallelOptions { CancellationToken = ct }, f =>
         {
             var p = power[f];
             var c = new float[NChroma];

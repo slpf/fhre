@@ -76,6 +76,8 @@ public sealed class WaveformView : Control
     private int _regionDrag;
     private double _viewStart;
     private double _viewLen;
+    private StreamGeometry? _waveform;
+    private (double Width, double Height, double Start, double Length) _waveformViewport;
     private bool _panning;
     private double _panLastX;
     private MarkerField? _labelLock;
@@ -169,6 +171,10 @@ public sealed class WaveformView : Control
         {
             _viewStart = 0;
             _viewLen = 0;
+        }
+        else if (change.Property == PeaksProperty)
+        {
+            _waveform = null;
         }
         else if (change.Property == RegionStartProperty || change.Property == RegionEndProperty)
         {
@@ -541,6 +547,49 @@ public sealed class WaveformView : Control
         return text;
     }
 
+    private StreamGeometry GetWaveform(float[] peaks, double width, double height)
+    {
+        var (start, length) = View();
+        var viewport = (width, height, start, length);
+        if (_waveform is not null && _waveformViewport == viewport) return _waveform;
+
+        var geometry = new StreamGeometry();
+        using (var path = geometry.Open())
+        {
+            var mid = height / 2;
+            var amplitude = mid - 2;
+            for (var x = 0; x < (int)width; x++)
+            {
+                var first = Math.Clamp((int)(start + x / width * length), 0, peaks.Length - 1);
+                var last = Math.Clamp((int)(start + (x + 1) / width * length), first, peaks.Length - 1);
+                var step = (last - first) / 2048 + 1;
+                var min = peaks[first];
+                var max = peaks[first];
+                for (var i = first + step; i <= last; i += step)
+                {
+                    var sample = peaks[i];
+                    if (sample < min) min = sample;
+                    if (sample > max) max = sample;
+                }
+
+                var top = mid - Math.Clamp(max, -1f, 1f) * amplitude;
+                var bottom = mid - Math.Clamp(min, -1f, 1f) * amplitude;
+                if (bottom - top < 1)
+                {
+                    top -= 0.5;
+                    bottom += 0.5;
+                }
+
+                path.BeginFigure(new Point(x + 0.5, top), false);
+                path.LineTo(new Point(x + 0.5, bottom));
+                path.EndFigure(false);
+            }
+        }
+
+        _waveformViewport = viewport;
+        return _waveform = geometry;
+    }
+
     public override void Render(DrawingContext ctx)
     {
         var w = Bounds.Width;
@@ -560,40 +609,7 @@ public sealed class WaveformView : Control
         
         if (peaks is { Length: > 0 })
         {
-            var n = peaks.Length;
-            var amax = mid - 2;
-            var (vs, vl) = View();
-
-            for (var px = 0; px < (int) w; px++)
-            {
-                var a = (int) (vs + px / w * vl);
-                var b = (int) (vs + (px + 1) / w * vl);
-                a = a < 0 ? 0 : a >= n ? n - 1 : a;
-                b = b < 0 ? 0 : b >= n ? n - 1 : b;
-                if (b < a) b = a;
-
-                var step = (b - a) / 2048 + 1;
-                var min = peaks[a];
-                var max = peaks[a];
-
-                for (var i = a; i <= b; i += step)
-                {
-                    var s = peaks[i];
-                    if (s < min) min = s;
-                    if (s > max) max = s;
-                }
-
-                var y0 = mid - Math.Clamp(max, -1f, 1f) * amax;
-                var y1 = mid - Math.Clamp(min, -1f, 1f) * amax;
-
-                if (y1 - y0 < 1)
-                {
-                    y0 -= 0.5;
-                    y1 += 0.5;
-                }
-
-                ctx.DrawLine(WavePen, new Point(px + 0.5, y0), new Point(px + 0.5, y1));
-            }
+            ctx.DrawGeometry(null, WavePen, GetWaveform(peaks, w, h));
         }
 
         var sf = StartFraction;

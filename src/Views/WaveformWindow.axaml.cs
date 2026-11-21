@@ -26,7 +26,7 @@ public partial class WaveformWindow : Window
     private bool _looping;
     private double _loopStart;
     private double _loopEnd;
-    private double _dropStartSec = -1;
+    private double _loopSeekStart;
     private double _anchorSec;
     private long _anchorTicks;
     private bool _clockRunning;
@@ -86,6 +86,7 @@ public partial class WaveformWindow : Window
 
         Closed += (_, _) =>
         {
+            _closed = true;
             _player.Ended -= OnPlaybackEnded;
             Wave.SeekRequested -= OnSeek;
             Wave.HeadSeekRequested -= OnHeadSeek;
@@ -146,7 +147,7 @@ public partial class WaveformWindow : Window
 
     private void OnSetFromPlayhead(object? sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MarkerField field } || field.SampleRate <= 0)
+        if (sender is not Button { Tag: MarkerField { Editable: true } field } || field.SampleRate <= 0)
         {
             return;
         }
@@ -158,25 +159,28 @@ public partial class WaveformWindow : Window
             : Math.Max(0, frame);
     }
 
-    private void StartPlayback(double fromSec, bool loop)
+    private void StartPlayback(double fromSec, (double Start, double End)? loop = null)
     {
         var wav = Vm.WavPath;
-        if (string.IsNullOrEmpty(wav) || !File.Exists(wav))
+        if (_closed || string.IsNullOrEmpty(wav)) return;
+
+        fromSec = Math.Max(0, fromSec);
+        try
         {
+            _player.Play(wav, 0, fromSec, loop);
+        }
+        catch (Exception ex)
+        {
+            OnPlaybackEnded(ex);
             return;
         }
 
-        _looping = loop;
-        _player.Play(wav, 0, Math.Max(0, fromSec));
-        if (loop)
+        _looping = loop.HasValue;
+        if (loop is { } bounds)
         {
-            _player.SetLoop(_loopStart, _loopEnd);
+            (_loopStart, _loopEnd) = bounds;
+            _loopSeekStart = Math.Min(fromSec, _loopStart);
         }
-        else
-        {
-            _player.ClearLoop();
-        }
-
         _headSec = fromSec;
         SetClockAnchor(fromSec, running: true);
         _timer.Start();
@@ -186,7 +190,7 @@ public partial class WaveformWindow : Window
     private void StopPlayback()
     {
         _looping = false;
-        _dropStartSec = -1;
+        _timer.Stop();
         _player.Stop();
         _headSec = _startSec;
         SetClockAnchor(_startSec, running: false);
@@ -241,7 +245,7 @@ public partial class WaveformWindow : Window
         }
         else
         {
-            StartPlayback(_startSec, loop: false);
+            StartPlayback(_startSec);
         }
     }
 
@@ -252,22 +256,17 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        _loopStart = startSec;
-        _loopEnd = endSec;
-        StartPlayback(startSec, loop: true);
+        StartPlayback(startSec, (startSec, endSec));
     }
 
     private void StartLoopWithReturnTo(double dropSec, double endSec, double loopStartSec)
     {
-        if (endSec <= dropSec)
+        if (endSec <= dropSec || endSec <= loopStartSec)
         {
             return;
         }
 
-        _loopStart = loopStartSec;
-        _loopEnd = endSec;
-        _dropStartSec = dropSec;
-        StartPlayback(dropSec, loop: false);
+        StartPlayback(dropSec, (loopStartSec, endSec));
     }
 
     private void LoopToggle()
@@ -283,6 +282,7 @@ public partial class WaveformWindow : Window
     }
 
     private CancellationTokenSource? _suggestCts;
+    private bool _closed;
     private bool _forceClose;
     private bool _confirmingClose;
 
@@ -295,32 +295,37 @@ public partial class WaveformWindow : Window
             return;
         }
 
-        if (Vm.IsSuggesting)
+        if (_suggestCts is not null)
         {
             e.Cancel = true;
             if (!_confirmingClose)
             {
-                _ = ConfirmCloseWhileSuggestingAsync();
+                SafeAsync.Run(ConfirmCloseWhileSuggestingAsync, "cancel loop search", this);
             }
             return;
         }
 
-        _suggestCts?.Cancel();
         base.OnClosing(e);
     }
 
     private async Task ConfirmCloseWhileSuggestingAsync()
     {
         _confirmingClose = true;
-        var ok = await MessageDialog.ShowAsync(this,
-            Str.DlgInterruptSearchTitle,
-            Str.DlgInterruptSearchBody,
-            Str.DlgInterruptSearchOk,
-            Str.BtnCancel);
-        _confirmingClose = false;
+        bool ok;
+        try
+        {
+            ok = await MessageDialog.ShowAsync(this,
+                Str.DlgInterruptSearchTitle,
+                Str.DlgInterruptSearchBody,
+                Str.DlgInterruptSearchOk,
+                Str.BtnCancel);
+        }
+        finally
+        {
+            _confirmingClose = false;
+        }
         if (!ok) return;
 
-        _suggestCts?.Cancel();
         _forceClose = true;
         Close();
     }
@@ -330,24 +335,21 @@ public partial class WaveformWindow : Window
 
     private async Task SuggestLoopsAsync(object? sender)
     {
-        if (sender is not Control ctrl || ctrl.Tag is not MarkerField start || start.LoopEndName is null || Vm.SampleRate <= 0)
+        if (_suggestCts is not null || sender is not Control ctrl
+            || ctrl.Tag is not MarkerField { CanSuggest: true, LoopEndName: { } endName } start || Vm.SampleRate <= 0)
         {
             return;
         }
 
-        MarkerField? end = null;
-
-        foreach (var m in Vm.AllMarkers)
-        {
-            if (m.Name == start.LoopEndName)
-            {
-                end = m;
-                break;
-            }
-        }
-
+        var end = FindMarker(endName);
         if (end is null)
         {
+            return;
+        }
+
+        if (end.Locked)
+        {
+            await MessageDialog.ShowAsync(this, Str.TitleNotice, Str.DlgUnlockLoopMarkers);
             return;
         }
 
@@ -357,7 +359,9 @@ public partial class WaveformWindow : Window
         var minMatch = auto ? 0.80 : (Vm.Settings?.LoopMinMatch ?? 0.80);
 
         List<LoopPair> pairs;
-
+        using var search = new CancellationTokenSource();
+        _suggestCts = search;
+        var ct = search.Token;
         try
         {
             if (Vm.Peaks is null)
@@ -367,7 +371,7 @@ public partial class WaveformWindow : Window
             }
 
             var samples = Vm.Peaks;
-            if (samples is null)
+            if (samples is null || ct.IsCancellationRequested)
             {
                 return;
             }
@@ -399,29 +403,26 @@ public partial class WaveformWindow : Window
             logger = s => FH6RB.Services.Log.Line(s);
 #endif
 
-            _suggestCts?.Cancel();
-            _suggestCts = new CancellationTokenSource();
-            var ct = _suggestCts.Token;
-
-            var task = Task.Run(() =>
-            {
-                if (ct.IsCancellationRequested) return new List<LoopPair>();
-                return LoopFinder.Find(samples, rate, loopOptions, cacheKey, logger, null, ct);
-            }, ct);
+            var task = Task.Run(() => LoopFinder.Find(samples, rate, loopOptions, cacheKey, logger, null, ct), ct);
             if (!Vm.IsSuggesting && !task.IsCompleted)
             {
                 var first = await Task.WhenAny(task, Task.Delay(120));
-                if (first != task)
+                if (first != task && !ct.IsCancellationRequested)
                 {
                     Vm.IsSuggesting = true;
                 }
             }
 
             pairs = await task;
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested || _closed || _confirmingClose) return;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return;
         }
         finally
         {
+            _suggestCts = null;
             Vm.IsSuggesting = false;
         }
 
@@ -452,7 +453,7 @@ public partial class WaveformWindow : Window
             const double MinThreshold = 0.50;
 
             var effectiveMinMatch = minMatch;
-            while (effectiveMinMatch > MinThreshold)
+            while (auto && effectiveMinMatch > MinThreshold)
             {
                 var count = 0;
                 foreach (var p in pairs)
@@ -461,7 +462,7 @@ public partial class WaveformWindow : Window
                     if (count >= MinShown) break;
                 }
                 if (count >= MinShown) break;
-                effectiveMinMatch -= StepDown;
+                effectiveMinMatch = Math.Max(MinThreshold, effectiveMinMatch - StepDown);
             }
 
             var shown = 0;
@@ -501,6 +502,7 @@ public partial class WaveformWindow : Window
                 var captureEnd = end;
                 btn.Click += (_, _) =>
                 {
+                    if (captureStart.Locked || captureEnd.Locked) return;
                     captureStart.Position = ss;
                     captureEnd.Position = es;
                     StartLoop(ss / (double) rate, es / (double) rate);
@@ -607,7 +609,7 @@ public partial class WaveformWindow : Window
         }
         else
         {
-            StartPlayback(_startSec, loop: false);
+            StartPlayback(_startSec);
         }
     }
 
@@ -715,7 +717,7 @@ public partial class WaveformWindow : Window
 
         var lo = RegionStartSec;
         var hi = EffectiveEndSec(total);
-        var baseSec = _player.HasMedia ? _player.Position.TotalSeconds : _headSec;
+        var baseSec = _headSec;
 
         double target;
 
@@ -742,26 +744,7 @@ public partial class WaveformWindow : Window
             target = Math.Clamp(baseSec + deltaSec, lo, hi);
         }
 
-        _headSec = target;
-
-        if (_dropStartSec >= 0 && (target < _dropStartSec || target > _loopEnd))
-        {
-            _dropStartSec = -1;
-        }
-
-        if (_looping && (target < _loopStart || target >= _loopEnd))
-        {
-            _looping = false;
-            _player.ClearLoop();
-        }
-
-        if (_player.HasMedia)
-        {
-            _player.Position = TimeSpan.FromSeconds(target);
-        }
-
-        SetClockAnchor(target, _player.IsPlaying);
-        UpdateUi();
+        SeekPlayback(target);
     }
 
     private void OnSeek(double fraction)
@@ -799,14 +782,14 @@ public partial class WaveformWindow : Window
         }
 
         var target = Math.Clamp(fraction * total, RegionStartSec, EffectiveEndSec(total));
+        SeekPlayback(target);
+    }
+
+    private void SeekPlayback(double target)
+    {
         _headSec = target;
 
-        if (_dropStartSec >= 0 && (target < _dropStartSec || target > _loopEnd))
-        {
-            _dropStartSec = -1;
-        }
-
-        if (_looping && (target < _loopStart || target >= _loopEnd))
+        if (_looping && (target < _loopSeekStart || target >= _loopEnd))
         {
             _looping = false;
             _player.ClearLoop();
@@ -827,17 +810,11 @@ public partial class WaveformWindow : Window
         {
             var currentPos = ElapsedSinceAnchor();
 
-            if (_dropStartSec >= 0 && currentPos >= _loopEnd)
+            if (_looping && currentPos >= _loopEnd)
             {
-                _dropStartSec = -1;
-                _looping = true;
-                _player.SetLoop(_loopStart, _loopEnd);
-                SetClockAnchor(_loopStart, running: true);
-            }
-            else if (_looping && _loopEnd > _loopStart && currentPos >= _loopEnd)
-            {
+                _loopSeekStart = _loopStart;
                 var span = _loopEnd - _loopStart;
-                SetClockAnchor(_loopStart + ((currentPos - _loopStart) % span), running: true);
+                SetClockAnchor(_loopStart + ((currentPos - _loopEnd) % span), running: true);
             }
             else if (!_looping && currentPos >= RegionEndSec)
             {
@@ -926,6 +903,10 @@ public partial class WaveformWindow : Window
         {
             FH6RB.Services.Log.Line($"Preset saved: {name} ({positions.Count} markers)");
         }
+        else
+        {
+            await MessageDialog.ShowAsync(this, Str.TitleNotice, Str.StatusPresetSaveFailed);
+        }
     }
 
     private void OnLoadPreset(object? sender, RoutedEventArgs e)
@@ -1008,18 +989,16 @@ public partial class WaveformWindow : Window
         UpdateUi();
     }
 
-    private void OnPlaybackEnded() =>
-        Dispatcher.UIThread.Post(() =>
+    private void OnPlaybackEnded(Exception? error)
+    {
+        StopPlayback();
+        if (error is not null)
         {
-            if (_looping)
-            {
-                StartPlayback(_loopStart, loop: true);
-            }
-            else
-            {
-                StopPlayback();
-            }
-        });
+            FH6RB.Services.Log.Line("waveform playback error: " + error);
+            SafeAsync.Run(() => MessageDialog.ShowAsync(this, Str.TitleNotice,
+                string.Format(Str.StatusPlaybackErrorFmt, error.Message)), "waveform playback", this);
+        }
+    }
 
     private void OnFieldNamePressed(object? sender, PointerPressedEventArgs e)
     {
@@ -1065,8 +1044,12 @@ public partial class WaveformWindow : Window
         }
     }
 
-    private async void OnSave(object? sender, RoutedEventArgs e)
+    private void OnSave(object? sender, RoutedEventArgs e)
+        => SafeAsync.Run(SaveAsync, "save markers", this);
+
+    private async Task SaveAsync()
     {
+        if (_suggestCts is not null) return;
         var errors = Vm.ValidateMarkers();
         if (errors.Count > 0)
         {

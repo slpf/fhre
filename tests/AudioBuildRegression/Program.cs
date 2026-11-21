@@ -30,6 +30,7 @@ try
         return 0;
     }
     TestFsbHeaders();
+    MarkerEditingChecks.Run(temp);
     TestAudioMeasurements(temp);
     await TrackLoudnessChecks.RunAsync(temp, path => WriteEmptyBank(path));
     TestTrackPacks(temp);
