@@ -54,11 +54,18 @@ public sealed partial class MarkerDefaultsViewModel : ObservableObject
 
     public void Save()
     {
-        var specs = Fields.ToDictionary(f => f.SettingName, f => f.Spec?.Trim() ?? "");
+        var specs = MarkerDefaults.Snapshot();
+        foreach (var field in Fields)
+        {
+            var spec = field.Spec?.Trim() ?? "";
+            if (string.Equals(spec, Str.WatermarkOff, StringComparison.OrdinalIgnoreCase)) spec = MarkerDefaults.Off;
+            if (spec.Length > 0 && !MarkerDefaults.TryParse(spec, out _, out _, out _))
+                throw new FormatException(string.Format(Str.ErrMarkerDefaultFmt, field.Name));
+            specs[field.SettingName] = spec;
+        }
 
+        SettingsService.Update(_settings, draft => draft.MarkerDefaults = specs);
         MarkerDefaults.Apply(specs);
-        _settings.MarkerDefaults = MarkerDefaults.Snapshot();
-        SettingsService.Save(_settings);
 
         Saved = true;
     }

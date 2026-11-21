@@ -234,37 +234,36 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
 
     public void ResetSettings()
     {
-        var keepPath = _settings.GamePath;
         var d = new AppSettings();
 
-        _settings.LastLanguage = d.LastLanguage;
-        _settings.LastStationBank = d.LastStationBank;
-        _settings.TargetLufs = d.TargetLufs;
-        _settings.TargetTruePeak = d.TargetTruePeak;
-        _settings.VorbisQuality = d.VorbisQuality;
-        _settings.EncodeParallelism = d.EncodeParallelism;
-        _settings.LoudnessNormalize = d.LoudnessNormalize;
-        _settings.PeakLimiter = d.PeakLimiter;
-        _settings.MeasureTrackLoudness = d.MeasureTrackLoudness;
-        _settings.MarkerDefaults = new();
-        _settings.WaveformLabelRows = new();
-        _settings.LoopAutoTune = d.LoopAutoTune;
-        _settings.LoopMinSeconds = d.LoopMinSeconds;
-        _settings.LoopNoteDeviation = d.LoopNoteDeviation;
-        _settings.LoopMinMatch = d.LoopMinMatch;
-        _settings.LoopPreEmphasis = d.LoopPreEmphasis;
-        _settings.LoopMultiResolution = d.LoopMultiResolution;
-        _settings.LoopDisablePruning = d.LoopDisablePruning;
-        _settings.LoopBorderSimilarity = d.LoopBorderSimilarity;
-        _settings.LoopTransitionSmoothness = d.LoopTransitionSmoothness;
-        _settings.LoopLoudnessDifference = d.LoopLoudnessDifference;
-        _settings.LoopUseHarmonicChroma = d.LoopUseHarmonicChroma;
-        _settings.LoopRequireOnsetAlignment = d.LoopRequireOnsetAlignment;
-        _settings.LoopStages = d.LoopStages;
-        _settings.SettingsVersion = SettingsService.CurrentSettingsVersion;
-        _settings.GamePath = keepPath;
-
-        SettingsService.Save(_settings);
+        SettingsService.Update(_settings, draft =>
+        {
+            draft.LastLanguage = d.LastLanguage;
+            draft.LastStationBank = d.LastStationBank;
+            draft.TargetLufs = d.TargetLufs;
+            draft.TargetTruePeak = d.TargetTruePeak;
+            draft.VorbisQuality = d.VorbisQuality;
+            draft.EncodeParallelism = d.EncodeParallelism;
+            draft.LoudnessNormalize = d.LoudnessNormalize;
+            draft.PeakLimiter = d.PeakLimiter;
+            draft.MeasureTrackLoudness = d.MeasureTrackLoudness;
+            draft.MarkerDefaults = new();
+            draft.WaveformLabelRows = new();
+            draft.LoopAutoTune = d.LoopAutoTune;
+            draft.LoopMinSeconds = d.LoopMinSeconds;
+            draft.LoopNoteDeviation = d.LoopNoteDeviation;
+            draft.LoopMinMatch = d.LoopMinMatch;
+            draft.LoopPreEmphasis = d.LoopPreEmphasis;
+            draft.LoopMultiResolution = d.LoopMultiResolution;
+            draft.LoopDisablePruning = d.LoopDisablePruning;
+            draft.LoopBorderSimilarity = d.LoopBorderSimilarity;
+            draft.LoopTransitionSmoothness = d.LoopTransitionSmoothness;
+            draft.LoopLoudnessDifference = d.LoopLoudnessDifference;
+            draft.LoopUseHarmonicChroma = d.LoopUseHarmonicChroma;
+            draft.LoopRequireOnsetAlignment = d.LoopRequireOnsetAlignment;
+            draft.LoopStages = d.LoopStages;
+            draft.SettingsVersion = SettingsService.CurrentSettingsVersion;
+        });
         MarkerDefaults.Reset();
 
         TargetLufs = _settings.TargetLufs;
@@ -287,17 +286,19 @@ public sealed partial class SettingsWindowViewModel : ObservableObject
             return false;
         if (!IsValid || Scanning || !string.Equals(path, GamePath, StringComparison.OrdinalIgnoreCase)) return false;
 
-        _settings.GamePath = GamePath;
         TargetLufs = AppSettings.ClampTargetLufs(TargetLufs);
         TargetTruePeak = AppSettings.ClampTargetTruePeak(TargetTruePeak);
-        _settings.TargetLufs = TargetLufs;
-        _settings.TargetTruePeak = TargetTruePeak;
-        _settings.EncodeParallelism = EncodeParallelism;
-        _settings.LoudnessNormalize = LoudnessNormalize;
-        _settings.PeakLimiter = PeakLimiter;
-        _settings.MeasureTrackLoudness = MeasureTrackLoudness;
-        _settings.VorbisQuality = VorbisQuality;
-        SettingsService.Save(_settings);
+        SettingsService.Update(_settings, draft =>
+        {
+            draft.GamePath = path;
+            draft.TargetLufs = TargetLufs;
+            draft.TargetTruePeak = TargetTruePeak;
+            draft.EncodeParallelism = EncodeParallelism;
+            draft.LoudnessNormalize = LoudnessNormalize;
+            draft.PeakLimiter = PeakLimiter;
+            draft.MeasureTrackLoudness = MeasureTrackLoudness;
+            draft.VorbisQuality = VorbisQuality;
+        });
         SavedScan = _validatedScan;
         Saved = true;
         return true;

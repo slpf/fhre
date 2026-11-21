@@ -69,7 +69,7 @@ public partial class WaveformWindow : Window
         Opened += (_, _) =>
         {
             WindowMemory.Restore(this, Vm.Settings, "Waveform");
-            Wave.LabelRows = Vm.Settings?.WaveformLabelRows;
+            Wave.LabelRows = Vm.Settings is { } settings ? new Dictionary<string, int>(settings.WaveformLabelRows) : null;
 
             _snapshot.Clear();
             foreach (var m in Vm.AllMarkers)
@@ -975,9 +975,14 @@ public partial class WaveformWindow : Window
 
     private void OnLabelRowsChanged()
     {
-        if (Vm.Settings is { } s)
+        if (Vm.Settings is { } settings && Wave.LabelRows is { } rows)
         {
-            SettingsService.Save(s);
+            SafeAsync.Run(() =>
+            {
+                var savedRows = new Dictionary<string, int>(rows);
+                SettingsService.Update(settings, draft => draft.WaveformLabelRows = savedRows);
+                return Task.CompletedTask;
+            }, "save waveform labels", this);
         }
     }
 

@@ -17,7 +17,11 @@ public partial class LoopSearchSettingsWindow : Window
 
     private void OnSave(object? sender, RoutedEventArgs e)
     {
-        Vm.Save();
-        Close();
+        SafeAsync.Run(() =>
+        {
+            Vm.Save();
+            Close();
+            return Task.CompletedTask;
+        }, "save loop search settings", this);
     }
 }

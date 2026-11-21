@@ -41,6 +41,7 @@ public static partial class GameScanner
         internal IReadOnlyList<string> RadioBanks { get; init; } = [];
         internal IReadOnlyList<string> RadioLanguages { get; init; } = [];
         internal RadioResources? Resources { get; init; }
+        internal (string File, RadioInfo Radio)? ReferenceRadio { get; init; }
     }
 
     private sealed class ScanStats
@@ -114,14 +115,21 @@ public static partial class GameScanner
     internal static GameScanResult Scan(string gamePath, CancellationToken token) =>
         Scan(gamePath, ValidateResource, token);
 
+    internal static GameScanResult ScanForEditor(string gamePath, string? preferredLanguage) =>
+        Scan(gamePath, ValidateResource, CancellationToken.None, keepReferenceRadio: true, preferredLanguage: preferredLanguage);
+
     internal static GameScanResult Scan(string gamePath, Action<string> readResource)
     {
         ArgumentNullException.ThrowIfNull(readResource);
-        return Scan(gamePath, (path, _) => readResource(path), CancellationToken.None);
+        return Scan(gamePath, (path, _) =>
+        {
+            readResource(path);
+            return null;
+        }, CancellationToken.None);
     }
 
-    private static GameScanResult Scan(string gamePath, Action<string, IReadOnlySet<int>> validateResource,
-        CancellationToken token)
+    private static GameScanResult Scan(string gamePath, Func<string, IReadOnlySet<int>, RadioInfo?> validateResource,
+        CancellationToken token, bool keepReferenceRadio = false, string? preferredLanguage = null)
     {
         token.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(gamePath))
@@ -166,12 +174,16 @@ public static partial class GameScanner
             return Result(false, issue, BuildDetail(stats));
         }
 
+        var referenceFile = keepReferenceRadio ? ReferenceLanguage(langs, preferredLanguage) : null;
+        var referencePath = referenceFile is null ? null : resources.LanguagePath(referenceFile);
+        RadioInfo? referenceRadio = null;
         foreach (var path in resources.SelectedPaths)
         {
             token.ThrowIfCancellationRequested();
             try
             {
-                validateResource(path, bankStations);
+                var radio = validateResource(path, bankStations);
+                if (path == referencePath) referenceRadio = radio;
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or XmlException or InvalidDataException)
             {
@@ -197,22 +209,29 @@ public static partial class GameScanner
         {
             RadioBanks = banks,
             RadioLanguages = langs,
-            Resources = resources
+            Resources = resources,
+            ReferenceRadio = referenceRadio is not null ? (referenceFile!, referenceRadio) : null
         };
     }
 
-    private static void ValidateResource(string path, IReadOnlySet<int> bankStations)
+    internal static string? ReferenceLanguage(IReadOnlyList<string> files, string? preferred = null) =>
+        files.FirstOrDefault(file => file == preferred)
+        ?? files.FirstOrDefault(file => file.StartsWith("RadioInfo_en", StringComparison.OrdinalIgnoreCase))
+        ?? files.FirstOrDefault();
+
+    private static RadioInfo? ValidateResource(string path, IReadOnlySet<int> bankStations)
     {
         if (!IsLanguageFile(LogicalFileName(path)))
         {
             FevBank.ValidateTrackBank(path);
-            return;
+            return null;
         }
 
         var radio = RadioInfo.Load(path);
         if (!radio.Document.Descendants("RadioStation").Any(st =>
                 int.TryParse((string?) st.Attribute("Number"), out var number) && bankStations.Contains(number)))
             throw new InvalidDataException("RadioInfo has no station with an installed track bank.");
+        return radio;
     }
 
     private static FileAttributes? ResourceAttributes(string path)

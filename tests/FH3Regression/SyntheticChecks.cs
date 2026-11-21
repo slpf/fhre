@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Xml.Linq;
 using FH6RB.Assets;
 using FH6RB.Core;
@@ -144,7 +145,14 @@ internal static class SyntheticChecks
 
             vm.Settings.LastLanguage = "RadioInfo_FR.xml";
             vm.Settings.LastStationBank = "R6_Tracks_";
-            Method("ReloadFromGameCore").Invoke(vm, null);
+            var scanForEditor = typeof(GameScanner).GetMethod("ScanForEditor", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var editorScan = (GameScanner.GameScanResult)scanForEditor.Invoke(null, [game, vm.Settings.LastLanguage])!;
+            var reference = (ValueTuple<string, RadioInfo>)typeof(GameScanner.GameScanResult)
+                .GetProperty("ReferenceRadio", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editorScan)!;
+            Method("ApplyGameScan").Invoke(vm, [editorScan]);
+            Check(reference.Item1 == vm.Settings.LastLanguage && ReferenceEquals(reference.Item2,
+                typeof(MainWindowViewModel).GetField("_radio", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(vm)),
+                "Main-window catalog loading parsed the preferred XML again after scanning.");
             Check(vm.Languages.Count == 3 && vm.SelectedLanguage?.FileName == "RadioInfo_FR.xml"
                 && vm.Stations.Count == 2 && vm.SelectedStation?.Number == 6 && vm.Variants.Count == 2,
                 "Reloading from the game scan lost languages, stations, or the saved selection.");

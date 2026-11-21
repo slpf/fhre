@@ -32,7 +32,10 @@ public partial class SettingsWindow : Window
 
         if (folders.Count > 0 && folders[0].TryGetLocalPath() is { } path)
         {
-            Vm.GamePath = path;
+            if (string.Equals(path, Vm.GamePath, StringComparison.Ordinal))
+                await Vm.ValidateAsync();
+            else
+                Vm.GamePath = path;
         }
     }
 

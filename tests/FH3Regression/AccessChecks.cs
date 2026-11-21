@@ -122,7 +122,58 @@ internal static class AccessChecks
             CheckMainWindowResourceError(game);
             CheckSettingsScanDetails(game);
         }
+        CheckSettingsPersistence(root);
         Console.WriteLine("Verified active resource selection, read diagnostics, bank and XML validation, shared reads and lock recovery.");
+    }
+
+    private static void CheckSettingsPersistence(string root)
+    {
+        var path = Path.Combine(root, "settings-fixture.json");
+        var load = typeof(SettingsService).GetMethod("Load", BindingFlags.NonPublic | BindingFlags.Static,
+            null, [typeof(string)], null)!;
+        AppSettings Read() => (AppSettings)load.Invoke(null, [path])!;
+
+        Check(Read().SettingsVersion == SettingsService.CurrentSettingsVersion && !File.Exists(path),
+            "Loading a missing profile created a settings file.");
+        var json = JsonSerializer.Serialize(new AppSettings { GamePath = root, SettingsVersion = SettingsService.CurrentSettingsVersion });
+        File.WriteAllText(path, json);
+        AppSettings blocked;
+        using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Delete))
+        {
+            blocked = Read();
+            Check(File.Exists(path) && !File.Exists(path + ".corrupt"),
+                "An unreadable profile was moved as corrupt.");
+        }
+        var save = typeof(SettingsService).GetMethod("Save", BindingFlags.NonPublic | BindingFlags.Static,
+            null, [typeof(AppSettings), typeof(string)], null)!;
+        try
+        {
+            save.Invoke(null, [blocked, path]);
+            throw new InvalidOperationException("A fallback profile accepted writes after a read failure.");
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is IOException) { }
+        Check(File.ReadAllText(path) == json, "A temporary share violation changed settings on disk.");
+
+        File.WriteAllText(path, """{"SettingsVersion":5,"VorbisQuality":70}""");
+        using (File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var migrated = Read();
+            Check(migrated.SettingsVersion == SettingsService.CurrentSettingsVersion && migrated.VorbisQuality == 90,
+                "A blocked migration write prevented loading settings.");
+        }
+
+        File.WriteAllText(path, """{"SettingsVersion":7,"WindowSizes":null,"GamePath":null}""");
+        var nullable = Read();
+        Check(nullable.WindowSizes is { Count: 0 } && nullable.GamePath == "",
+            "Null values in settings were not normalized.");
+
+        File.WriteAllText(path, "{");
+        Read();
+        Check(File.ReadAllText(path + ".corrupt") == "{" && !File.Exists(path),
+            "Invalid JSON was not preserved before resetting settings.");
+        Check(MarkerDefaults.Resolve("NaN", 48000, 48000) == -1
+            && MarkerDefaults.Resolve("1e999", 48000, 48000) == -1,
+            "Non-finite marker defaults were interpreted as positions.");
     }
 
     private static void CheckGameFileTransaction(string root)
@@ -314,6 +365,16 @@ internal static class AccessChecks
         var committed = (Task<bool>) commit.Invoke(vm, [decline])!;
         Check(!committed.GetAwaiter().GetResult() && prompted && !vm.Saved && currentSettings.GamePath == game,
             "Canceling the game path change committed the settings.");
+        currentSettings.LoopMinSeconds = double.NaN;
+        var approved = (Task<bool>)commit.Invoke(vm, [(Func<Task<bool>>)(() => Task.FromResult(true))])!;
+        try
+        {
+            approved.GetAwaiter().GetResult();
+            throw new InvalidOperationException("A non-serializable profile was saved.");
+        }
+        catch (ArgumentException) { }
+        Check(!vm.Saved && currentSettings.GamePath == game && currentSettings.TargetLufs == -23,
+            "A failed settings write changed the live profile.");
         apply.Invoke(vm, [new GameScanner.GameScanResult(true, GameScanner.GameScanIssue.None, null, exe, 3, 2)]);
         Check(vm.IsValid && !vm.ShowError && vm.Error.Length == 0 && vm.HasScanDetails,
             "A successful rescan retained the previous resource error or hid discovered details.");

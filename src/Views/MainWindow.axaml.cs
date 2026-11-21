@@ -23,7 +23,6 @@ public partial class MainWindow : Window
     private void OnOpened(object? sender, EventArgs e)
     {
         Vm.ConfirmDiscardChanges = ConfirmDiscardChangesAsync;
-        SafeAsync.Run(OpenedAsync, "open", this);
     }
 
     private Task<bool> ConfirmDiscardChangesAsync() => ConfirmDiscardChangesAsync(this);
@@ -32,7 +31,7 @@ public partial class MainWindow : Window
         MessageDialog.ShowAsync(owner, Str.DlgSwitchUnsavedTitle, Str.DlgSwitchUnsavedBody,
             Str.DlgSwitchUnsavedOk, Str.DlgSwitchUnsavedCancel);
 
-    private async Task OpenedAsync()
+    internal async Task CheckRunningGameAsync()
     {
         if (!Vm.HasValidGamePath)
         {
@@ -41,7 +40,7 @@ public partial class MainWindow : Window
 
         var running = await Task.Run(Vm.IsGameRunning);
 
-        if (running)
+        if (running && IsVisible)
         {
             await MessageDialog.ShowAsync(this, Str.DlgGameRunningTitle, Str.DlgFilesInUseBody);
         }
@@ -143,7 +142,7 @@ public partial class MainWindow : Window
 
     public async Task ShowSettingsAsync(bool firstRun = false)
     {
-        if (Vm.IsBusy) return;
+        if (!Vm.CanChangeSelection || !IsVisible) return;
         var prevPath = Vm.Settings.GamePath;
         var vm = new SettingsWindowViewModel(Vm.Settings) { IsFirstRun = firstRun };
         var dialog = new SettingsWindow { DataContext = vm };
@@ -154,7 +153,7 @@ public partial class MainWindow : Window
         if (vm.Saved && ((Vm.HasResourceError && !Vm.HasUnsavedChanges)
             || !string.Equals(prevPath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase)))
         {
-            Vm.ReloadFromGame(vm.SavedScan);
+            await Vm.ReloadFromGameAsync(vm.SavedScan);
         }
         else if (vm.Saved)
         {
@@ -610,7 +609,7 @@ public partial class MainWindow : Window
             await Vm.StopLoudnessAnalysisAsync();
             var (restored, failed) = await Task.Run(() => BackupService.Restore(gamePath, backups, Log.Line));
             if (Vm.HasValidGamePath) await Vm.ReloadAsync();
-            else Vm.ReloadFromGame();
+            else await Vm.ReloadFromGameAsync();
             status = failed == 0
                 ? string.Format(Str.EditRestoredFmt, restored)
                 : string.Format(Str.EditRestoredFailedFmt, restored, failed);

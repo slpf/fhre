@@ -305,31 +305,62 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
         };
 
-        try
-        {
-            if (Directory.Exists(RestoreDir))
-            {
-                foreach (var f in Directory.EnumerateFiles(RestoreDir, "*.fsb"))
-                {
-                    try { File.Delete(f); } catch { }
-                }
-            }
-        }
-        catch { }
-
-        ReloadFromGame();
     }
 
-    public void ReloadFromGame() => Dispatcher.UIThread.Invoke(ReloadFromGameCore);
-
-    internal void ReloadFromGame(GameScanner.GameScanResult? validatedScan) =>
-        Dispatcher.UIThread.Invoke(() => ReloadScannedGame(validatedScan));
-
-    private void ReloadFromGameCore() => ReloadScannedGame(null);
-
-    private void ReloadScannedGame(GameScanner.GameScanResult? validatedScan)
+    internal async Task ReloadFromGameAsync(GameScanner.GameScanResult? validatedScan = null)
     {
-        _loadGen++;
+        var generation = ++_loadGen;
+        var gamePath = Settings.GamePath;
+        var language = Settings.LastLanguage;
+        StopPlayback();
+        IsLoading = true;
+        Status = Str.StatusScanningGame;
+        try
+        {
+            var (scan, recoveryError) = await Task.Run(() => ScanGame(gamePath, language, validatedScan));
+            if (generation != _loadGen || _loudnessShutdown) return;
+            GameRecoveryError = recoveryError;
+            ApplyGameScan(scan);
+            if (!_suppressReload)
+            {
+                var load = LoadAsync();
+                generation = _loadGen;
+                await load;
+            }
+        }
+        finally
+        {
+            if (generation == _loadGen && !_loudnessShutdown) IsLoading = false;
+        }
+    }
+
+    private static (GameScanner.GameScanResult Scan, string? RecoveryError) ScanGame(
+        string gamePath, string? language, GameScanner.GameScanResult? validatedScan)
+    {
+        try
+        {
+            if (GameFileTransaction.RecoverPending(gamePath)) validatedScan = null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException)
+        {
+            Log.Line("game file recovery failed: " + ex);
+            var error = string.Format(Str.StatusGameRecoveryFailedFmt, ex.Message);
+            return (new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError, error, null, 0, 0), error);
+        }
+
+        try
+        {
+            return (validatedScan ?? GameScanner.ScanForEditor(gamePath, language), null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Xml.XmlException or ArgumentException)
+        {
+            Log.Line("game scan failed: " + ex);
+            return (new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError, ex.Message, null, 0, 0), null);
+        }
+    }
+
+    private void ApplyGameScan(GameScanner.GameScanResult scan)
+    {
         var wasSuppressed = _suppressReload;
         _suppressReload = true;
 
@@ -345,19 +376,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
             SelectedStation = null;
             SelectedVariant = null;
 
-            GameRecoveryError = null;
-            try
-            {
-                if (GameFileTransaction.RecoverPending(Settings.GamePath)) validatedScan = null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException)
-            {
-                Log.Line("game file recovery failed: " + ex);
-                GameRecoveryError = string.Format(Str.StatusGameRecoveryFailedFmt, ex.Message);
-            }
-
-            var scan = GameRecoveryError is null ? validatedScan ?? GameScanner.Scan(Settings.GamePath)
-                : new GameScanner.GameScanResult(false, GameScanner.GameScanIssue.OtherError, GameRecoveryError, null, 0, 0);
             _radioResources = scan.Resources;
             _gameVersion = scan.Version;
             UpdatePlaylistMinimum();
@@ -393,6 +411,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ?? Languages.FirstOrDefault(l => l.FileName == AllLanguagesFile)
                 ?? Languages.FirstOrDefault();
 
+            if (scan.ReferenceRadio is { } reference && reference.File == ViewLanguageFile())
+            {
+                _radio = reference.Radio;
+                _radioForFile = reference.File;
+            }
+
             if (!RebuildStations(scan.RadioBanks))
             {
                 ClearLoadedTracks();
@@ -405,10 +429,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             _suppressReload = wasSuppressed;
-        }
-        if (!_suppressReload)
-        {
-            _ = LoadAsync();
         }
     }
 
@@ -449,9 +469,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (SelectedLanguage is null) return null;
         if (SelectedLanguage.FileName != AllLanguagesFile) return SelectedLanguage.FileName;
 
-        var real = Languages.Where(l => l.FileName != AllLanguagesFile).ToList();
-        var english = real.FirstOrDefault(l => l.Code.StartsWith("en", StringComparison.OrdinalIgnoreCase));
-        return (english ?? real.FirstOrDefault())?.FileName;
+        return GameScanner.ReferenceLanguage(Languages.Where(l => l.FileName != AllLanguagesFile).Select(l => l.FileName).ToArray());
     }
 
     private bool RebuildStations(IReadOnlyList<string>? radioBanks = null)
@@ -725,9 +743,21 @@ public sealed partial class MainWindowViewModel : ObservableObject
             IsLoading = false;
         });
 
-        Settings.LastLanguage = selection.Lang.FileName;
-        Settings.LastStationBank = station.Prefix;
-        SettingsService.Save(Settings);
+        if (result.Error is null && (Settings.LastLanguage != selection.Lang.FileName || Settings.LastStationBank != station.Prefix))
+        {
+            try
+            {
+                SettingsService.Update(Settings, draft =>
+                {
+                    draft.LastLanguage = selection.Lang.FileName;
+                    draft.LastStationBank = station.Prefix;
+                });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                Log.Line($"settings: could not save station selection: {ex.Message}");
+            }
+        }
     }
     
     private static int ReconcileStation(RadioStationEditor editor, GameScanner.RadioResources resources,

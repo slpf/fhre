@@ -4,6 +4,8 @@ public static class Str
 {
     public const string TitleMain = "Forza Horizon Radio Extender";
     public const string TitleSettings = "Settings";
+    public const string DlgSettingsReadTitle = "Settings unavailable";
+    public const string DlgSettingsReadBodyFmt = "The settings file could not be read. Restore access to settings.json and restart the application before saving settings.\n\n{0}";
     public const string TitleMarkers = "Marker editor";
     public const string TitleEditing = "Editing";
     public const string TitleNotice = "Notice";
@@ -103,6 +105,7 @@ public static class Str
     public const string PickGameFolder = "Select Forza Horizon folder";
     
     public const string StatusLoadingFmt = "Loading {0}…";
+    public const string StatusScanningGame = "Scanning the game folder…";
     public const string StatusReadingOneFmt = "Reading {0}…";
     public const string StatusReadingManyFmt = "Reading metadata for {0} files…";
     public const string StatusAddedOneFmt = "Added: {0}";
@@ -263,6 +266,7 @@ public static class Str
     public const string TipResetAllMarkers = "Reset markers for all custom and replaced tracks";
     public const string TitleMarkerDefaults = "Custom-track marker values";
     public const string HintMarkerDefaults = "Default positions for custom-track markers.";
+    public const string ErrMarkerDefaultFmt = "Enter a finite number of seconds, samples (s), or percent (%) for {0}. Leave the field empty to turn the marker off.";
     public const string HintMarkerDefaultsHorizon2 = "Default positions for custom-track markers. StingerStart defaults to one second before DJStart.";
     public const string BtnRestoreDefaults = "Restore defaults";
 

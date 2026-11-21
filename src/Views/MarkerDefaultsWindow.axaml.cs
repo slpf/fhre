@@ -19,7 +19,11 @@ public partial class MarkerDefaultsWindow : Window
 
     private void OnSave(object? sender, RoutedEventArgs e)
     {
-        Vm.Save();
-        Close();
+        SafeAsync.Run(() =>
+        {
+            Vm.Save();
+            Close();
+            return Task.CompletedTask;
+        }, "save marker defaults", this);
     }
 }

@@ -314,29 +314,6 @@ public static class TrackPack
 
     public static void CleanupImport() => CleanupImportDirectory(AppPaths.SessionDirectory("import"));
 
-    internal static void CleanupStaleImports()
-    {
-        var current = AppPaths.SessionDirectory("import");
-        var root = new DirectoryInfo(Path.GetDirectoryName(current)!);
-        try
-        {
-            if (!root.Exists || (root.Attributes & FileAttributes.ReparsePoint) != 0) return;
-            foreach (var directory in root.EnumerateDirectories())
-            {
-                if (Guid.TryParseExact(directory.Name, "N", out _)
-                    && !string.Equals(directory.FullName, current, StringComparison.OrdinalIgnoreCase)
-                    && (directory.Attributes & FileAttributes.ReparsePoint) == 0)
-                {
-                    CleanupImportDirectory(directory.FullName);
-                }
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            Log.Line($"pack import: could not scan temporary import directories: {ex}");
-        }
-    }
-
     internal static void DiscardImport(ImportedPack pack)
     {
         var root = Path.GetFullPath(AppPaths.SessionDirectory("import"));

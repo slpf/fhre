@@ -91,19 +91,21 @@ public sealed partial class LoopSearchSettingsViewModel : ObservableObject
 
     public void Save()
     {
-        _settings.LoopAutoTune = AutoTune;
-        _settings.LoopNoteDeviation = NoteDeviation;
-        _settings.LoopMinMatch = MinMatch;
-        _settings.LoopBorderSimilarity = BorderSimilarity;
-        _settings.LoopTransitionSmoothness = TransitionSmoothness;
-        _settings.LoopLoudnessDifference = LoudnessDifference;
-        _settings.LoopUseHarmonicChroma = UseHarmonicChroma;
-        _settings.LoopRequireOnsetAlignment = RequireOnsetAlignment;
-        _settings.LoopPreEmphasis = PreEmphasis;
-        _settings.LoopMultiResolution = MultiResolution;
-        _settings.LoopDisablePruning = DisablePruning;
-        _settings.LoopStages = _stages;
-        SettingsService.Save(_settings);
+        SettingsService.Update(_settings, draft =>
+        {
+            draft.LoopAutoTune = AutoTune;
+            draft.LoopNoteDeviation = NoteDeviation;
+            draft.LoopMinMatch = MinMatch;
+            draft.LoopBorderSimilarity = BorderSimilarity;
+            draft.LoopTransitionSmoothness = TransitionSmoothness;
+            draft.LoopLoudnessDifference = LoudnessDifference;
+            draft.LoopUseHarmonicChroma = UseHarmonicChroma;
+            draft.LoopRequireOnsetAlignment = RequireOnsetAlignment;
+            draft.LoopPreEmphasis = PreEmphasis;
+            draft.LoopMultiResolution = MultiResolution;
+            draft.LoopDisablePruning = DisablePruning;
+            draft.LoopStages = _stages;
+        });
         Saved = true;
     }
 }

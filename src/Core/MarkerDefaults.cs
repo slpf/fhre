@@ -98,7 +98,8 @@ public static class MarkerDefaults
             t = t[..^1].Trim();
         }
 
-        return double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        return double.TryParse(t.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            && double.IsFinite(value);
     }
 
     public static long Resolve(string? spec, long length, int sampleRate)
@@ -109,14 +110,15 @@ public static class MarkerDefaults
         }
 
         var off = samples
-            ? (long) Math.Round(value)
+            ? Math.Round(value)
             : percent
-                ? (long) Math.Round(value / 100.0 * length)
-                : (long) Math.Round(value * sampleRate);
+                ? Math.Round(value / 100.0 * length)
+                : Math.Round(value * sampleRate);
 
         var frame = value < 0 ? length + off : off;
 
-        return Math.Clamp(frame, 0, length - 1);
+        if (frame >= length - 1) return length - 1;
+        return frame <= 0 ? 0 : (long)frame;
     }
 
     public static Dictionary<string, long> Compute(long length, int sampleRate)

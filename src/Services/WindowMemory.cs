@@ -6,17 +6,17 @@ public static class WindowMemory
 {
     public static void Restore(Window window, AppSettings? settings, string key)
     {
-        if (settings is null || !settings.WindowSizes.TryGetValue(key, out var sz))
+        if (settings?.WindowSizes is not { } sizes || !sizes.TryGetValue(key, out var sz) || sz is null)
         {
             return;
         }
 
-        if (sz.W > 0 && window.MinWidth <= window.MaxWidth)
+        if (double.IsFinite(sz.W) && sz.W > 0 && window.MinWidth <= window.MaxWidth)
         {
             window.Width = Math.Clamp(sz.W, window.MinWidth, window.MaxWidth);
         }
 
-        if (sz.H > 0 && window.MinHeight <= window.MaxHeight)
+        if (double.IsFinite(sz.H) && sz.H > 0 && window.MinHeight <= window.MaxHeight)
         {
             window.Height = Math.Clamp(sz.H, window.MinHeight, window.MaxHeight);
         }
@@ -36,11 +36,16 @@ public static class WindowMemory
         }
 
         var h = window.Height;
-        settings.WindowSizes[key] = new WinSize { W = w, H = double.IsFinite(h) && h > 0 ? h : 0 };
+        h = double.IsFinite(h) && h > 0 ? h : 0;
+        var previousSizes = settings.WindowSizes;
+        if (previousSizes is not null && previousSizes.TryGetValue(key, out var previous) && previous is not null
+            && previous.W == w && previous.H == h) return;
 
         try
         {
-            SettingsService.Save(settings);
+            var sizes = previousSizes is null ? new Dictionary<string, WinSize>() : new(previousSizes);
+            sizes[key] = new WinSize { W = w, H = h };
+            SettingsService.Update(settings, draft => draft.WindowSizes = sizes);
         }
         catch (Exception ex)
         {

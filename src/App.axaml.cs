@@ -21,11 +21,6 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        WorkDirs.Clean();
-        AudioDecoder.ClearAll();
-        TrackPack.CleanupStaleImports();
-        LoopFinder.ClearCache();
-
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var settings = SettingsService.Load();
@@ -38,9 +33,24 @@ public partial class App : Application
 
             desktop.MainWindow = window;
 
-            window.Opened += async (_, _) =>
+            window.Opened += (_, _) => SafeAsync.Run(async () =>
             {
+                await Task.WhenAll(vm.ReloadFromGameAsync(), Task.Run(() =>
+                {
+                    AppPaths.CleanStaleSessions("preview");
+                    AppPaths.CleanStaleSessions("restore");
+                    AppPaths.CleanStaleSessions("import");
+                }));
+                if (!window.IsVisible) return;
+
                 await CheckRequiredToolsAsync(window);
+                if (!window.IsVisible) return;
+                if (settings.ReadFailure is { } readError)
+                {
+                    await MessageDialog.ShowAsync(window, Str.DlgSettingsReadTitle,
+                        string.Format(Str.DlgSettingsReadBodyFmt, readError.Message));
+                    return;
+                }
                 if (vm.GameRecoveryError is { } recoveryError)
                 {
                     await MessageDialog.ShowAsync(window, Str.DlgGameRecoveryTitle, recoveryError);
@@ -48,9 +58,11 @@ public partial class App : Application
                 else if (!vm.HasValidGamePath)
                 {
                     await vm.RestoreAvailability;
-                    if (!vm.CanRestoreAll) await window.ShowSettingsAsync(firstRun: true);
+                    if (window.IsVisible && !vm.HasValidGamePath && !vm.CanRestoreAll)
+                        await window.ShowSettingsAsync(firstRun: true);
                 }
-            };
+                else await window.CheckRunningGameAsync();
+            }, "startup", window);
 
             desktop.Exit += (_, _) =>
             {
