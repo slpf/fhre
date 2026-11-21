@@ -133,7 +133,7 @@ public sealed partial class MainWindowViewModel
 
     partial void OnIsLoadingChanged(bool value)
     {
-        OnPropertyChanged(nameof(CanBuild));
+        NotifySelectionAvailability();
         ScheduleLoudnessMeasurements();
     }
 }

@@ -485,16 +485,16 @@ public sealed partial class EditWindowViewModel : ObservableObject
             return;
         }
         
-        var dict = new Dictionary<string, long>();
-        
-        foreach (var g in Groups)
-        {
-            foreach (var f in g.Fields)
-            {
-                dict[f.Name] = f.Position;
-            }
-        }
+        var changed = AllMarkers.Where(f => f.Position != f.InitialPosition).ToArray();
+        if (changed.Length == 0) return;
 
-        track.Markers = dict;
+        var markers = track.Markers is { Count: > 0 } current
+            ? new Dictionary<string, long>(current)
+            : CollectMarkerPositions();
+        foreach (var field in changed)
+        {
+            markers[field.Name] = field.Position;
+        }
+        track.Markers = markers;
     }
 }

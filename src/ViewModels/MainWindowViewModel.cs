@@ -46,8 +46,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public bool IsBusy => IsBuilding || IsAddingTracks || IsBackingUp || IsTesting || IsExporting || IsImporting;
     private string? _resourceError;
     public bool HasResourceError => _resourceError is not null;
-    public bool CanBuild => _resourceError is null && !IsBusy && !IsLoading && !PlaylistLow && Tools.CanBuild;
-    public bool CanAddTracks => _resourceError is null && !IsBusy && Tools.CanAddTracks;
+    public bool CanBuild => _resourceError is null && CanChangeSelection && !PlaylistLow && Tools.CanBuild;
+    public bool CanChangeSelection => !IsBusy && !IsLoading && !_confirmingSwitch;
+    public bool CanUseLoadedBank => CanChangeSelection && IsLoadedBankCurrent(_loadGen);
+    public bool CanAddTracks => CanUseLoadedBank && Tools.CanAddTracks;
     public string AddTracksTip => _resourceError ?? (Tools.CanAddTracks ? Str.TipAddTrack
         : string.Format(Str.TipMissingToolsFmt, string.Join(", ", Tools.MissingForAddTracks())));
     public string BuildTip => _resourceError ?? (Tools.CanBuild ? Str.TipBuildBank
@@ -57,6 +59,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         _resourceError = error;
         OnPropertyChanged(nameof(HasResourceError));
+        OnPropertyChanged(nameof(CanUseLoadedBank));
         RefreshToolAvailability();
     }
 
@@ -86,8 +89,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         ScheduleLoudnessMeasurements();
         OnPropertyChanged(nameof(IsBusy));
-        OnPropertyChanged(nameof(CanBuild));
+        NotifySelectionAvailability();
+    }
+
+    private void NotifySelectionAvailability()
+    {
+        OnPropertyChanged(nameof(CanChangeSelection));
+        OnPropertyChanged(nameof(CanUseLoadedBank));
         OnPropertyChanged(nameof(CanAddTracks));
+        OnPropertyChanged(nameof(CanBuild));
     }
 
     partial void OnPlaylistLowChanged(bool value) => OnPropertyChanged(nameof(CanBuild));
@@ -173,7 +183,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private BankFileSnapshot? _loadedBankSnapshot;
     public string? LoadedBankPath => _loadedBankPath;
     internal int BankLoadGeneration => _loadGen;
-    internal bool CanTransferTracks => !IsBusy && !IsLoading && _loadedBankPath is not null
+    internal bool IsLoadedBankCurrent(int generation) =>
+        generation == _loadGen && !IsLoading && !HasResourceError && _loadedBankPath is not null
         && _loadedSelection is { } loaded && loaded.Lang == SelectedLanguage
         && loaded.StationNumber == SelectedStation?.Number && loaded.Variant == SelectedVariant;
     private int _restoreAvailabilityGeneration;
@@ -476,9 +487,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         CancelLoudnessMeasurements();
         StopPlayback();
-        IsLoading = false;
         Tracks.Clear();
         FilteredTracks.Clear();
+        _loadedSelection = null;
         _loadedBankPath = null;
         _loadedBankSnapshot = null;
         _loadedRadio = null;
@@ -486,6 +497,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _otherBanksActive = 0;
         _projectedTotalBytes = 0;
         Recount();
+        IsLoading = false;
     }
 
     private void UpdatePlaylistMinimum()
@@ -559,6 +571,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (HasUnsavedChanges)
         {
             _confirmingSwitch = true;
+            NotifySelectionAvailability();
             try
             {
                 if (ConfirmDiscardChanges is not { } confirm || !await confirm())
@@ -570,6 +583,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             finally
             {
                 _confirmingSwitch = false;
+                NotifySelectionAvailability();
             }
         }
 
@@ -623,6 +637,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             _suppressReload = wasSuppressed;
+            NotifySelectionAvailability();
         }
     }
 
@@ -689,7 +704,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Tracks.Reset(result.Tracks.Select(track => new TrackItemViewModel(track)));
 
             _nextSeq = Math.Max(NextCustomSeq(Tracks), (_radio?.MaxCustomSeq() ?? -1) + 1);
-            IsLoading = false;
             _baseBankSize = baseSize;
             _baseBankAudioBytes = result.Tracks.Sum(track => track.BankBytes);
             _baseBankOverhead = result.Overhead;
@@ -708,6 +722,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 ? string.Format(Str.StatusBankErrorFmt, bank, err)
                 : string.Format(Str.StatusLoadedFmt, bank);
             SetResourceError(result.Error is null ? null : Status);
+            IsLoading = false;
         });
 
         Settings.LastLanguage = selection.Lang.FileName;
@@ -928,6 +943,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void ResetAllCustomMarkers()
     {
+        if (!CanUseLoadedBank) return;
+
         var count = 0;
 
         foreach (var t in Tracks)
@@ -967,7 +984,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public string? SaveAllMarkers()
     {
-        if (SelectedStation is null || string.IsNullOrEmpty(SelectedVariant))
+        if (!CanUseLoadedBank || SelectedStation is null || string.IsNullOrEmpty(SelectedVariant))
         {
             Status = Str.StatusMarkersNoBank;
             return null;
@@ -1551,6 +1568,31 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return track;
     }
 
+    internal void AddCustomTracks(IReadOnlyList<(string Path, string Title, string? Artist, double Duration)> audio)
+    {
+        if (audio.Count == 0) return;
+
+        var occupied = new HashSet<ulong>(GetOccupiedTrackIds());
+        var nextSeq = _nextSeq;
+        var version = _gameVersion ?? GameScanner.DetectVersion(Settings.GamePath);
+        const int sampleRate = 48000;
+        var additions = new List<TrackItemViewModel>(audio.Count);
+        foreach (var file in audio)
+        {
+            var soundName = AllocateCustomSoundName(occupied, ref nextSeq);
+            additions.Add(CreateCustomTrack(soundName, file.Path, file.Title, file.Artist, version, sampleRate,
+                (long)(file.Duration * sampleRate)));
+        }
+
+        var updated = Tracks.Concat(additions).ToArray();
+        foreach (var track in additions) LockCustomSource(track.SourcePath!);
+        _occupiedTrackIds = occupied;
+        _nextSeq = nextSeq;
+        MarkDirty();
+        Tracks.Reset(updated);
+        RecalcProjectedSize();
+    }
+
     private HashSet<ulong> GetOccupiedTrackIds() => _occupiedTrackIds ??= CollectOccupiedTrackIds(
         _radioResources ?? GameScanner.ReadRadioResources(Settings.GamePath), RadioInfo.Load);
 
@@ -1602,7 +1644,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public async Task ExportAsync(string outPath, IReadOnlyList<TrackItemViewModel> selected)
     {
-        if (!CanTransferTracks || !selected.All(Tracks.ToHashSet().Contains))
+        if (!CanUseLoadedBank || !selected.All(Tracks.ToHashSet().Contains))
         {
             Status = Str.StatusPackBankChanged;
             return;
@@ -1808,7 +1850,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public async Task BuildAsync()
     {
         RefreshToolAvailability();
-        if (IsBusy || IsLoading) return;
+        if (!CanChangeSelection) return;
         if (_resourceError is { } resourceError)
         {
             Status = resourceError;

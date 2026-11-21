@@ -9,10 +9,33 @@ internal static class MarkerEditingChecks
     public static void Run(string temp)
     {
         CheckMarkers();
+        CheckExistingMarkers();
         CheckPresetCollision();
         CheckCancelledSearch();
         CheckLoopPlayback(temp);
         Console.WriteLine("Verified marker bounds and locks, preset round trips and collisions, loop cancellation, and audio loop sample boundaries.");
+    }
+
+    private static void CheckExistingMarkers()
+    {
+        var track = new TrackItemViewModel(new RadioTrack
+        {
+            SoundName = "MARKER_PRESERVATION",
+            Origin = TrackOrigin.Original,
+            SampleRate = 48000,
+            SampleLength = 480000,
+            Markers = new Dictionary<string, long> { ["DJDrop"] = 30000, ["BinkTransition"] = 60000 },
+        });
+        var original = track.Markers!;
+        var editor = new EditWindowViewModel(track) { Title = "Renamed" };
+        editor.Apply(track);
+        Check(track.Title == "Renamed" && ReferenceEquals(track.Markers, original),
+            "Saving track metadata rewrote its markers.");
+
+        editor.AllMarkers.Single(f => f.Name == "DJDrop").Position = 36000;
+        editor.Apply(track);
+        Check(track.Markers is { Count: 2 } && track.Markers["DJDrop"] == 36000 && track.Markers["BinkTransition"] == 60000,
+            "Editing a marker rewrote hidden markers or inserted untouched defaults.");
     }
 
     private static void CheckMarkers()

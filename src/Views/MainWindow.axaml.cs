@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FH6RB;
 using FH6RB.Assets;
+using FH6RB.Controls;
 using FH6RB.Services;
 using FH6RB.ViewModels;
 
@@ -15,7 +16,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AddHandler(PointerPressedEvent, OnPreviewPressed, RoutingStrategies.Tunnel);
         Activated += (_, _) => (DataContext as MainWindowViewModel)?.RefreshToolAvailability();
         Opened += OnOpened;
     }
@@ -49,8 +49,6 @@ public partial class MainWindow : Window
 
     private MainWindowViewModel Vm => (MainWindowViewModel)DataContext!;
 
-    private KeyModifiers _toggleMods;
-    
     private static readonly FilePickerFileType AudioFiles = new(Str.FilterAudioFiles)
     {
         Patterns =
@@ -179,10 +177,13 @@ public partial class MainWindow : Window
 
     private async Task ResetAllMarkersAsync()
     {
+        var generation = Vm.BankLoadGeneration;
+        if (!CheckLoadedBank(generation)) return;
+
         var proceed = await MessageDialog.ShowAsync(this, Str.DlgResetMarkersTitle, Str.DlgResetMarkersBody,
             okText: Str.DlgResetMarkersOk, cancelText: Str.DlgResetMarkersCancel);
 
-        if (proceed)
+        if (proceed && CheckLoadedBank(generation))
         {
             Vm.ResetAllCustomMarkers();
         }
@@ -193,10 +194,13 @@ public partial class MainWindow : Window
 
     private async Task SaveAllMarkersAsync()
     {
+        var generation = Vm.BankLoadGeneration;
+        if (!CheckLoadedBank(generation)) return;
+
         var proceed = await MessageDialog.ShowAsync(this, Str.DlgSaveAllMarkersTitle, Str.DlgSaveAllMarkersBody,
             okText: Str.DlgSaveAllMarkersOk, cancelText: Str.BtnCancel);
 
-        if (proceed)
+        if (proceed && CheckLoadedBank(generation))
         {
             Vm.SaveAllMarkers();
         }
@@ -292,7 +296,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!Vm.CanTransferTracks)
+        if (!Vm.CanUseLoadedBank)
         {
             Vm.Status = Str.StatusPackBankChanged;
             return;
@@ -348,7 +352,7 @@ public partial class MainWindow : Window
             path += ".fhre";
         }
 
-        if (!CheckPackBank(bankGeneration)) return;
+        if (!CheckLoadedBank(bankGeneration)) return;
         await Vm.ExportAsync(path, selected);
     }
 
@@ -363,7 +367,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!Vm.CanTransferTracks)
+        if (!Vm.CanUseLoadedBank)
         {
             Vm.Status = Str.StatusPackBankChanged;
             return;
@@ -381,7 +385,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CheckPackBank(bankGeneration)) return;
+        if (!CheckLoadedBank(bankGeneration)) return;
 
         ImportedPack? pack = null;
         var applied = false;
@@ -397,7 +401,7 @@ public partial class MainWindow : Window
                 Vm.IsImporting = false;
             }
 
-            if (!CheckPackBank(bankGeneration)) return;
+            if (!CheckLoadedBank(bankGeneration)) return;
             if (pack.Manifest.Tracks.Count == 0)
             {
                 Vm.Status = Str.StatusImportEmpty;
@@ -408,7 +412,7 @@ public partial class MainWindow : Window
             var vm = new ImportWindowViewModel(pack.Manifest.Tracks, defaults);
             var w = new ImportWindow { DataContext = vm };
             await w.ShowDialog(this);
-            if (!vm.Saved || !CheckPackBank(bankGeneration)) return;
+            if (!vm.Saved || !CheckLoadedBank(bankGeneration)) return;
 
             var replaced = vm.Result.Count(kv => kv.Value is not null);
             Vm.ApplyImport(pack, vm.Result);
@@ -433,11 +437,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool CheckPackBank(int generation)
+    private bool CheckLoadedBank(int generation)
     {
         if (!IsVisible) return false;
-        if (Vm.CanTransferTracks && Vm.BankLoadGeneration == generation) return true;
-        Vm.Status = Str.StatusPackBankChanged;
+        if (Vm.CanUseLoadedBank && Vm.BankLoadGeneration == generation) return true;
+        if (Vm.CanChangeSelection) Vm.Status = Str.StatusPackBankChanged;
         return false;
     }
 
@@ -446,12 +450,14 @@ public partial class MainWindow : Window
 
     private async Task BackupsAsync()
     {
+        if (!Vm.CanChangeSelection) return;
         var gamePath = Vm.Settings.GamePath;
+        var generation = Vm.BankLoadGeneration;
         var vm = new BackupsViewModel(gamePath, Vm.SelectedStation);
         var w = new BackupsWindow { DataContext = vm };
         await w.ShowDialog(this);
 
-        if (w.RestoreTarget is not { } target)
+        if (w.RestoreTarget is not { } target || !CanRestoreSelection(gamePath, generation))
         {
             return;
         }
@@ -463,11 +469,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            Vm.IsBackingUp = true;
-            Vm.Status = Str.StatusBackupRestoring;
-        });
+        Vm.IsBackingUp = true;
+        Vm.Status = Str.StatusBackupRestoring;
 
         var settings = Vm.Settings;
         string status;
@@ -498,6 +501,7 @@ public partial class MainWindow : Window
 
     private async Task RestoreStationAsync()
     {
+        if (!Vm.CanChangeSelection) return;
         if (Vm.SelectedStation is not { } station)
         {
             Vm.Status = Str.StatusBackupNoStation;
@@ -505,6 +509,7 @@ public partial class MainWindow : Window
         }
 
         var gamePath = Vm.Settings.GamePath;
+        var generation = Vm.BankLoadGeneration;
 
         if (!GameScanner.IsValid(gamePath))
         {
@@ -518,6 +523,7 @@ public partial class MainWindow : Window
         }
 
         var running = await Task.Run(Vm.IsGameRunning);
+        if (!CanRestoreSelection(gamePath, generation)) return;
 
         if (running)
         {
@@ -529,16 +535,13 @@ public partial class MainWindow : Window
             string.Format(Str.DlgRestoreStationBody, station.Name),
             okText: Str.DlgRestoreStationOk, cancelText: Str.DlgRestoreStationCancel);
 
-        if (!proceed)
+        if (!proceed || !CanRestoreSelection(gamePath, generation))
         {
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            Vm.IsBackingUp = true;
-            Vm.Status = Str.StatusBackupRestoring;
-        });
+        Vm.IsBackingUp = true;
+        Vm.Status = Str.StatusBackupRestoring;
 
         string status;
 
@@ -567,11 +570,12 @@ public partial class MainWindow : Window
 
     private async Task RestoreAllStationsAsync()
     {
+        if (!Vm.CanChangeSelection) return;
         var gamePath = Vm.Settings.GamePath;
-        if (Vm.IsBusy) return;
+        var generation = Vm.BankLoadGeneration;
 
         var backups = await Task.Run(() => BackupService.Find(gamePath));
-        if (Vm.IsBusy || !string.Equals(gamePath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase)) return;
+        if (!CanRestoreSelection(gamePath, generation)) return;
         if (backups.Count == 0)
         {
             Vm.SetCanRestoreAll(false);
@@ -580,6 +584,7 @@ public partial class MainWindow : Window
         }
 
         var running = await Task.Run(Vm.IsGameRunning);
+        if (!CanRestoreSelection(gamePath, generation)) return;
 
         if (running)
         {
@@ -590,16 +595,13 @@ public partial class MainWindow : Window
         var proceed = await MessageDialog.ShowAsync(this, Str.DlgRestoreAllTitle, Str.DlgRestoreAllBody,
             okText: Str.DlgRestoreStationOk, cancelText: Str.DlgRestoreStationCancel);
 
-        if (!proceed)
+        if (!proceed || !CanRestoreSelection(gamePath, generation))
         {
             return;
         }
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            Vm.IsBackingUp = true;
-            Vm.Status = Str.StatusBackupRestoring;
-        });
+        Vm.IsBackingUp = true;
+        Vm.Status = Str.StatusBackupRestoring;
 
         string status;
 
@@ -626,7 +628,9 @@ public partial class MainWindow : Window
         });
     }
 
-    private void OnPreviewPressed(object? sender, PointerPressedEventArgs e) => _toggleMods = e.KeyModifiers;
+    private bool CanRestoreSelection(string gamePath, int generation) =>
+        IsVisible && Vm.CanChangeSelection && Vm.BankLoadGeneration == generation
+        && string.Equals(gamePath, Vm.Settings.GamePath, StringComparison.OrdinalIgnoreCase);
 
     private void OnRestoreDefault(object? sender, RoutedEventArgs e)
     {
@@ -665,9 +669,11 @@ public partial class MainWindow : Window
 
     private void OnToggle(object? sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: TrackItemViewModel track })
+        if (sender is TrackToggleButton { Tag: TrackItemViewModel track } button
+            && Vm.CanUseLoadedBank && Vm.Tracks.Contains(track))
         {
-            Vm.ToggleEnabled(track, _toggleMods.HasFlag(KeyModifiers.Shift), _toggleMods.HasFlag(KeyModifiers.Control));
+            Vm.ToggleEnabled(track, button.ClickModifiers.HasFlag(KeyModifiers.Shift),
+                button.ClickModifiers.HasFlag(KeyModifiers.Control));
         }
     }
 
@@ -684,7 +690,8 @@ public partial class MainWindow : Window
 
     private async Task AddTrackAsync()
     {
-        if (!CheckAddTrackAvailability()) return;
+        var generation = Vm.BankLoadGeneration;
+        if (!CheckAddTrackAvailability(generation)) return;
 
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
@@ -713,11 +720,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CheckAddTrackAvailability()) return;
+        if (!CheckAddTrackAvailability(generation)) return;
 
         Vm.IsAddingTracks = true;
         
-        var added = 0;
+        var additions = new List<(string Path, string Title, string? Artist, double Duration)>(paths.Count);
         var failures = new List<string>();
         
         try
@@ -750,6 +757,8 @@ public partial class MainWindow : Window
                 return results;
             });
 
+            if (!IsVisible || !Vm.IsLoadedBankCurrent(generation)) return;
+
             foreach (var m in metas)
             {
                 if (m.Error is { } error)
@@ -758,22 +767,16 @@ public partial class MainWindow : Window
                     continue;
                 }
                 var (fTitle, fArtist) = ParseName(System.IO.Path.GetFileNameWithoutExtension(m.Path));
-                Vm.Tracks.Add(Vm.CreateCustomStub(m.Path, m.Title ?? fTitle, m.Artist ?? fArtist, m.Dur));
-                added++;
+                additions.Add((m.Path, m.Title ?? fTitle, m.Artist ?? fArtist, m.Dur));
             }
+            Vm.AddCustomTracks(additions);
         }
         finally
         {
             Vm.IsAddingTracks = false;
         }
 
-        if (added > 0)
-        {
-            Vm.MarkDirty();
-        }
-
-        Vm.Recount();
-        Vm.RecalcProjectedSize();
+        var added = additions.Count;
         Vm.Status = failures.Count > 0 ? string.Format(Str.StatusAddedWithErrorsFmt, added, failures.Count)
             : added == 1 ? string.Format(Str.StatusAddedOneFmt, Vm.Tracks[^1].SoundName) : string.Format(Str.StatusAddedManyFmt, added);
         if (failures.Count > 0)
@@ -812,7 +815,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CheckAddTrackAvailability()) return;
+        var generation = Vm.BankLoadGeneration;
+        if (!CheckAddTrackAvailability(generation) || !Vm.Tracks.Contains(track)) return;
 
         if (!track.CanReplace)
         {
@@ -833,7 +837,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!CheckAddTrackAvailability()) return;
+        if (!CheckAddTrackAvailability(generation) || !Vm.Tracks.Contains(track)) return;
 
         Vm.IsAddingTracks = true;
         var previousStatus = Vm.Status;
@@ -856,15 +860,19 @@ public partial class MainWindow : Window
             Vm.IsAddingTracks = false;
         }
 
+        if (!CheckLoadedBank(generation) || !Vm.Tracks.Contains(track)) return;
         var (fTitle, fArtist) = ParseName(System.IO.Path.GetFileNameWithoutExtension(path));
 
         var resetMarkers = await MessageDialog.ShowAsync(this, Str.DlgReplaceResetMarkersTitle, Str.DlgReplaceResetMarkersBody,
             Str.BtnYes, Str.BtnNo);
 
+        if (!CheckLoadedBank(generation) || !Vm.Tracks.Contains(track)) return;
+
         if (ReferenceEquals(Vm.NowPlaying, track)) Vm.StopPlayback();
         track.StageReplacement(path, mTitle ?? fTitle, mArtist ?? fArtist, mDuration, resetMarkers);
 
         Vm.MarkDirty();
+        Vm.RefreshFilter();
         Vm.RefreshNowPlaying();
         Vm.RecalcProjectedSize();
         Vm.Status = string.Format(Str.StatusReplaceStagedFmt, track.SoundName);
@@ -907,6 +915,9 @@ public partial class MainWindow : Window
 
     private async Task EditTrackAsync(TrackItemViewModel track)
     {
+        var generation = Vm.BankLoadGeneration;
+        if (!CheckLoadedBank(generation) || !Vm.Tracks.Contains(track)) return;
+
         if (!track.CanEdit)
         {
             Vm.Status = track.EditTip;
@@ -923,10 +934,11 @@ public partial class MainWindow : Window
         
         await dialog.ShowDialog(this);
 
-        if (vm.Saved)
+        if (vm.Saved && CheckLoadedBank(generation) && Vm.Tracks.Contains(track))
         {
             vm.Apply(track);
             Vm.MarkDirty();
+            Vm.RefreshFilter();
             Vm.RefreshNowPlaying();
             Vm.Status = string.Format(Str.StatusSavedFmt, track.SoundName);
         }
@@ -982,7 +994,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (Vm.IsBuilding || Vm.IsBackingUp || Vm.IsImporting || Vm.IsExporting)
+        if (Vm.IsBuilding || Vm.IsAddingTracks || Vm.IsBackingUp || Vm.IsImporting || Vm.IsExporting)
         {
             e.Cancel = true;
             return;
@@ -1031,10 +1043,9 @@ public partial class MainWindow : Window
         return i > 0 ? (fileName[(i + 3)..].Trim(), fileName[..i].Trim()) : (fileName.Trim(), null);
     }
 
-    private bool CheckAddTrackAvailability()
+    private bool CheckAddTrackAvailability(int generation)
     {
-        Vm.RefreshToolAvailability();
-        if (Vm.IsBusy) return false;
+        if (!CheckLoadedBank(generation)) return false;
         if (Vm.CanAddTracks) return true;
         Vm.Status = Vm.AddTracksTip;
         return false;

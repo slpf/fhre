@@ -232,6 +232,11 @@ internal static class AccessChecks
         var vm = CreateVm(game, "RadioInfo_EN.xml");
         try
         {
+            var station = new StationInfo(1, "Test", ["Tracks"], new Dictionary<string, string> { ["Tracks"] = "R1_Tracks" });
+            Set(vm, "_selectedStation", station);
+            Set(vm, "_selectedVariant", "Tracks");
+            Set(vm, "_loadedSelection", (vm.SelectedLanguage!, station.Number, "Tracks"));
+            Set(vm, "_loadedBankPath", "R1_Tracks.bank");
             vm.PlaylistLow = false;
             var setError = Method("SetResourceError");
             var changes = new HashSet<string?>();

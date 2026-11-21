@@ -80,6 +80,7 @@ try
     }
     SetTools(15);
     TestBusyAndPlaylist(vm);
+    TestBatchAddition();
     SetTools(0);
     TestNotifications(vm, tracks.Select(t => t.Track).ToArray(), () => SetTools(15));
     SetTools(0);
@@ -169,6 +170,13 @@ static MainWindowViewModel CreateMain(IEnumerable<TrackItemViewModel> tracks)
 {
     var vm = (MainWindowViewModel) RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));
     SetField(vm, "<Tracks>k__BackingField", new FH6RB.Collections.RangeObservableCollection<TrackItemViewModel>(tracks));
+    var language = new LangOption("EN", "RadioInfo_EN.xml");
+    var station = new StationInfo(1, "Test", ["Main"], new Dictionary<string, string> { ["Main"] = "Unopened" });
+    SetField(vm, "_selectedStation", station);
+    SetField(vm, "_selectedLanguage", language);
+    SetField(vm, "_selectedVariant", "Main");
+    SetField(vm, "_loadedSelection", (language, station.Number, "Main"));
+    SetField(vm, "_loadedBankPath", "Unopened.assets.bank");
     return vm;
 }
 
@@ -176,9 +184,6 @@ static MainWindowViewModel CreateBuildMain(int count)
 {
     var vm = CreateMain(Enumerable.Range(0, count).Select(i => Track("GUARDED_" + i)));
     SetField(vm, "<Settings>k__BackingField", new AppSettings());
-    SetField(vm, "_selectedStation", new StationInfo(1, "Test", ["Main"], new Dictionary<string, string> { ["Main"] = "Unopened" }));
-    SetField(vm, "_selectedLanguage", new LangOption("EN", "RadioInfo_EN.xml"));
-    SetField(vm, "_selectedVariant", "Main");
     return vm;
 }
 
@@ -192,23 +197,50 @@ static void SetField(MainWindowViewModel vm, string name, object value)
 static void TestBusyAndPlaylist(MainWindowViewModel vm)
 {
     Check(vm.CanAddTracks && vm.CanBuild, "Complete tools did not enable idle actions.");
-    foreach (var name in new[] { "IsBuilding", "IsAddingTracks", "IsBackingUp", "IsTesting", "IsExporting", "IsImporting" })
+    foreach (var name in new[] { "IsLoading", "IsBuilding", "IsAddingTracks", "IsBackingUp", "IsTesting", "IsExporting", "IsImporting" })
     {
         var changes = new HashSet<string?>();
         System.ComponentModel.PropertyChangedEventHandler handler = (_, e) => changes.Add(e.PropertyName);
         vm.PropertyChanged += handler;
         var property = typeof(MainWindowViewModel).GetProperty(name) ?? throw new MissingMemberException(name);
         property.SetValue(vm, true);
-        Check(vm.IsBusy && !vm.CanAddTracks && !vm.CanBuild, "Active operation did not disable conflicting actions: " + name);
-        Check(changes.Contains(nameof(vm.CanBuild)) && changes.Contains(nameof(vm.CanAddTracks)), "Busy changes did not notify both actions: " + name);
+        Check(!vm.CanChangeSelection && !vm.CanUseLoadedBank && !vm.CanAddTracks && !vm.CanBuild,
+            "Active operation did not disable conflicting actions: " + name);
+        Check(new[] { nameof(vm.CanChangeSelection), nameof(vm.CanUseLoadedBank), nameof(vm.CanBuild), nameof(vm.CanAddTracks) }.All(changes.Contains),
+            "The operation did not notify all affected actions: " + name);
         property.SetValue(vm, false);
         vm.PropertyChanged -= handler;
-        Check(!vm.IsBusy && vm.CanAddTracks && vm.CanBuild, "Completing an operation did not reenable actions: " + name);
+        Check(vm.CanChangeSelection && vm.CanUseLoadedBank && vm.CanAddTracks && vm.CanBuild,
+            "Completing an operation did not reenable actions: " + name);
     }
+    SetField(vm, "_selectedVariant", "Other");
+    Check(!vm.CanUseLoadedBank && !vm.CanAddTracks, "Actions accepted a bank that did not match the selection.");
+    SetField(vm, "_selectedVariant", "Main");
     vm.PlaylistLow = true;
     Check(!vm.CanBuild && vm.CanAddTracks, "A short playlist prevented adding the tracks needed to fix it.");
     vm.PlaylistLow = false;
     Check(vm.CanBuild, "Meeting the playlist minimum did not reenable building.");
+}
+
+static void TestBatchAddition()
+{
+    var vm = CreateBuildMain(1);
+    SetField(vm, "_gameVersion", 6);
+    SetField(vm, "_occupiedTrackIds", new HashSet<ulong>());
+    var updates = 0;
+    vm.Tracks.CollectionChanged += (_, _) => updates++;
+    var add = typeof(MainWindowViewModel).GetMethod("AddCustomTracks", BindingFlags.NonPublic | BindingFlags.Instance)
+        ?? throw new MissingMethodException(nameof(MainWindowViewModel), "AddCustomTracks");
+    var source = new (string Path, string Title, string? Artist, double Duration)[]
+    {
+        ("unopened-add-one.wav", "First", null, 1),
+        ("unopened-add-two.wav", "Second", "Artist", 2),
+    };
+    add.Invoke(vm, [source]);
+    Check(vm.HasUnsavedChanges && updates == 1 && vm.Tracks.Count == 3
+        && vm.Tracks[1].Title == "First" && vm.Tracks[2].Title == "Second"
+        && vm.Tracks[1].SoundName != vm.Tracks[2].SoundName,
+        "A batch did not add its tracks in order with a single collection update.");
 }
 
 static void TestNotifications(MainWindowViewModel vm, TrackItemViewModel[] tracks, Action installTools)

@@ -30,7 +30,8 @@
             <Grid ColumnDefinitions="Auto,Auto,Auto,*">
                 <StackPanel Grid.Column="0" Margin="0,0,6,0">
                     <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecLocalization}"/>
-                    <ComboBox Width="165" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}">
+                    <ComboBox Width="165" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}"
+                              IsEnabled="{Binding CanChangeSelection}">
                         <ComboBox.ItemTemplate>
                             <DataTemplate x:DataType="vm:LangOption">
                                 <TextBlock Text="{Binding Display}"/>
@@ -41,7 +42,8 @@
 
                 <StackPanel Grid.Column="1" Margin="0,0,6,0">
                     <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecStation}"/>
-                    <ComboBox Width="220" ItemsSource="{Binding Stations}" SelectedItem="{Binding SelectedStation}">
+                    <ComboBox Width="220" ItemsSource="{Binding Stations}" SelectedItem="{Binding SelectedStation}"
+                              IsEnabled="{Binding CanChangeSelection}">
                         <ComboBox.ItemTemplate>
                             <DataTemplate x:DataType="svc:StationInfo">
                                 <TextBlock Text="{Binding Display}"/>
@@ -52,7 +54,8 @@
 
                 <StackPanel Grid.Column="2" Margin="0,0,6,0">
                     <TextBlock Classes="lbl" Text="{x:Static assets:Str.SecBank}"/>
-                    <ComboBox Width="100" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}"/>
+                    <ComboBox Width="100" ItemsSource="{Binding Variants}" SelectedItem="{Binding SelectedVariant}"
+                              IsEnabled="{Binding CanChangeSelection}"/>
                 </StackPanel>
                 
                 <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right"
@@ -77,8 +80,10 @@
                                 <MenuItem Header="{x:Static assets:Str.MenuExport}" Click="OnExport"/>
                                 <MenuItem Header="{x:Static assets:Str.MenuImport}" Click="OnImport"/>
                                 <Separator/>
-                                <MenuItem Header="{x:Static assets:Str.MenuSaveAllMarkers}" Click="OnSaveAllMarkers"/>
-                                <MenuItem Header="{x:Static assets:Str.MenuResetMarkers}" Click="OnResetAllMarkers"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuSaveAllMarkers}" Click="OnSaveAllMarkers"
+                                          IsEnabled="{Binding CanUseLoadedBank}"/>
+                                <MenuItem Header="{x:Static assets:Str.MenuResetMarkers}" Click="OnResetAllMarkers"
+                                          IsEnabled="{Binding CanUseLoadedBank}"/>
                                 <MenuItem Header="{x:Static assets:Str.MenuMarkerSettings}" Click="OnMarkerDefaults"/>
                                 <Separator/>
                                 <MenuItem Header="{x:Static assets:Str.MenuSettings}" Click="OnSettings"/>
@@ -198,13 +203,13 @@
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_edit.png" Width="26" Height="26"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                             </Button>
-                                            <Button Classes="act" Click="OnToggle" Tag="{Binding}"
+                                            <controls:TrackToggleButton Classes="act" Click="OnToggle" ClickMode="Release" Tag="{Binding}"
                                                     IsEnabled="{Binding CanToggle}" ToolTip.ShowOnDisabled="True"
                                                     ToolTip.Tip="{Binding ToggleTip}">
                                                 <Image Source="avares://FH6RB/Assets/icons/icon_toggle.png" Width="24" Height="24"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"
                                                        Opacity="{Binding Enabled, Converter={x:Static cv:Conv.EnabledOpacity}}"/>
-                                            </Button>
+                                            </controls:TrackToggleButton>
                                         </StackPanel>
                                     </Grid>
                                 </Border>
