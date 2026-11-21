@@ -409,6 +409,9 @@ public static class Str
     public const string BtnSelectNone = "None";
     public const string BadgeDefault = "DEF";
     public const string DlgImportIntro = "Select which default tracks to replace. Imported tracks replace them in order.";
+    public const string ImportSelectionCountFmt = "{0} selected (maximum {1})";
+    public const string ImportSelectionLimit = "There are fewer imported tracks than selected replacements.";
+    public const string StatusPackBankChanged = "Wait for the selected bank to finish loading and start the operation again.";
     public const string DlgImportReviewIntro = "Review the tracks in the archive.";
     public const string DlgImportNoDefaults = "This bank has no default tracks to replace.";
     public const string DlgImportFailedTitle = "Import failed";

@@ -12,8 +12,7 @@ public partial class ImportWindow : Window
 
     private void OnSave(object? sender, RoutedEventArgs e)
     {
-        Vm.MarkSaved();
-        Close();
+        if (Vm.MarkSaved()) Close();
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close();

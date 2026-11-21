@@ -32,16 +32,18 @@ public static class Atomic
     public static void Write(string path, string text)
         => Write(path, System.Text.Encoding.UTF8.GetBytes(text));
     
-    public static void Write(string path, Action<Stream> write)
+    public static void Write(string path, Action<Stream> write, bool uniqueTemporary = false)
     {
-        EnsureDir(path);
-        var tmp = Tmp(path);
+        var dir = EnsureDir(path);
+        var tmp = uniqueTemporary ? Path.Combine(dir, $".{Guid.NewGuid():N}.tmp") : Tmp(path);
+        var output = new FileStream(tmp, uniqueTemporary ? FileMode.CreateNew : FileMode.Create,
+            FileAccess.Write, FileShare.None);
         try
         {
-            using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (output)
             {
-                write(fs);
-                fs.Flush(flushToDisk: true);
+                write(output);
+                output.Flush(flushToDisk: true);
             }
             File.Move(tmp, path, overwrite: true);
         }

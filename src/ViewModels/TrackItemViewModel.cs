@@ -121,6 +121,10 @@ public sealed partial class TrackItemViewModel : ObservableObject
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         var markerRate = SampleRate > 0 ? SampleRate : BankSampleRate;
+        var duration = double.IsFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
+        var sampleRate = !UsesMilliseconds && !resetMarkers && Markers is not null && markerRate > 0
+            ? markerRate : 48000;
+        var sampleLength = checked((long)Math.Round(duration * sampleRate));
         if (resetMarkers)
         {
             Markers = null;
@@ -133,9 +137,8 @@ public sealed partial class TrackItemViewModel : ObservableObject
         ReplacementPath = sourcePath;
         Title = title;
         Artist = artist;
-        var duration = double.IsFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0;
-        SampleRate = UsesMilliseconds ? 48000 : 0;
-        SampleLength = UsesMilliseconds ? checked((long) Math.Round(duration * SampleRate)) : 0;
+        SampleRate = sampleRate;
+        SampleLength = sampleLength;
         PendingDurationSeconds = duration > 0 ? duration : null;
     }
 

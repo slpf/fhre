@@ -23,7 +23,7 @@ public partial class App : Application
     {
         WorkDirs.Clean();
         AudioDecoder.ClearAll();
-        TrackPack.CleanupImport();
+        TrackPack.CleanupStaleImports();
         LoopFinder.ClearCache();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

@@ -172,6 +172,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private string? _loadedBankPath;
     private BankFileSnapshot? _loadedBankSnapshot;
     public string? LoadedBankPath => _loadedBankPath;
+    internal int BankLoadGeneration => _loadGen;
+    internal bool CanTransferTracks => !IsBusy && !IsLoading && _loadedBankPath is not null
+        && _loadedSelection is { } loaded && loaded.Lang == SelectedLanguage
+        && loaded.StationNumber == SelectedStation?.Number && loaded.Variant == SelectedVariant;
     private int _restoreAvailabilityGeneration;
     public bool CanRestoreAll { get; private set; }
     internal bool HasValidGamePath { get; private set; }
@@ -1537,17 +1541,34 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public TrackItemViewModel CreateCustomStub(string sourcePath, string? title = null, string? artist = null,
                                                double durationSeconds = 0)
     {
-        var occupied = _occupiedTrackIds ??= CollectOccupiedTrackIds(
-            _radioResources ?? GameScanner.ReadRadioResources(Settings.GamePath), RadioInfo.Load);
+        var occupied = GetOccupiedTrackIds();
+        var soundName = AllocateCustomSoundName(occupied, ref _nextSeq);
+        var version = _gameVersion ?? GameScanner.DetectVersion(Settings.GamePath);
+        const int sampleRate = 48000;
+        var track = CreateCustomTrack(soundName, sourcePath, title, artist, version, sampleRate,
+            (long)(durationSeconds * sampleRate));
+        LockCustomSource(sourcePath);
+        return track;
+    }
+
+    private HashSet<ulong> GetOccupiedTrackIds() => _occupiedTrackIds ??= CollectOccupiedTrackIds(
+        _radioResources ?? GameScanner.ReadRadioResources(Settings.GamePath), RadioInfo.Load);
+
+    private static string AllocateCustomSoundName(HashSet<ulong> occupied, ref int nextSeq)
+    {
         string soundName;
         do
         {
-            soundName = Naming.MakeSoundName(_nextSeq);
-            _nextSeq = checked(_nextSeq + 1);
+            soundName = Naming.MakeSoundName(nextSeq);
+            nextSeq = checked(nextSeq + 1);
         }
         while (!occupied.Add(Lookup.SoundNameToId(soundName)));
-        const int sampleRate = 48000;
-        var version = GameScanner.DetectVersion(Settings.GamePath);
+        return soundName;
+    }
+
+    private static TrackItemViewModel CreateCustomTrack(string soundName, string sourcePath, string? title,
+        string? artist, int version, int sampleRate, long sampleLength)
+    {
         var track = new RadioTrack
         {
             SoundName = soundName,
@@ -1558,9 +1579,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             DisplayName = title ?? Path.GetFileNameWithoutExtension(sourcePath),
             Artist = artist,
             SampleRate = sampleRate,
-            SampleLength = (long)(durationSeconds * sampleRate),
+            SampleLength = sampleLength,
         };
+        return new TrackItemViewModel(track) { SourcePath = sourcePath };
+    }
 
+    private void LockCustomSource(string sourcePath)
+    {
         if (File.Exists(sourcePath) && !_sourceLocks.ContainsKey(sourcePath))
         {
             try
@@ -1573,41 +1598,24 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Log.Line($"CreateCustomStub: could not lock source '{Path.GetFileName(sourcePath)}': {ex.Message}");
             }
         }
-
-        return new TrackItemViewModel(track, gainDb: null) { SourcePath = sourcePath };
     }
 
     public async Task ExportAsync(string outPath, IReadOnlyList<TrackItemViewModel> selected)
     {
-        var items = selected
-            .Select(t => new ExportItem(
-                t.UsesFileSource ? t.FileSource : t.RestoreFsbPath,
-                t.SubIndex,
-                t.Title,
-                t.Artist,
-                t.SampleLength,
-                t.SampleRate,
-                t.GainDb,
-                t.Enabled,
-                ExportRole(t),
-                t.Markers,
-                t.UsesFileSource && !t.IsFileSourceFsb ? t.Normalization : null))
-            .ToList();
-
-        if (items.Count == 0)
+        if (!CanTransferTracks || !selected.All(Tracks.ToHashSet().Contains))
+        {
+            Status = Str.StatusPackBankChanged;
+            return;
+        }
+        if (selected.Count == 0)
         {
             Status = Str.StatusExportEmpty;
             return;
         }
 
-        static string ExportRole(TrackItemViewModel t)
-        {
-            if (t.IsCustom) return "custom";
-            return t.Replaced || t.IsReplacing ? "replacement" : "default";
-        }
-
         var bankName = SelectedStation?.BankName(SelectedVariant!);
         var bankPath = LoadedBankPath;
+        var bankStamp = _loadedBankSnapshot?.Stamp;
 
         IsExporting = true;
         StopPlayback();
@@ -1617,8 +1625,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            await Task.Run(() => TrackPack.ExportAsync(outPath, bankName, bankPath, items, Progress, Log.Line, default));
-            Status = string.Format(Str.StatusExportedFmt, items.Count, Path.GetFileName(outPath));
+            var items = selected.Select(CreateExportItem).ToArray();
+            await TrackPack.ExportAsync(outPath, bankName, bankPath, items, Progress, Log.Line, default, bankStamp);
+            Status = string.Format(Str.StatusExportedFmt, items.Length, Path.GetFileName(outPath));
         }
         catch (Exception ex)
         {
@@ -1631,75 +1640,160 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    private static ExportItem CreateExportItem(TrackItemViewModel track)
+    {
+        var rate = track.SampleRate;
+        var frames = track.SampleLength;
+        if (track.UsesFileSource)
+        {
+            if (rate <= 0) rate = track.BankSampleRate > 0 ? track.BankSampleRate : 48000;
+            if (frames <= 0 && track.PendingDurationSeconds is { } seconds)
+                frames = checked((long)Math.Round(seconds * rate));
+        }
+
+        var role = track.IsCustom ? "custom" : track.Replaced || track.IsReplacing ? "replacement" : "default";
+        return new ExportItem(track.UsesFileSource ? track.FileSource : track.RestoreFsbPath, track.SubIndex,
+            track.Title, track.Artist, frames, rate, track.GainDb, track.Enabled, role, track.Markers,
+            track.UsesFileSource && !track.IsFileSourceFsb ? track.Normalization : null, track.BankId);
+    }
+
     public TrackItemViewModel StageImportedAdd(ImportedPack pack, PackTrack e)
     {
         var audioPath = Path.Combine(pack.Dir, e.File);
-        var dur = e.SampleRate > 0 && e.SampleLength > 0 ? e.SampleLength / (double)e.SampleRate : 0;
-
-        var track = CreateCustomStub(audioPath, e.DisplayName, e.Artist, dur);
-        SetImportedAudio(track, e, audioPath);
-        track.Enabled = e.Enabled;
+        var version = _gameVersion ?? GameScanner.DetectVersion(Settings.GamePath);
+        var audio = PrepareImportedAudio(e, audioPath, version == 2, version is 2 or 3);
+        var soundName = AllocateCustomSoundName(GetOccupiedTrackIds(), ref _nextSeq);
+        var track = CreateImportedTrack(soundName, version, e, audio);
+        LockCustomSource(audioPath);
         return track;
     }
 
     public void StageImportedReplace(TrackItemViewModel defaultTrack, ImportedPack pack, PackTrack e)
     {
         if (defaultTrack.IsBankOnly) throw new InvalidOperationException(Str.TipMissingTrackInfo);
-        var audioPath = Path.Combine(pack.Dir, e.File);
-        defaultTrack.ReplacementPath = audioPath;
-        defaultTrack.Title = e.DisplayName ?? defaultTrack.Title;
-        defaultTrack.Artist = e.Artist;
-        SetImportedAudio(defaultTrack, e, audioPath);
+        var audio = PrepareImportedAudio(e, Path.Combine(pack.Dir, e.File),
+            defaultTrack.UsesMilliseconds, defaultTrack.UsesTrackBreakDown);
+        ReplaceImportedTrack(defaultTrack, e, audio);
     }
 
-    private static void SetImportedAudio(TrackItemViewModel track, PackTrack imported, string audioPath)
+    private sealed record ImportedAudio(string Path, int SampleRate, long SampleLength, double? GainDb,
+        NormalizationOverride? Normalization, Dictionary<string, long>? Markers);
+
+    private static ImportedAudio PrepareImportedAudio(PackTrack imported, string audioPath,
+        bool usesMilliseconds, bool usesTrackBreakDown)
     {
+        if (imported.SampleRate < 0 || imported.SampleLength < 0)
+            throw new InvalidDataException($"Track '{imported.DisplayName ?? imported.Id}' has invalid sample timing.");
+
         var sourceRate = imported.SampleRate;
-        var targetRate = !audioPath.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase)
-            ? 48000 : sourceRate;
-        var scale = sourceRate > 0 && targetRate > 0 ? targetRate / (double) sourceRate : 1.0;
-        track.SampleLength = checked((long) Math.Round(imported.SampleLength * scale));
-        track.SampleRate = targetRate;
-        track.GainDb = imported.GainDb;
-        track.Normalization = audioPath.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase) ? null : imported.Normalization;
-        track.PendingDurationSeconds = targetRate > 0 && track.SampleLength > 0
-            ? track.SampleLength / (double) targetRate : null;
-        Log.Line($"import.staged sound={track.SoundName} source=\"{audioPath}\" " +
-            $"sourceRate={sourceRate} targetRate={targetRate} sourceFrames={imported.SampleLength} " +
-            $"targetFrames={track.SampleLength} gainDb={track.GainDb} normalization={JsonSerializer.Serialize(track.Normalization)}");
-        if (imported.Markers is not { } markers)
+        var isFsb = audioPath.EndsWith(".fsb", StringComparison.OrdinalIgnoreCase);
+        var targetRate = isFsb ? sourceRate : 48000;
+        long Scale(long frames) => sourceRate > 0 && sourceRate != targetRate
+            ? (long)decimal.Round(frames * (decimal)targetRate / sourceRate)
+            : frames;
+
+        try
         {
-            track.Markers = null;
-            return;
+            var sampleLength = Scale(imported.SampleLength);
+            var markers = imported.Markers is { } positions
+                ? MarkerPresetService.AdaptMarkers(positions, usesMilliseconds, sourceRate, usesTrackBreakDown)
+                    .ToDictionary(marker => marker.Key, marker => marker.Value < 0 ? -1 : Scale(marker.Value))
+                : null;
+            return new ImportedAudio(audioPath, targetRate, sampleLength, imported.GainDb,
+                isFsb ? null : imported.Normalization, markers);
         }
-        var adapted = MarkerPresetService.AdaptMarkers(markers, track.UsesMilliseconds, sourceRate, track.UsesTrackBreakDown);
-        track.Markers = adapted.ToDictionary(m => m.Key,
-            m => m.Value < 0 ? -1 : checked((long) Math.Round(m.Value * scale)));
+        catch (OverflowException ex)
+        {
+            throw new InvalidDataException($"Track '{imported.DisplayName ?? imported.Id}' has sample timing outside the supported range.", ex);
+        }
+    }
+
+    private static TrackItemViewModel CreateImportedTrack(string soundName, int version, PackTrack entry, ImportedAudio audio)
+    {
+        var track = CreateCustomTrack(soundName, audio.Path, entry.DisplayName, entry.Artist, version,
+            audio.SampleRate, audio.SampleLength);
+        SetImportedAudio(track, entry, audio);
+        return track;
+    }
+
+    private static void ReplaceImportedTrack(TrackItemViewModel track, PackTrack entry, ImportedAudio audio)
+    {
+        track.ReplacementPath = audio.Path;
+        track.Title = entry.DisplayName ?? track.Title;
+        track.Artist = entry.Artist;
+        SetImportedAudio(track, entry, audio);
+    }
+
+    private static void SetImportedAudio(TrackItemViewModel track, PackTrack entry, ImportedAudio audio)
+    {
+        track.SampleLength = audio.SampleLength;
+        track.SampleRate = audio.SampleRate;
+        track.GainDb = audio.GainDb;
+        track.Normalization = audio.Normalization;
+        track.PendingDurationSeconds = audio.SampleRate > 0 && audio.SampleLength > 0
+            ? audio.SampleLength / (double)audio.SampleRate : null;
+        track.Markers = audio.Markers;
+        track.Enabled = entry.Enabled;
     }
 
     public void ApplyImport(ImportedPack pack, IReadOnlyDictionary<string, string?> mapping)
     {
-        var defaultByName = Tracks.Where(t => !t.IsCustom).ToDictionary(t => t.SoundName);
+        if (pack.Manifest.Tracks.Count == 0) return;
 
+        var version = _gameVersion ?? GameScanner.DetectVersion(Settings.GamePath);
+        var defaultByName = Tracks.Where(t => !t.IsCustom && !t.IsBankOnly).ToDictionary(t => t.SoundName);
+        var replacementTargets = new HashSet<TrackItemViewModel>();
+        var plan = new List<(PackTrack Entry, TrackItemViewModel? Target, ImportedAudio Audio)>();
         foreach (var e in pack.Manifest.Tracks)
         {
-            mapping.TryGetValue(e.Id, out var defaultSoundName);
+            if (string.IsNullOrWhiteSpace(e.File) || e.File != Path.GetFileName(e.File))
+                throw new InvalidDataException($"Track '{e.DisplayName ?? e.Id}' has an invalid audio path.");
+            var path = Path.Combine(pack.Dir, e.File);
+            var file = new FileInfo(path);
+            if (!file.Exists || file.Length == 0)
+                throw new IOException($"Audio file for '{e.DisplayName ?? e.Id}' is missing or empty: {path}");
 
-            if (defaultSoundName is not null && defaultByName.TryGetValue(defaultSoundName, out var def))
+            TrackItemViewModel? target = null;
+            if (mapping.TryGetValue(e.Id, out var soundName) && soundName is not null
+                && (!defaultByName.TryGetValue(soundName, out target) || !replacementTargets.Add(target)))
             {
-                if (ReferenceEquals(def, _nowPlaying)) StopPlayback();
-                StageImportedReplace(def, pack, e);
+                throw new InvalidDataException($"Replacement target '{soundName}' is unavailable or selected more than once.");
             }
-            else
-            {
-                Tracks.Add(StageImportedAdd(pack, e));
-            }
+            var audio = PrepareImportedAudio(e, path, target?.UsesMilliseconds ?? version == 2,
+                target?.UsesTrackBreakDown ?? (version is 2 or 3));
+            plan.Add((e, target, audio));
         }
 
+        var additions = new List<TrackItemViewModel>();
+        HashSet<ulong>? occupied = null;
+        var nextSeq = _nextSeq;
+        foreach (var (entry, target, audio) in plan)
+        {
+            if (target is not null) continue;
+            occupied ??= new HashSet<ulong>(GetOccupiedTrackIds());
+            var soundName = AllocateCustomSoundName(occupied, ref nextSeq);
+            additions.Add(CreateImportedTrack(soundName, version, entry, audio));
+        }
+        var updatedTracks = additions.Count > 0 ? Tracks.Concat(additions).ToArray() : null;
+
+        if (_nowPlaying is not null && replacementTargets.Contains(_nowPlaying)) StopPlayback();
         MarkDirty();
-        Recount();
+        foreach (var (entry, target, audio) in plan)
+        {
+            if (target is not null) ReplaceImportedTrack(target, entry, audio);
+        }
+        if (updatedTracks is not null)
+        {
+            foreach (var track in additions) LockCustomSource(track.SourcePath!);
+            _occupiedTrackIds = occupied;
+            _nextSeq = nextSeq;
+            Tracks.Reset(updatedTracks);
+        }
+        else
+        {
+            RefreshFilter();
+        }
         RecalcProjectedSize();
-        RefreshFilter();
     }
 
     private CancellationTokenSource? _buildCancellation;

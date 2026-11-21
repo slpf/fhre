@@ -35,7 +35,8 @@ public sealed record ExportItem(
     string? FileSource, int SubIndex,
     string? DisplayName, string? Artist,
     long SampleLength, int SampleRate, double? GainDb, bool Enabled,
-    string Role, Dictionary<string, long>? Markers, NormalizationOverride? Normalization = null);
+    string Role, Dictionary<string, long>? Markers, NormalizationOverride? Normalization = null,
+    ulong? BankId = null);
 
 public sealed record ImportedPack(PackManifest Manifest, string Dir);
 
@@ -50,18 +51,26 @@ public static class TrackPack
 
     public static Task ExportAsync(string outPath, string? bankName, string? bankPath,
         IReadOnlyList<ExportItem> tracks, Action<string>? progress, Action<string>? log, CancellationToken ct) =>
-        Task.Run(() => Export(outPath, bankName, bankPath, tracks, progress, log, ct), ct);
+        ExportAsync(outPath, bankName, bankPath, tracks, progress, log, ct, expectedBankStamp: null);
+
+    internal static Task ExportAsync(string outPath, string? bankName, string? bankPath,
+        IReadOnlyList<ExportItem> tracks, Action<string>? progress, Action<string>? log, CancellationToken ct,
+        BankFileStamp? expectedBankStamp) =>
+        Task.Run(() => Export(outPath, bankName, bankPath, tracks, progress, log, ct, expectedBankStamp), ct);
 
     private static void Export(string outPath, string? bankName, string? bankPath,
-        IReadOnlyList<ExportItem> tracks, Action<string>? progress, Action<string>? log, CancellationToken ct)
+        IReadOnlyList<ExportItem> tracks, Action<string>? progress, Action<string>? log, CancellationToken ct,
+        BankFileStamp? expectedBankStamp)
     {
         if (tracks.Count == 0)
         {
-            throw new InvalidOperationException("nothing to export (no custom or replacement tracks)");
+            throw new InvalidOperationException("nothing to export");
         }
 
         var manifest = new PackManifest { ExportedFromBank = bankName, Tracks = [] };
         var audioSources = new List<(string Entry, string? Path, int SubIndex)>();
+        using var bank = tracks.Any(track => track.FileSource is null && track.SubIndex >= 0) && bankPath is not null
+            ? new SampleReader(bankPath, expectedBankStamp) : null;
 
         for (var i = 0; i < tracks.Count; i++)
         {
@@ -72,19 +81,22 @@ public static class TrackPack
             string entry;
             string? srcPath = null;
 
-            if (t.FileSource is not null && File.Exists(t.FileSource))
+            if (t.FileSource is not null)
             {
                 srcPath = t.FileSource;
+                var file = new FileInfo(srcPath);
+                if (!file.Exists) throw new FileNotFoundException($"Audio source for '{t.DisplayName ?? id}' is unavailable: {srcPath}", srcPath);
+                if (file.Length == 0) throw new InvalidDataException($"Audio source for '{t.DisplayName ?? id}' is empty: {srcPath}");
                 entry = AudioPrefix + id + Path.GetExtension(srcPath);
             }
-            else if (bankPath is not null && t.SubIndex >= 0)
+            else if (bank is not null && t.SubIndex >= 0)
             {
+                bank.ValidateSample(t.SubIndex, t.BankId, t.DisplayName ?? id);
                 entry = AudioPrefix + id + ".fsb";
             }
             else
             {
-                log?.Invoke($"  skip {t.DisplayName ?? id}: no audio source");
-                continue;
+                throw new InvalidDataException($"No audio source is available for '{t.DisplayName ?? id}'.");
             }
 
             audioSources.Add((entry, srcPath, t.SubIndex));
@@ -106,17 +118,11 @@ public static class TrackPack
             });
         }
 
-        if (manifest.Tracks.Count == 0)
-        {
-            throw new InvalidOperationException("no track audio could be resolved for export");
-        }
-
         progress?.Invoke("Writing archive…");
 
         Atomic.Write(outPath, fs =>
         {
             using var zip = new ZipArchive(fs, ZipArchiveMode.Create, leaveOpen: true);
-            using var bank = audioSources.Any(source => source.Path is null) ? new SampleReader(bankPath!) : null;
 
             foreach (var (entry, srcPath, subIndex) in audioSources)
             {
@@ -130,8 +136,9 @@ public static class TrackPack
                 }
                 else
                 {
-                    using var src = File.OpenRead(srcPath!);
-                    src.CopyTo(zes);
+                    using var src = File.OpenRead(srcPath);
+                    if (src.Length == 0) throw new InvalidDataException($"Audio source became empty: {srcPath}");
+                    src.CopyToAsync(zes, ct).GetAwaiter().GetResult();
                 }
             }
 
@@ -156,7 +163,7 @@ public static class TrackPack
                 var tlBytes = new UTF8Encoding(false).GetBytes(tl.ToString());
                 tles.Write(tlBytes, 0, tlBytes.Length);
             }
-        });
+        }, uniqueTemporary: true);
 
         log?.Invoke($"exported {manifest.Tracks.Count} track(s) -> {outPath}");
     }
@@ -262,8 +269,18 @@ public static class TrackPack
                 planned.Add((track, entryName, audio.Entry, audio.File));
             }
 
+            var availableBytes = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(dir))!).AvailableFreeSpace;
+            var uniqueAudio = planned.DistinctBy(item => item.EntryName);
+            foreach (var item in uniqueAudio)
+            {
+                if (item.Entry.Length > availableBytes)
+                    throw new IOException("Not enough free space to extract the track package.");
+                availableBytes -= item.Entry.Length;
+            }
+
             Directory.CreateDirectory(dir);
             var extracted = new HashSet<string>(StringComparer.Ordinal);
+            var buffer = new byte[128 * 1024];
             foreach (var item in planned)
             {
                 var dest = Path.Combine(dir, item.File);
@@ -271,7 +288,15 @@ public static class TrackPack
                 {
                     using var es = item.Entry.Open();
                     using var output = new FileStream(dest, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                    es.CopyTo(output);
+                    var remaining = item.Entry.Length;
+                    while (remaining > 0)
+                    {
+                        var block = buffer.AsSpan(0, (int)Math.Min(remaining, buffer.Length));
+                        es.ReadExactly(block);
+                        output.Write(block);
+                        remaining -= block.Length;
+                    }
+                    if (es.ReadByte() != -1) throw new InvalidDataException($"Audio entry exceeds its declared size: {item.EntryName}");
                 }
                 item.Track.File = item.File;
                 Log.Line($"pack import \"{path}\": track={item.Track.Id}, title=\"{item.Track.DisplayName}\", " +
@@ -288,6 +313,29 @@ public static class TrackPack
     }
 
     public static void CleanupImport() => CleanupImportDirectory(AppPaths.SessionDirectory("import"));
+
+    internal static void CleanupStaleImports()
+    {
+        var current = AppPaths.SessionDirectory("import");
+        var root = new DirectoryInfo(Path.GetDirectoryName(current)!);
+        try
+        {
+            if (!root.Exists || (root.Attributes & FileAttributes.ReparsePoint) != 0) return;
+            foreach (var directory in root.EnumerateDirectories())
+            {
+                if (Guid.TryParseExact(directory.Name, "N", out _)
+                    && !string.Equals(directory.FullName, current, StringComparison.OrdinalIgnoreCase)
+                    && (directory.Attributes & FileAttributes.ReparsePoint) == 0)
+                {
+                    CleanupImportDirectory(directory.FullName);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Line($"pack import: could not scan temporary import directories: {ex}");
+        }
+    }
 
     internal static void DiscardImport(ImportedPack pack)
     {
@@ -348,16 +396,24 @@ public static class TrackPack
         private readonly FileStream _input;
         private readonly byte[] _header;
         private readonly List<Fsb5.SampleLayout> _samples;
+        private readonly Dictionary<int, ulong> _trackIds;
         private readonly long _dataStart;
         private readonly byte[] _buffer = new byte[128 * 1024];
 
-        public SampleReader(string bankPath)
+        public SampleReader(string bankPath, BankFileStamp? expectedStamp = null)
         {
             _input = File.OpenRead(bankPath);
             try
             {
+                if (expectedStamp is { } stamp && stamp != BankFileStamp.Read(_input))
+                    throw new IOException("The bank has changed since it was opened. Reload the station before exporting.");
                 var skeleton = FevBank.ReadSkeleton(_input);
                 (_header, _samples) = Fsb5.ReadLayout(skeleton.Fsb5HeaderRegion);
+                _trackIds = new Dictionary<int, ulong>();
+                foreach (var (id, index) in skeleton.Stbl)
+                {
+                    if (index >= 0) _trackIds.TryAdd(index, id);
+                }
                 _dataStart = skeleton.DataStartAbs;
             }
             catch
@@ -365,6 +421,14 @@ public static class TrackPack
                 _input.Dispose();
                 throw;
             }
+        }
+
+        public void ValidateSample(int index, ulong? bankId, string title)
+        {
+            if (bankId is { } id && (!_trackIds.TryGetValue(index, out var actual) || actual != id))
+                throw new IOException($"The bank sample for '{title}' has changed. Reload the station before exporting.");
+            var sample = GetSample(index);
+            if (sample.DataLen == 0) throw new InvalidDataException($"The bank sample for '{title}' is empty.");
         }
 
         public void CopySample(int index, Stream output, CancellationToken ct = default)

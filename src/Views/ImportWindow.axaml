@@ -47,10 +47,13 @@
                               IsChecked="{Binding SelectAllState, Mode=OneWay}"
                               Click="OnToggleAll" Content="{x:Static assets:Str.BtnSelectAll}"/>
 
-                    <TextBlock Grid.Column="1" Text="{Binding SelectedCount, StringFormat='{}{0} selected'}"
+                    <TextBlock Grid.Column="1" Text="{Binding SelectionSummary}"
                                HorizontalAlignment="Right" Foreground="{DynamicResource TxtMute}"
                                FontSize="12.5" VerticalAlignment="Center" Margin="0,0,12,0"/>
                 </Grid>
+
+                <TextBlock IsVisible="{Binding !CanImport}" Text="{x:Static assets:Str.ImportSelectionLimit}"
+                           Foreground="{DynamicResource TxtMute}" TextWrapping="Wrap" Margin="12,0"/>
 
                 <Border Background="{DynamicResource BgInput}" Padding="12,8,0,8"
                         BorderBrush="{DynamicResource BgDarkest}" BorderThickness="1" CornerRadius="8">
@@ -91,7 +94,7 @@
                     <Button Classes="big primary" Click="OnNext" Content="{x:Static assets:Str.BtnNext}"
                             IsVisible="{Binding ShowNext}"/>
                     <Button Classes="big primary" Click="OnSave" Content="{x:Static assets:Str.BtnImport}"
-                            IsVisible="{Binding ShowImport}"/>
+                            IsVisible="{Binding ShowImport}" IsEnabled="{Binding CanImport}"/>
                 </StackPanel>
             </Grid>
         </Border>

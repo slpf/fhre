@@ -226,16 +226,16 @@ internal static class NormalizationOverrideChecks
         {
             Check(imported.Manifest.Tracks[0].Normalization == settings && imported.Manifest.Tracks[1].Normalization is null,
                 "Raw export/import lost the override or converted inheritance into a snapshot.");
-            var method = typeof(MainWindowViewModel).GetMethod("SetImportedAudio", BindingFlags.NonPublic | BindingFlags.Static)
-                ?? throw new MissingMethodException(nameof(MainWindowViewModel), "SetImportedAudio");
+            var vm = (MainWindowViewModel)RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));
             var track = Track(source);
-            method.Invoke(null, [track, imported.Manifest.Tracks[0], Path.Combine(imported.Dir, imported.Manifest.Tracks[0].File)]);
+            vm.StageImportedReplace(track, imported, imported.Manifest.Tracks[0]);
             Check(track.Normalization == settings, "Applying an imported raw track discarded its normalization override.");
             Check(File.ReadAllBytes(Path.Combine(imported.Dir, imported.Manifest.Tracks[0].File)).AsSpan().SequenceEqual(File.ReadAllBytes(source)),
                 "A raw track pack changed the original audio bytes.");
-            method.Invoke(null, [track, imported.Manifest.Tracks[1], Path.Combine(imported.Dir, imported.Manifest.Tracks[1].File)]);
+            vm.StageImportedReplace(track, imported, imported.Manifest.Tracks[1]);
             Check(track.Normalization is null, "Importing an inherited track retained the previous track override.");
-            method.Invoke(null, [track, imported.Manifest.Tracks[0], "encoded.fsb"]);
+            imported.Manifest.Tracks[0].File = "encoded.fsb";
+            vm.StageImportedReplace(track, imported, imported.Manifest.Tracks[0]);
             Check(track.Normalization is null, "Importing encoded FSB audio activated a raw-audio normalization override.");
         }
         finally { DeleteImport(imported.Dir); }

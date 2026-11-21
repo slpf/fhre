@@ -35,6 +35,7 @@ try
     await TrackLoudnessChecks.RunAsync(temp, path => WriteEmptyBank(path));
     TestTrackPacks(temp);
     TestImportedMarkers(temp);
+    TestImportBatch(temp);
     await XmaEncoderChecks.RunAsync(temp);
     await NormalizationChecks.RunAsync(temp);
     await OutputLoudnessChecks.RunAsync(temp, path => WriteEmptyBank(path));
@@ -227,13 +228,14 @@ static void WritePack(string path, PackTrack[] tracks, string[] entries)
 
 static void TestImportedMarkers(string temp)
 {
-    var method = typeof(MainWindowViewModel).GetMethod("SetImportedAudio", BindingFlags.NonPublic | BindingFlags.Static)
-        ?? throw new MissingMethodException(nameof(MainWindowViewModel), "SetImportedAudio");
+    var vm = (MainWindowViewModel)RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));
     var track = new TrackItemViewModel(new RadioTrack { SoundName = "R_TEST", Origin = TrackOrigin.Original, SampleLength = 441000, SampleRate = 44100 });
     var imported = new PackTrack { File = "track.mp3", SampleLength = 441000, SampleRate = 44100, Markers = new Dictionary<string, long> { ["TrackStart"] = 44100, ["DJDrop"] = -1 } };
-    method.Invoke(null, [track, imported, Path.Combine(temp, "track.mp3")]);
+    var pack = new ImportedPack(new PackManifest(), temp);
+    vm.StageImportedReplace(track, pack, imported);
     Check(track.SampleRate == 48000 && track.SampleLength == 480000 && track.Markers!["TrackStart"] == 48000 && track.Markers["DJDrop"] == -1, "Modern imported markers were not staged at the encoded sample rate.");
-    method.Invoke(null, [track, imported, Path.Combine(temp, "track.fsb")]);
+    imported.File = "track.fsb";
+    vm.StageImportedReplace(track, pack, imported);
     Check(track.SampleRate == 44100 && track.SampleLength == 441000 && track.Markers!["TrackStart"] == 44100, "Native FSB import changed its marker timing.");
 
     var xml = Path.Combine(temp, "markers.xml");
@@ -249,6 +251,98 @@ static void TestImportedMarkers(string temp)
     apply.Invoke(null, [radio, station, "R1_Tracks_Main", added, items]);
     Check(radio.StationByNumber(1)!.GetMarkers("R_TEST", 48000)!["TrackStart"] == 48000, "Marker timing was not rescaled after FSB conversion changed the sample rate.");
     Console.WriteLine("Verified imported and committed marker timing across 44.1 kHz and 48 kHz audio.");
+}
+
+static void TestImportBatch(string temp)
+{
+    var vm = (MainWindowViewModel)RuntimeHelpers.GetUninitializedObject(typeof(MainWindowViewModel));
+    void Set(string field, object value) => typeof(MainWindowViewModel)
+        .GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(vm, value);
+
+    var original = new TrackItemViewModel(new RadioTrack
+    {
+        SoundName = "PACK_TARGET", Origin = TrackOrigin.Original, SampleRate = 44100,
+        SampleLength = 441000, Enabled = true,
+        Markers = new Dictionary<string, long> { ["TrackStart"] = 44100 },
+    });
+    var tracks = new RangeObservableCollection<TrackItemViewModel>([original]);
+    var locks = new Dictionary<string, FileStream>();
+    Set("<Tracks>k__BackingField", tracks);
+    Set("<FilteredTracks>k__BackingField", new RangeObservableCollection<TrackItemViewModel>());
+    Set("<Settings>k__BackingField", new AppSettings());
+    Set("_gameVersion", 6);
+    Set("_occupiedTrackIds", new HashSet<ulong>());
+    Set("_sourceLocks", locks);
+
+    var file = Path.Combine(temp, "import-batch.wav");
+    WriteWav(file, 44100, 2, 44100, 1);
+    original.StageReplacement(file, "Pending", null, 1, false);
+    Check(original.SampleRate == 44100 && original.SampleLength == 44100 && original.Markers!["TrackStart"] == 44100,
+        "A pending replacement lost the sample rate used by its markers.");
+    var first = new PackTrack { Id = "one", File = Path.GetFileName(file), DisplayName = "Imported",
+        Enabled = false, SampleRate = 44100, SampleLength = 44100 };
+    var second = new PackTrack { Id = "two", File = first.File, SampleRate = 44100, SampleLength = long.MaxValue };
+    var third = new PackTrack { Id = "three", File = first.File, SampleRate = 44100, SampleLength = 44100 };
+    var pack = new ImportedPack(new PackManifest { Tracks = [first, second, third] }, temp);
+    var mapping = new Dictionary<string, string?> { [first.Id] = original.SoundName };
+    var updates = 0;
+    tracks.CollectionChanged += (_, _) => updates++;
+
+    Reject(() => vm.ApplyImport(pack, mapping), "Import accepted timing that overflows after resampling.");
+    Check(original.Title == "Pending" && original.Enabled && !vm.HasUnsavedChanges && tracks.Count == 1 && updates == 0,
+        "An invalid entry partially changed the station.");
+
+    second.SampleLength = 44100;
+    try
+    {
+        vm.ApplyImport(pack, mapping);
+        Check(original.Title == "Imported" && !original.Enabled && vm.HasUnsavedChanges && tracks.Count == 3 && updates == 1,
+            "Valid import lost the replacement state or refreshed the track list more than once.");
+    }
+    finally
+    {
+        foreach (var stream in locks.Values) stream.Dispose();
+    }
+
+    var selection = new ImportWindowViewModel([first], tracks.ToArray());
+    selection.Rows[0].Selected = true;
+    selection.Rows[1].Selected = true;
+    Check(!selection.MarkSaved(), "Import accepted more replacement targets than entries.");
+    selection.SelectAll(true);
+    Check(selection.MarkSaved() && selection.SelectedCount == 1 && selection.Result[first.Id] == original.SoundName,
+        "Select all did not respect the number of imported entries.");
+}
+
+static async Task TestExportSafeguardsAsync(string temp, string bank, string source, ulong bankId)
+{
+    var path = Path.Combine(temp, "checked-export.fhre");
+    var neighbor = path + ".tmp";
+    File.WriteAllText(neighbor, "unrelated");
+    var native = new ExportItem(null, 0, "Bank track", null, 144000, 48000, null, true, "default", null, BankId: bankId);
+    await TrackPack.ExportAsync(path, "test", bank, [native], null, null, default);
+    Check(File.ReadAllText(neighbor) == "unrelated", "Export overwrote an unrelated neighboring file.");
+    var committed = File.ReadAllBytes(path);
+
+    var existing = native with { FileSource = source, SubIndex = -1 };
+    var missing = native with { FileSource = Path.Combine(temp, "nonexistent-replacement.wav"), Role = "replacement" };
+    try
+    {
+        await TrackPack.ExportAsync(path, "test", bank, [existing, missing], null, null, default);
+        throw new InvalidOperationException("Export silently substituted original bank audio for a missing replacement.");
+    }
+    catch (FileNotFoundException)
+    {
+    }
+    try
+    {
+        await TrackPack.ExportAsync(path, "test", bank, [native with { BankId = ~bankId }], null, null, default);
+        throw new InvalidOperationException("Export accepted a bank sample with a different track ID.");
+    }
+    catch (IOException)
+    {
+    }
+    Check(File.ReadAllBytes(path).SequenceEqual(committed) && File.ReadAllText(neighbor) == "unrelated",
+        "A failed export changed a previously saved package or its neighbor.");
 }
 
 static async Task TestGameWritesAsync(string temp, string input)
@@ -510,7 +604,11 @@ static async Task TestBuildAsync(string temp, string[] inputs, bool normalize)
     await BankBuildService.BuildToFileAsync(output, empty, [], settings, log.Enqueue);
     Check(FevBank.ReadStblCountFromFile(empty) == 0 && Fsb5.ReadLayout(FevBank.ReadSkeleton(empty).Fsb5HeaderRegion).Samples.Count == 0, "Removing all tracks failed.");
     TestRiffPadding(output, temp);
-    if (!normalize) await TestBankStructureAsync(temp, output, fsb, singleFsb, kept, settings);
+    if (!normalize)
+    {
+        await TestExportSafeguardsAsync(temp, output, inputs[0], Lookup.SoundNameToId(items[0].SoundName));
+        await TestBankStructureAsync(temp, output, fsb, singleFsb, kept, settings);
+    }
     Console.WriteLine($"Verified WAV stereo/mono, FLAC and MP3 with normalization={normalize}, gain, STBL, repeat build, passthrough and empty plan.");
 }
 

@@ -292,6 +292,13 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!Vm.CanTransferTracks)
+        {
+            Vm.Status = Str.StatusPackBankChanged;
+            return;
+        }
+        var bankGeneration = Vm.BankLoadGeneration;
+
         if (Vm.Tracks.Count == 0)
         {
             Vm.Status = Str.StatusExportEmpty;
@@ -341,6 +348,7 @@ public partial class MainWindow : Window
             path += ".fhre";
         }
 
+        if (!CheckPackBank(bankGeneration)) return;
         await Vm.ExportAsync(path, selected);
     }
 
@@ -355,6 +363,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!Vm.CanTransferTracks)
+        {
+            Vm.Status = Str.StatusPackBankChanged;
+            return;
+        }
+        var bankGeneration = Vm.BankLoadGeneration;
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = Str.PickImportFile,
@@ -367,46 +381,64 @@ public partial class MainWindow : Window
             return;
         }
 
-        ImportedPack pack;
+        if (!CheckPackBank(bankGeneration)) return;
+
+        ImportedPack? pack = null;
+        var applied = false;
         try
         {
-            Vm.IsImporting = true;
-            pack = await Task.Run(() => TrackPack.Load(path));
+            try
+            {
+                Vm.IsImporting = true;
+                pack = await Task.Run(() => TrackPack.Load(path));
+            }
+            finally
+            {
+                Vm.IsImporting = false;
+            }
+
+            if (!CheckPackBank(bankGeneration)) return;
+            if (pack.Manifest.Tracks.Count == 0)
+            {
+                Vm.Status = Str.StatusImportEmpty;
+                return;
+            }
+
+            var defaults = Vm.Tracks.Where(t => !t.IsCustom && !t.IsBankOnly).ToList();
+            var vm = new ImportWindowViewModel(pack.Manifest.Tracks, defaults);
+            var w = new ImportWindow { DataContext = vm };
+            await w.ShowDialog(this);
+            if (!vm.Saved || !CheckPackBank(bankGeneration)) return;
+
+            var replaced = vm.Result.Count(kv => kv.Value is not null);
+            Vm.ApplyImport(pack, vm.Result);
+            applied = true;
+            Vm.Status = string.Format(Str.StatusImportedFmt, vm.Result.Count, replaced, vm.Result.Count - replaced);
         }
         catch (Exception ex)
         {
             Log.Line("IMPORT ERROR: " + ex);
-            await MessageDialog.ShowAsync(this, Str.DlgImportFailedTitle, string.Format(Str.StatusImportErrorFmt, ex.Message));
-            return;
+            var message = string.Format(Str.StatusImportErrorFmt, ex.Message);
+            Vm.Status = message;
+            if (IsVisible)
+                await MessageDialog.ShowAsync(this, Str.DlgImportFailedTitle, message);
         }
         finally
         {
-            Vm.IsImporting = false;
+            if (!applied && pack is not null && !Vm.Tracks.Any(track =>
+                string.Equals(Path.GetDirectoryName(track.FileSource), pack.Dir, StringComparison.OrdinalIgnoreCase)))
+            {
+                TrackPack.DiscardImport(pack);
+            }
         }
+    }
 
-        if (pack.Manifest.Tracks.Count == 0)
-        {
-            TrackPack.DiscardImport(pack);
-            Vm.Status = Str.StatusImportEmpty;
-            return;
-        }
-
-        var defaults = Vm.Tracks.Where(t => !t.IsCustom && !t.IsBankOnly).ToList();
-        var vm = new ImportWindowViewModel(pack.Manifest.Tracks, defaults);
-        var w = new ImportWindow { DataContext = vm };
-        await w.ShowDialog(this);
-
-        if (!vm.Saved)
-        {
-            TrackPack.DiscardImport(pack);
-            return;
-        }
-
-        var replaced = vm.Result.Count(kv => kv.Value is not null);
-        var added = vm.Result.Count - replaced;
-
-        Vm.ApplyImport(pack, vm.Result);
-        Vm.Status = string.Format(Str.StatusImportedFmt, vm.Result.Count, replaced, added);
+    private bool CheckPackBank(int generation)
+    {
+        if (!IsVisible) return false;
+        if (Vm.CanTransferTracks && Vm.BankLoadGeneration == generation) return true;
+        Vm.Status = Str.StatusPackBankChanged;
+        return false;
     }
 
     private void OnBackups(object? sender, RoutedEventArgs e)
@@ -950,7 +982,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (Vm.IsBuilding || Vm.IsBackingUp)
+        if (Vm.IsBuilding || Vm.IsBackingUp || Vm.IsImporting || Vm.IsExporting)
         {
             e.Cancel = true;
             return;

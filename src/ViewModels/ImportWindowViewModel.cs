@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using FH6RB.Assets;
 using FH6RB.Services;
 
 namespace FH6RB.ViewModels;
@@ -42,9 +43,11 @@ public sealed partial class ImportWindowViewModel : ObservableObject
     public bool Saved { get; private set; }
     public bool CanReplace => Rows.Count > 0;
     public bool HasRows => Rows.Count > 0;
-    public bool HasAny => Rows.Count > 0 && Rows.Any(r => r.Selected);
     public int SelectedCount => Rows.Count(r => r.Selected);
-    public bool AllSelected => Rows.Count > 0 && Rows.All(r => r.Selected);
+    public int ReplacementLimit => Math.Min(Rows.Count, _imported.Count);
+    public bool CanImport => SelectedCount <= ReplacementLimit;
+    public string SelectionSummary => string.Format(Str.ImportSelectionCountFmt, SelectedCount, ReplacementLimit);
+    public bool AllSelected => ReplacementLimit > 0 && SelectedCount == ReplacementLimit;
     public bool NoneSelected => Rows.All(r => !r.Selected);
     public bool? SelectAllState => AllSelected ? true : NoneSelected ? false : null;
 
@@ -69,8 +72,9 @@ public sealed partial class ImportWindowViewModel : ObservableObject
             var row = new ImportRow(d, selected: false);
             row.PropertyChanged += (_, _) =>
             {
-                OnPropertyChanged(nameof(HasAny));
                 OnPropertyChanged(nameof(SelectedCount));
+                OnPropertyChanged(nameof(SelectionSummary));
+                OnPropertyChanged(nameof(CanImport));
                 OnPropertyChanged(nameof(AllSelected));
                 OnPropertyChanged(nameof(NoneSelected));
                 OnPropertyChanged(nameof(SelectAllState));
@@ -97,14 +101,16 @@ public sealed partial class ImportWindowViewModel : ObservableObject
 
     public void SelectAll(bool value)
     {
-        foreach (var r in Rows)
+        var count = value ? ReplacementLimit : 0;
+        for (var i = 0; i < Rows.Count; i++)
         {
-            r.Selected = value;
+            Rows[i].Selected = i < count;
         }
     }
 
-    public void MarkSaved()
+    public bool MarkSaved()
     {
+        if (!CanImport) return false;
         var selectedDefaults = Rows.Where(r => r.Selected).Select(r => r.DefaultTrack).ToList();
         var result = new Dictionary<string, string?>();
 
@@ -115,5 +121,6 @@ public sealed partial class ImportWindowViewModel : ObservableObject
 
         Result = result;
         Saved = true;
+        return true;
     }
 }
