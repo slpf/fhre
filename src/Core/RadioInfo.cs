@@ -405,13 +405,15 @@ public sealed class RadioStationEditor(XElement station)
         }
     }
 
-    public RadioTrack AddCustom(string soundName, long sampleLength, int sampleRate, string? displayName, string? artist)
+    public RadioTrack AddCustom(string soundName, long sampleLength, int sampleRate, string? displayName, string? artist,
+        bool preserveMarkers = false)
     {
         if (!soundName.StartsWith(Naming.CustomPrefix, StringComparison.Ordinal))
         {
             throw new InvalidOperationException($"AddCustom expects a custom SoundName ('{Naming.CustomPrefix}...')");
         }
-        if (!EditSamples(soundName, s => ConfigureCustom(s, soundName, sampleLength, sampleRate, displayName, artist, true)))
+        if (!EditSamples(soundName, s => ConfigureCustom(s, soundName, sampleLength, sampleRate, displayName, artist,
+                preserveArtist: true, preserveMarkers: preserveMarkers)))
         {
             var template = TrackSamples().FirstOrDefault()
                 ?? throw new InvalidOperationException("no template track to clone");
@@ -439,11 +441,10 @@ public sealed class RadioStationEditor(XElement station)
         };
     }
 
-    private void ConfigureCustom(XElement sample, string soundName, long sampleLength, int sampleRate, string? displayName, string? artist, bool preserveArtist = false)
+    private void ConfigureCustom(XElement sample, string soundName, long sampleLength, int sampleRate, string? displayName,
+        string? artist, bool preserveArtist = false, bool preserveMarkers = false)
     {
         sample.SetAttributeValue("SoundName", soundName);
-        sample.SetAttributeValue("SampleLength", XmlLength(sampleLength, sampleRate));
-        sample.SetAttributeValue("SampleRate", UsesMilliseconds ? null : sampleRate);
         if (displayName is not null)
         {
             sample.SetAttributeValue("DisplayName", displayName);
@@ -459,8 +460,7 @@ public sealed class RadioStationEditor(XElement station)
             sample.SetAttributeValue("IsXCloudModeSafe", "true");
         }
         sample.SetAttributeValue("Replaced", null);
-        ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate, UsesTrackBreakDown);
-        sample.Elements("BPM").Remove();
+        SetAudioTiming(sample, sampleLength, sampleRate, preserveMarkers);
     }
 
     public static readonly string[] MarkerNames =
@@ -691,17 +691,39 @@ public sealed class RadioStationEditor(XElement station)
         return EditSamples(soundName, sample => ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate, UsesTrackBreakDown));
     }
 
-    public bool ApplyReplacement(string soundName, long sampleLength, int sampleRate)
+    public bool ApplyReplacement(string soundName, long sampleLength, int sampleRate, bool preserveMarkers = false)
     {
         return EditSamples(soundName, sample =>
         {
-            var xmlLength = XmlLength(sampleLength, sampleRate);
-            sample.SetAttributeValue("SampleLength", xmlLength);
-            sample.SetAttributeValue("SampleRate", UsesMilliseconds ? null : sampleRate);
             sample.SetAttributeValue("Replaced", "true");
-            ApplyCustomMarkers(sample, sampleLength, UsesMilliseconds, sampleRate, UsesTrackBreakDown);
-            sample.Elements("BPM").Remove();
+            SetAudioTiming(sample, sampleLength, sampleRate, preserveMarkers);
         });
+    }
+
+    private void SetAudioTiming(XElement sample, long sampleLength, int sampleRate, bool preserveMarkers)
+    {
+        var xmlLength = XmlLength(sampleLength, sampleRate);
+        var milliseconds = UsesMilliseconds;
+        if (preserveMarkers)
+        {
+            var oldRate = (int?) sample.Attribute("SampleRate") ?? sampleRate;
+            var rescale = !milliseconds && oldRate > 0 && sampleRate > 0 && oldRate != sampleRate;
+            var last = milliseconds ? xmlLength : Math.Max(0, xmlLength - 1);
+            var positions = sample.Attributes().Where(a => MarkerNames.Contains(a.Name.LocalName))
+                .Concat(sample.Elements("Marker").Attributes("Position"));
+            foreach (var attribute in positions)
+            {
+                if (!long.TryParse(attribute.Value, out var position) || position < 0) continue;
+                var scaled = rescale
+                    ? Math.Round(position * (decimal)sampleRate / oldRate, MidpointRounding.AwayFromZero) : position;
+                var bounded = (long)Math.Min(scaled, last);
+                if (position != bounded) attribute.SetValue(bounded);
+            }
+        }
+        sample.SetAttributeValue("SampleLength", xmlLength);
+        sample.SetAttributeValue("SampleRate", milliseconds ? null : sampleRate);
+        if (!preserveMarkers) ApplyCustomMarkers(sample, sampleLength, milliseconds, sampleRate, UsesTrackBreakDown);
+        sample.Elements("BPM").Remove();
     }
 
     public bool ClearReplacement(string soundName)

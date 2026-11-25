@@ -134,6 +134,11 @@ static void TestHorizon2Xml(string temp)
     editor.SetMarkers(custom, positions, 48000);
     Check(entries.All(e => (long?) e.Attribute("TrackStart") == 1000 && (long?) e.Attribute("StingerStart") == 89000 && (long?) e.Attribute("DJDrop") == -1), "FH2 marker frame-to-millisecond conversion failed.");
     Check(editor.GetMarkers(custom, 48000)!["StingerStart"] == 4_272_000, "FH2 marker millisecond-to-frame conversion failed.");
+    entries[1].SetAttributeValue("TrackStart", 2000);
+    editor.ApplyReplacement(custom, 132300, 44100, preserveMarkers: true);
+    Check((long?)entries[0].Attribute("TrackStart") == 1000 && (long?)entries[1].Attribute("TrackStart") == 2000
+        && entries.All(e => (long?)e.Attribute("StingerStart") == 3000 && (long?)e.Attribute("DJDrop") == -1),
+        "Keeping FH2 markers changed a playlist's position, disabled marker, or millisecond end boundary.");
     Check(editor.ApplyReplacement(original.SoundName, 2_880_000, 48000), "FH2 replacement failed.");
     Check(station.Elements("Playlist").Where(p => (string?) p.Attribute("Type") is "FreeroamTracks" or "EventTracks").SelectMany(p => p.Elements("Entry")).Where(e => (string?) e.Attribute("SoundName") == original.SoundName).All(e => (long?) e.Attribute("SampleLength") == 60000), "FH2 replacement did not update both playlists in milliseconds.");
     editor.SetSampleMeta(custom, "Updated", "Updated artist");
@@ -268,6 +273,11 @@ static void TestModernXml(string temp)
     Check(radio.MaxCustomSeq() == 4 && editor.FreeRoamActiveCount() == 2, "Modern custom addition regressed.");
     Check(editor.ApplyReplacement(track.SoundName, 2_880_000, 48000), "Modern replacement regressed.");
     Check((long?) radio.Document.Descendants("Sample").First().Attribute("SampleLength") == 2_880_000, "Modern replacement duration units changed.");
+    editor.SetMarkers(track.SoundName, new Dictionary<string, long> { ["DJDrop"] = 12000 }, 48000);
+    editor.ApplyReplacement(track.SoundName, 44100, 44100, preserveMarkers: true);
+    var kept = editor.GetMarkers(track.SoundName)!;
+    Check(kept["DJDrop"] == 11025 && kept["End"] == 44099,
+        "Keeping modern markers changed their time or left them beyond the last frame.");
 }
 
 static async Task TestInstallationAsync(string game, string temp, string? previewDirectory)

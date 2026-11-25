@@ -116,8 +116,37 @@ public sealed partial class TrackItemViewModel : ObservableObject
 
     public Dictionary<string, long>? Markers { get; set; }
 
+    private bool _replaceAllMarkers;
+    private HashSet<string>? _editedMarkerNames;
+    internal bool? ReplaceMetadata { get; set; }
+
+    internal void SetAllMarkers(Dictionary<string, long>? markers)
+    {
+        Markers = markers;
+        _replaceAllMarkers = true;
+        _editedMarkerNames = null;
+    }
+
+    internal void SetEditedMarkers(Dictionary<string, long> markers, IEnumerable<string> names)
+    {
+        Markers = markers;
+        (_editedMarkerNames ??= new(StringComparer.Ordinal)).UnionWith(names);
+    }
+
+    public BuildItem CreateBuildItem()
+    {
+        var preserveMarkers = IsReplacing && ReplaceMetadata.HasValue && !_replaceAllMarkers;
+        var markers = Markers;
+        if (preserveMarkers)
+            markers = _editedMarkerNames is null ? null : markers?.Where(m => _editedMarkerNames.Contains(m.Key)).ToDictionary();
+        return new BuildItem(SoundName, IsCustom && UsesFileSource, UsesFileSource ? FileSource : null, Title, Artist, GainDb,
+            Enabled, markers, !IsCustom && IsReplacing, RestoreFromBak,
+            MarkerSampleRate: SampleRate > 0 ? SampleRate : BankSampleRate, Normalization: Normalization,
+            BankId: BankId, ReplaceMetadata: IsReplacing ? ReplaceMetadata : null, PreserveMarkers: preserveMarkers);
+    }
+
     public void StageReplacement(string sourcePath, string title, string? artist, double durationSeconds,
-        bool resetMarkers)
+        bool resetMarkers, bool replaceMetadata = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
         var markerRate = SampleRate > 0 ? SampleRate : BankSampleRate;
@@ -127,16 +156,20 @@ public sealed partial class TrackItemViewModel : ObservableObject
         var sampleLength = checked((long)Math.Round(duration * sampleRate));
         if (resetMarkers)
         {
-            Markers = null;
+            SetAllMarkers(null);
         }
         else if (UsesMilliseconds && markerRate > 0 && markerRate != 48000 && Markers is { } markers)
         {
             Markers = markers.ToDictionary(m => m.Key,
                 m => m.Value < 0 ? -1 : checked((long) Math.Round(m.Value * (48000.0 / markerRate))));
         }
+        ReplaceMetadata = replaceMetadata || (IsReplacing && ReplaceMetadata != false);
         ReplacementPath = sourcePath;
-        Title = title;
-        Artist = artist;
+        if (replaceMetadata)
+        {
+            Title = title;
+            Artist = artist;
+        }
         SampleRate = sampleRate;
         SampleLength = sampleLength;
         PendingDurationSeconds = duration > 0 ? duration : null;

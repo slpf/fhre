@@ -984,9 +984,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 continue;
             }
 
-            t.Markers = t.SampleLength > 0
+            t.SetAllMarkers(t.SampleLength > 0
                 ? RadioStationEditor.ComputeAutoMarkers(t.SampleLength, t.SampleRate, t.UsesMilliseconds, t.UsesTrackBreakDown)
-                : null;
+                : null);
             count++;
         }
 
@@ -1558,7 +1558,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             var markerRate = track.Replaced ? track.SampleRate : track.BankSampleRate;
             var mk = editor.GetMarkers(track.SoundName, markerRate);
-            track.Markers = mk is not null && mk.Count > 0 ? new Dictionary<string, long>(mk) : null;
+            track.SetAllMarkers(mk is { Count: > 0 } ? new Dictionary<string, long>(mk) : null);
         }
 
         if (track.Replaced)
@@ -1791,6 +1791,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private static void ReplaceImportedTrack(TrackItemViewModel track, PackTrack entry, ImportedAudio audio)
     {
         track.ReplacementPath = audio.Path;
+        track.ReplaceMetadata = null;
         track.Title = entry.DisplayName ?? track.Title;
         track.Artist = entry.Artist;
         SetImportedAudio(track, entry, audio);
@@ -1804,7 +1805,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         track.Normalization = audio.Normalization;
         track.PendingDurationSeconds = audio.SampleRate > 0 && audio.SampleLength > 0
             ? audio.SampleLength / (double)audio.SampleRate : null;
-        track.Markers = audio.Markers;
+        track.SetAllMarkers(audio.Markers);
         track.Enabled = entry.Enabled;
     }
 
@@ -1942,22 +1943,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var otherFiles = SelectedLanguage.FileName == AllLanguagesFile
             ? Languages.Where(l => l.FileName != AllLanguagesFile && l.FileName != refFile).Select(l => l.FileName).ToList()
             : [];
-        var items = Tracks.Select(t =>
-        {
-            var customReplacing = t.IsCustom && t.ReplacementPath is not null;
-            var newCustom = (t.IsCustom && t.SourcePath is not null) || customReplacing;
-            var replacing = !t.IsCustom && t.ReplacementPath is not null;
-            var encodeSrc = customReplacing ? t.ReplacementPath
-                : newCustom ? t.SourcePath
-                : replacing ? t.ReplacementPath
-                : null;
-            return new BuildItem(
-                t.SoundName, newCustom, encodeSrc, t.Title, t.Artist, t.GainDb, t.Enabled,
-                t.Markers, replacing, t.RestoreFromBak,
-                MarkerSampleRate: t.SampleRate > 0 ? t.SampleRate : t.BankSampleRate,
-                Normalization: t.Normalization,
-                BankId: t.BankId);
-        }).ToList();
+        var items = Tracks.Select(track => track.CreateBuildItem()).ToList();
         var settings = Settings;
 
         using var cancellation = new CancellationTokenSource();
@@ -2273,10 +2259,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         foreach (var sample in addedSamples.Where(sample => !copied.Contains(sample.SoundName)))
         {
-            if (!editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate)) continue;
+            if (!editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate, sample.PreserveMarkers)) continue;
             if (!sample.IsReplacement) editor.ClearReplacement(sample.SoundName);
-            editor.SetSampleMeta(sample.SoundName, sample.DisplayName, sample.Artist,
-                clearMissingArtist: sample.IsReplacement);
+            if (sample.ReplaceMetadata != false)
+                editor.SetSampleMeta(sample.SoundName, sample.DisplayName, sample.Artist,
+                    clearMissingArtist: sample.IsReplacement || sample.ReplaceMetadata == true);
         }
         foreach (var soundName in restoredNames) editor.ClearReplacement(soundName);
 
@@ -2291,7 +2278,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         foreach (var sample in addedSamples)
         {
-            if (editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate)
+            if (editor.ApplyReplacement(sample.SoundName, sample.Frames, sample.SampleRate, sample.PreserveMarkers)
                 && (!sample.IsReplacement || restoredNames.Contains(sample.SoundName)))
                 editor.ClearReplacement(sample.SoundName);
         }
@@ -2352,12 +2339,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
             Log.Line($"radio.track.metadata sound={a.SoundName} frames={a.Frames} rate={a.SampleRate} replacement={a.IsReplacement} enabled={a.Enabled}");
             if (a.IsReplacement)
             {
-                editor.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate);
-                editor.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist, clearMissingArtist: true);
+                editor.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate, a.PreserveMarkers);
+                if (a.ReplaceMetadata != false)
+                    editor.SetSampleMeta(a.SoundName, a.DisplayName, a.Artist, clearMissingArtist: true);
+            }
+            else if (a.ReplaceMetadata == false && editor.ApplyReplacement(a.SoundName, a.Frames, a.SampleRate, a.PreserveMarkers))
+            {
+                editor.ClearReplacement(a.SoundName);
             }
             else
             {
-                editor.AddCustom(a.SoundName, a.Frames, a.SampleRate, a.DisplayName, a.Artist);
+                editor.AddCustom(a.SoundName, a.Frames, a.SampleRate, a.DisplayName, a.Artist, a.PreserveMarkers);
+                if (a.ReplaceMetadata == true && a.Artist is null)
+                    editor.SetSampleMeta(a.SoundName, null, null, clearMissingArtist: true);
             }
         }
 
@@ -2378,10 +2372,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         foreach (var it in radioItems)
         {
-            if (it.Markers is { } mk)
+            if (it.Markers is { Count: > 0 } mk)
             {
                 var adapted = MarkerPresetService.AdaptMarkers(mk, editor.UsesMilliseconds, it.MarkerSampleRate, editor.UsesTrackBreakDown);
-                if (!MarkersEqual(editor.GetMarkers(it.SoundName, it.MarkerSampleRate), adapted))
+                if (it.PreserveMarkers || !MarkersEqual(editor.GetMarkers(it.SoundName, it.MarkerSampleRate), adapted))
                 {
                     changedMarkers[it.SoundName] = adapted;
                     editor.SetMarkers(it.SoundName, adapted, it.MarkerSampleRate);

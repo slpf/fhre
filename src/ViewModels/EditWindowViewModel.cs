@@ -495,6 +495,6 @@ public sealed partial class EditWindowViewModel : ObservableObject
         {
             markers[field.Name] = field.Position;
         }
-        track.Markers = markers;
+        track.SetEditedMarkers(markers, changed.Select(field => field.Name));
     }
 }

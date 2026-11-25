@@ -40,8 +40,10 @@ public static class Str
 
     public const string BtnYes = "Yes";
     public const string BtnNo = "No";
-    public const string DlgReplaceResetMarkersTitle = "Reset markers?";
-    public const string DlgReplaceResetMarkersBody = "The audio is being replaced — reset marker positions to auto for the new audio?";
+    public const string DlgReplaceTrackTitle = "Replace track";
+    public const string DlgReplaceMetadata = "Replace title and artist";
+    public const string DlgReplaceMarkers = "Replace markers with automatic positions";
+    public const string BtnReplace = "Replace";
     
     public const string BadgeNew = "NEW";
     public const string BadgeReplaced = "RPL";

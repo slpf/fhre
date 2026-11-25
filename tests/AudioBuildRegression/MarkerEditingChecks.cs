@@ -10,10 +10,45 @@ internal static class MarkerEditingChecks
     {
         CheckMarkers();
         CheckExistingMarkers();
+        CheckReplacementOptions(temp);
         CheckPresetCollision();
         CheckCancelledSearch();
         CheckLoopPlayback(temp);
         Console.WriteLine("Verified marker bounds and locks, preset round trips and collisions, loop cancellation, and audio loop sample boundaries.");
+    }
+
+    private static void CheckReplacementOptions(string temp)
+    {
+        foreach (var replaceMetadata in new[] { true, false })
+        foreach (var resetMarkers in new[] { true, false })
+        {
+            var track = new TrackItemViewModel(new RadioTrack
+            {
+                SoundName = "REPLACEMENT_OPTIONS",
+                Origin = TrackOrigin.Original,
+                DisplayName = "Original title",
+                Artist = "Original artist",
+                SampleRate = 44100,
+                SampleLength = 441000,
+                Markers = new Dictionary<string, long> { ["DJDrop"] = 44100 },
+            });
+            var source = Path.Combine(temp, "replacement.wav");
+            track.StageReplacement(source, "New title", null, 2, resetMarkers, replaceMetadata);
+
+            Check(track.ReplacementPath == source
+                && track.Title == (replaceMetadata ? "New title" : "Original title")
+                && track.Artist == (replaceMetadata ? null : "Original artist"),
+                "Replacement changed metadata independently of the selected option.");
+            Check((resetMarkers ? track.Markers is null : track.Markers?["DJDrop"] == 44100)
+                && track.SampleLength == 2 * track.SampleRate,
+                "Replacement did not retain or reset markers as selected.");
+            track.StageReplacement(source, "Unused", "Unused", 1, resetMarkers: false, replaceMetadata: false);
+            var item = track.CreateBuildItem();
+            Check(item.ReplaceMetadata == replaceMetadata && item.PreserveMarkers == !resetMarkers
+                && item.DisplayName == (replaceMetadata ? "New title" : "Original title")
+                && item.Artist == (replaceMetadata ? null : "Original artist"),
+                "A second replacement lost a pending marker reset or tag change.");
+        }
     }
 
     private static void CheckExistingMarkers()

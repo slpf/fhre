@@ -1,0 +1,26 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:assets="clr-namespace:FH6RB.Assets"
+        x:Class="FH6RB.Views.ReplaceTrackDialog"
+        Width="440"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Bg1}"
+        SizeToContent="Height"
+        Title="{x:Static assets:Str.DlgReplaceTrackTitle}">
+    <Grid RowDefinitions="Auto,Auto">
+        <StackPanel Margin="20" Spacing="4">
+            <CheckBox x:Name="ReplaceMetadata" IsChecked="True" FontSize="13"
+                      Content="{x:Static assets:Str.DlgReplaceMetadata}"/>
+            <CheckBox x:Name="ReplaceMarkers" IsChecked="True" FontSize="13"
+                      Content="{x:Static assets:Str.DlgReplaceMarkers}"/>
+        </StackPanel>
+        <Border Grid.Row="1" Background="{DynamicResource Bg2}"
+                BorderBrush="{DynamicResource LineSoft}" BorderThickness="0,1,0,0" Padding="20,13">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                <Button Classes="big" IsCancel="True" Click="OnCancel" Content="{x:Static assets:Str.BtnCancel}"/>
+                <Button Classes="big primary" IsDefault="True" Click="OnReplace" Content="{x:Static assets:Str.BtnReplace}"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -21,9 +21,12 @@ public sealed record BuildItem(
     bool RestoreFromBak = false,
     int MarkerSampleRate = 0,
     NormalizationOverride? Normalization = null,
-    ulong? BankId = null);
+    ulong? BankId = null,
+    bool? ReplaceMetadata = null,
+    bool PreserveMarkers = false);
 
-public sealed record AddedSample(string SoundName, long Frames, int SampleRate, string? DisplayName, string? Artist, bool Enabled, bool IsReplacement = false);
+public sealed record AddedSample(string SoundName, long Frames, int SampleRate, string? DisplayName, string? Artist,
+    bool Enabled, bool IsReplacement = false, bool? ReplaceMetadata = null, bool PreserveMarkers = false);
 
 public static class BankBuildService
 {
@@ -375,7 +378,8 @@ public static class BankBuildService
                 {
                     var sample = prepared[i];
                     added[i] = new AddedSample(item.SoundName, sample.Frames, sample.SampleRate,
-                        item.DisplayName, item.Artist, item.Enabled, item.IsReplacement || item.RestoreFromBak);
+                        item.DisplayName, item.Artist, item.Enabled, item.IsReplacement || item.RestoreFromBak,
+                        item.ReplaceMetadata, item.PreserveMarkers);
                 }
                 var completed = Interlocked.Increment(ref done);
                 Diagnostic(trackLog, "track.ok", new { elapsedMs = trackTimer.ElapsedMilliseconds });

@@ -104,6 +104,66 @@ internal static class RadioBuildChecks
         Check(Load(german).StationByNumber(1)!.GetSampleMeta(stock) == ("New title", german),
             "A title-only edit overwrote another language's artist.");
 
+        foreach (var file in new[] { english, german })
+        {
+            var radioWithMarkers = Load(file);
+            var editor = radioWithMarkers.StationByNumber(1)!;
+            if (file == german) editor.SetSampleMeta(custom.SoundName, "Localized title", "Localized artist");
+            foreach (var name in new[] { stock, custom.SoundName })
+                editor.SetMarkers(name, new Dictionary<string, long> { ["DJDrop"] = file == english ? 12000 : 24000 }, 48000);
+            radioWithMarkers.Save(Path.Combine(game, file));
+        }
+        List<TrackItemViewModel> ReadForReplacement() => BankReader.ReadTracks(bank, Load(english), 1).Tracks
+            .Select(track => new TrackItemViewModel(track)).ToList();
+        var preserveTags = ReadForReplacement().Select(track =>
+        {
+            track.StageReplacement(replacementAudio, "Unused", null, 1, resetMarkers: false, replaceMetadata: false);
+            return track.CreateBuildItem();
+        }).ToList();
+        await Build(english, preserveTags, [german]);
+        var germanEditor = Load(german).StationByNumber(1)!;
+        Check(germanEditor.GetSampleMeta(stock) == ("New title", german)
+            && germanEditor.GetSampleMeta(custom.SoundName) == ("Localized title", "Localized artist"),
+            "Keeping tags during replacement overwrote localized metadata.");
+        foreach (var name in new[] { stock, custom.SoundName })
+            Check(Load(english).StationByNumber(1)!.GetMarkers(name, 48000)!["DJDrop"] == 12000
+                && germanEditor.GetMarkers(name, 48000)!["DJDrop"] == 24000,
+                "Replacing audio with markers unchecked overwrote a locale's own marker.");
+
+        var replaceCustomTags = ReadForReplacement().Select(track =>
+        {
+            if (track.IsCustom)
+                track.StageReplacement(replacementAudio, "Replacement title", null, 1, resetMarkers: false);
+            return track.CreateBuildItem();
+        }).ToList();
+        await Build(english, replaceCustomTags, [german]);
+        Check(new[] { english, german }.All(file =>
+            Load(file).StationByNumber(1)!.GetSampleMeta(custom.SoundName) == ("Replacement title", null)),
+            "Replacing custom track tags kept the old artist for untagged audio.");
+
+        var repeated = ReadForReplacement();
+        foreach (var track in repeated)
+        {
+            track.StageReplacement(originalAudio, "First title", null, 3, resetMarkers: false);
+            track.StageReplacement(replacementAudio, "Unused", "Unused", 1, resetMarkers: false, replaceMetadata: false);
+            var edit = new EditWindowViewModel(track);
+            edit.AllMarkers.Single(m => m.Name == "TrackStart").Position = 4800;
+            edit.Apply(track);
+        }
+        await Build(english, repeated.Select(track => track.CreateBuildItem()).ToList(), [german]);
+        foreach (var file in new[] { english, german })
+        {
+            var editor = Load(file).StationByNumber(1)!;
+            foreach (var track in repeated)
+            {
+                var markers = editor.GetMarkers(track.SoundName, 48000)!;
+                Check(editor.GetSampleMeta(track.SoundName) == ("First title", null),
+                    "A second replacement with tags unchecked lost the first replacement's metadata.");
+                Check(markers["TrackStart"] == 4800 && markers["DJDrop"] == (file == english ? 12000 : 24000),
+                    "Applying a manual marker edit overwrote an untouched localized marker.");
+            }
+        }
+
         await Build(english, Read(english).Select(item => item.SoundName == stock ? replacement : item).ToList());
         await Build(english, Read(english).Select(item => item.SoundName == stock ? stale[0] with { RestoreFromBak = true } : item).ToList());
         foreach (var file in new[] { english, german })

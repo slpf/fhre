@@ -838,6 +838,9 @@ public partial class MainWindow : Window
 
         if (!CheckAddTrackAvailability(generation) || !Vm.Tracks.Contains(track)) return;
 
+        if (await ReplaceTrackDialog.ShowAsync(this) is not { } options
+            || !CheckAddTrackAvailability(generation) || !Vm.Tracks.Contains(track)) return;
+
         Vm.IsAddingTracks = true;
         var previousStatus = Vm.Status;
         Vm.Status = string.Format(Str.StatusReplacingFmt, track.SoundName);
@@ -862,13 +865,9 @@ public partial class MainWindow : Window
         if (!CheckLoadedBank(generation) || !Vm.Tracks.Contains(track)) return;
         var (fTitle, fArtist) = ParseName(System.IO.Path.GetFileNameWithoutExtension(path));
 
-        var resetMarkers = await MessageDialog.ShowAsync(this, Str.DlgReplaceResetMarkersTitle, Str.DlgReplaceResetMarkersBody,
-            Str.BtnYes, Str.BtnNo);
-
-        if (!CheckLoadedBank(generation) || !Vm.Tracks.Contains(track)) return;
-
         if (ReferenceEquals(Vm.NowPlaying, track)) Vm.StopPlayback();
-        track.StageReplacement(path, mTitle ?? fTitle, mArtist ?? fArtist, mDuration, resetMarkers);
+        track.StageReplacement(path, mTitle ?? fTitle, mArtist ?? fArtist, mDuration,
+            options.ResetMarkers, options.ReplaceMetadata);
 
         Vm.MarkDirty();
         Vm.RefreshFilter();

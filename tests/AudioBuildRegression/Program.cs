@@ -367,11 +367,11 @@ static async Task TestGameWritesAsync(string temp, string input)
     static string RadioXml(string title) => $"""
         <Radio><RadioStations>
           <RadioStation Number="1" Name="Test"><Banks><Bank Name="{bankName}"/><Bank Name="{bankName}_CU1"/></Banks>
-            <SampleList Type="Track"><Sample SoundName="{shared}" SampleLength="144000" SampleRate="48000" End="143999" DisplayName="{title}"/><Sample SoundName="{sibling}" SampleLength="144000" SampleRate="48000"/></SampleList>
+            <SampleList Type="Track"><Sample SoundName="{shared}" SampleLength="144000" SampleRate="48000" DJDrop="{(title == "English" ? 12000 : 24000)}" End="143999" DisplayName="{title}"/><Sample SoundName="{sibling}" SampleLength="144000" SampleRate="48000"/></SampleList>
             <PlayList Type="FreeRoam"><Entry Name="{shared}"/><Entry Name="{sibling}"/></PlayList>
           </RadioStation>
           <RadioStation Number="2" Name="Shared"><Banks><Bank Name="{bankName}"/></Banks>
-            <SampleList Type="Track"><Sample SoundName="{shared}" SampleLength="144000" SampleRate="48000" End="143999" DisplayName="Shared station"/></SampleList>
+            <SampleList Type="Track"><Sample SoundName="{shared}" SampleLength="144000" SampleRate="48000" DJDrop="36000" End="143999" DisplayName="Shared station"/></SampleList>
             <PlayList Type="FreeRoam"><Entry Name="{shared}"/></PlayList>
           </RadioStation>
         </RadioStations></Radio>
@@ -398,7 +398,8 @@ static async Task TestGameWritesAsync(string temp, string input)
     Check(restoredMarkers.Banks == 0 && RadioInfo.Load(de).StationByNumber(2)!.ReadTracks().Single().Markers?.ContainsKey("TrackStart") == false,
         "Original restore missed shared markers in a bank without an audio backup.");
 
-    var edited = await BuildAsync([new BuildItem(shared, false, replacement, "Edited", null, null, true, IsReplacement: true)], []);
+    var edited = await BuildAsync([new BuildItem(shared, false, replacement, "Edited", null, null, true,
+        IsReplacement: true, PreserveMarkers: true)], []);
     Check(edited.SavedXml == 2 && edited.Dead == 0, "Single-language replacement skipped shared audio or pruned the truncated sibling bank.");
     foreach (var path in new[] { en, de })
     {
@@ -408,6 +409,9 @@ static async Task TestGameWritesAsync(string temp, string input)
         Check(ownTracks.Any(t => t.SoundName == sibling && t.Enabled), "Build removed a sibling track from XML.");
         Check(ownTracks.Single(t => t.SoundName == shared).SampleLength == 48000 && sharedTrack.SampleLength == 48000
             && sharedTrack.Markers!["End"] < 48000, "Shared station or localization has stale audio timing.");
+        Check(sharedTrack.Markers!["DJDrop"] == 36000
+            && ownTracks.Single(t => t.SoundName == shared).Markers!["DJDrop"] == (path == en ? 12000 : 24000),
+            "A shared station or unselected language lost its marker when replacing audio.");
         Check(ownTracks.Single(t => t.SoundName == shared).DisplayName == (path == en ? "Edited" : "German")
             && sharedTrack.DisplayName == "Shared station", "Audio synchronization changed another station's or language's title.");
     }
